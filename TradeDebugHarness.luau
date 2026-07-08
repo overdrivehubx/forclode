@@ -52,9 +52,17 @@ local PlayerGui     = LocalPlayer:WaitForChild("PlayerGui")
 -- Destroy a stale panel and tear down the previous runtime BEFORE building a
 -- fresh one, so the harness can be re-run any number of times in one session.
 do
-	for _, n in ipairs({ "TradeDebugPanel", "TradeDebugRequest" }) do
-		local Old = PlayerGui:FindFirstChild(n)
-		if Old then Old:Destroy() end
+	-- Destroy EVERY stale panel, wherever an executor may have parented it
+	-- (PlayerGui and, for some executors, a protected CoreGui container).
+	local scopes = { PlayerGui }
+	pcall(function() table.insert(scopes, game:GetService("CoreGui")) end)
+	pcall(function() if gethui then table.insert(scopes, gethui()) end end)
+	for _, scope in ipairs(scopes) do
+		for _, child in ipairs(scope:GetChildren()) do
+			if child.Name == "TradeDebugPanel" or child.Name == "TradeDebugRequest" then
+				pcall(function() child:Destroy() end)
+			end
+		end
 	end
 
 	local Prev = _G.__TradeDebug
@@ -272,6 +280,24 @@ local function findRequestFrame()
 end
 local RequestFrame = findRequestFrame()
 
+-- Phone layout? (TradeGUI_Phone, or the request lives under the Lobby "Waiting"
+-- screen). On phone the native flow is: a "!" badge appears on the leaderboard
+-- "+" button, and the request only shows once the leaderboard tab is opened.
+local IsPhone = (TradeGUI.Name == "TradeGUI_Phone")
+	or (RequestFrame ~= nil and RequestFrame:FindFirstAncestor("Waiting") ~= nil)
+
+-- Find the "+" leaderboard button's notification badge (phone only).
+local function findPlusBadge()
+	if not RequestFrame then return nil end
+	local waiting = RequestFrame:FindFirstAncestor("Waiting")
+	local scope = waiting or (TradeGUI:IsA("ScreenGui") and TradeGUI) or PlayerGui
+	local leaderBar = scope:FindFirstChild("LeaderBar", true)
+	if leaderBar then
+		return resolve(leaderBar, "Main.Plus") or leaderBar:FindFirstChild("Plus", true)
+	end
+	return nil
+end
+
 -- Diagnostic dump so the runtime tree is visible in the console if anything is
 -- missing. Share this line if a frame fails to bind.
 local function fn(inst) return inst and inst:GetFullName() or "nil" end
@@ -468,11 +494,12 @@ local function renderOffer(sideKey, offerFrame)
 	end
 end
 
--- Full re-render of the trade panel from the local state table.
+-- Full re-render of the trade panel CONTENT from the local state table.
+-- NOTE: this must NOT toggle panel visibility (Enabled / Container.Trade /
+-- Items) — that is owned by startTrade / openItemsPicker / closeItemsPicker.
+-- Otherwise adding an item from the picker would flip back to the Trade panel.
 function RenderTrade()
 	clearRenderConnections()
-	if TradeGUI:IsA("ScreenGui") then TradeGUI.Enabled = true end
-	setVisible(TradeGUI, "Container.Trade", true)
 
 	-- Second participant's display name.
 	setProp(TradeRoot, "Offer2.Username", "Text", "(" .. DebugTradeTable.Player2.Player.Name .. ")")
@@ -568,42 +595,82 @@ end
 -- 8. REQUEST MODAL + TRADE LIFECYCLE  (local stand-ins for the Remote chain)
 --==============================================================================
 
--- Show the native request panel (the one that lives in the leaderboard /
--- player-list tab, exactly as in the source scripts) in its "Accepting" variant
--- with the P2 name. This ONLY reveals the request — the main trade panels stay
--- hidden until the game's built-in green Accept button is clicked.
+-- Configure the request frame's "Accepting" variant with the P2 name (shared by
+-- both layouts). Does NOT force ancestors visible — the caller decides that.
+local function configureRequest(player2Name)
+	if not RequestFrame then return end
+	local accepting = RequestFrame:FindFirstChild("Accepting")
+	local sending   = RequestFrame:FindFirstChild("Sending")
+	if sending then sending.Visible = false end
+	if accepting then revealSubtree(accepting) else revealSubtree(RequestFrame) end
+	local uName = RequestFrame:FindFirstChild("Username", true)
+	if uName then pcall(function() uName.Text = player2Name end) end
+	local title = RequestFrame:FindFirstChild("Title", true)
+	if title then pcall(function() title.Text = player2Name .. " wants to trade." end) end
+	RequestFrame.Visible = true
+	setProp(TradeRoot, "Offer2.Username", "Text", "(" .. player2Name .. ")")
+end
+
+-- Show the request. PC: reveal it directly in the leaderboard tab. Phone: light
+-- the "!" badge on the "+" button and prime the request so it shows once the
+-- player opens the leaderboard (the native mobile flow, per the source).
 local function showRequestModal(player2Name)
 	PendingP2Name = player2Name
 	if not RequestFrame then
 		warn("[TradeDebug] TradeRequest frame not found in PlayerGui — cannot show request.")
 		return
 	end
-
-	-- Bring the whole leaderboard-tab ancestor chain on-screen, then reveal the
-	-- request frame and everything inside its "Accepting" branch so the username
-	-- label and the Accept/Decline buttons actually render (not just a dark box).
-	revealAncestors(RequestFrame)
-	RequestFrame.Visible = true
-
-	local accepting = RequestFrame:FindFirstChild("Accepting")
-	local sending   = RequestFrame:FindFirstChild("Sending")
-	if sending then sending.Visible = false end
-	if accepting then
-		revealSubtree(accepting)
+	configureRequest(player2Name)
+	if IsPhone then
+		local badge = findPlusBadge()
+		if badge then pcall(function() badge.Visible = true end) end
+		-- Do NOT reveal ancestors: the request appears when the leaderboard opens.
 	else
-		-- Some layouts don't split Accepting/Sending — just reveal the content.
-		revealSubtree(RequestFrame)
+		revealAncestors(RequestFrame)
 	end
-
-	-- Fill in the target name on whatever label(s) the layout uses.
-	local uName = RequestFrame:FindFirstChild("Username", true)
-	if uName then pcall(function() uName.Text = player2Name end) end
-	local title = RequestFrame:FindFirstChild("Title", true)
-	if title then pcall(function() title.Text = player2Name .. " wants to trade." end) end
-	setProp(TradeRoot, "Offer2.Username", "Text", "(" .. player2Name .. ")")
 end
 
--- Begin the offline trade: hide the request, reset offers, open the panels, render.
+-- Open the inventory picker (Items) and hide the Trade panel — the native flow.
+-- Having BOTH visible makes the Trade panel overlay the picker and swallow item
+-- clicks, which is why items couldn't be added; so they are mutually exclusive.
+local function openItemsPicker()
+	if ItemsPicker then
+		revealAncestors(ItemsPicker)
+		ItemsPicker.Visible = true
+	end
+	if TradeRoot then TradeRoot.Visible = false end
+	-- Default to the Weapons tab and make its scroll frame + content visible.
+	setVisible(TradeGUI, "Container.Items.Main.Weapons", true)
+	setVisible(TradeGUI, "Container.Items.Main.Pets", false)
+	if InventoryFrame then revealAncestors(InventoryFrame) end
+	renderInventory()
+end
+
+-- Close the picker and return to the Trade panel.
+local function closeItemsPicker()
+	if ItemsPicker then ItemsPicker.Visible = false end
+	if TradeRoot then
+		revealAncestors(TradeRoot)
+		TradeRoot.Visible = true
+	end
+	RenderTrade()
+end
+
+-- Complete the trade once BOTH sides are accepted: show Processing then close.
+local function completeTradeIfBothAccepted()
+	if DebugTradeTable.Player1.Accepted and DebugTradeTable.Player2.Accepted then
+		local processing = resolve(TradeGUI, "Container.Processing")
+			or (Container and Container:FindFirstChild("Processing"))
+		if processing then revealAncestors(processing); processing.Visible = true end
+		task.delay(2, function()
+			if processing then processing.Visible = false end
+			if TradeGUI:IsA("ScreenGui") then TradeGUI.Enabled = false end
+			if Container then Container.Visible = false end
+		end)
+	end
+end
+
+-- Begin the offline trade: hide the request, reset offers, open the Trade panel.
 -- Invoked by the native MM2 Accept button, mirroring the real
 -- AcceptRequest -> StartTrade -> UpdateTrade lifecycle.
 local function startTrade(player2Name)
@@ -613,26 +680,27 @@ local function startTrade(player2Name)
 	DebugTradeTable.Player1.Accepted = false
 	DebugTradeTable.Player2.Accepted = false
 	if RequestFrame then RequestFrame.Visible = false end
+	if IsPhone then local b = findPlusBadge(); if b then pcall(function() b.Visible = false end) end end
 
-	-- Open the actual game panels. Bring the trade ScreenGui + its ancestor chain
-	-- on-screen, then force every trade sub-frame visible so the layout pops on.
+	-- Open the Trade panel (Items hidden — native default). Bring the trade
+	-- ScreenGui + ancestor chain on-screen so the layout pops on.
 	if TradeGUI:IsA("ScreenGui") then TradeGUI.Enabled = true end
 	revealAncestors(Offer1 or TradeRoot or Container)
-	if Container   then Container.Visible = true end
-	if TradeRoot   then TradeRoot.Visible = true end
-	if ItemsPicker then ItemsPicker.Visible = true end
-	setVisible(TradeGUI, "Container", true)
-	setVisible(TradeGUI, "Container.Trade", true)
-	setVisible(TradeGUI, "Container.Items", true)
+	if Container then Container.Visible = true end
+	if TradeRoot then TradeRoot.Visible = true end
+	if ItemsPicker then ItemsPicker.Visible = false end
 
 	RenderTrade()
-	renderInventory()
+	renderInventory()  -- pre-populate so the picker is ready when opened
 end
 
--- Light the remote client's green acceptance flag (Player2 accepted).
+-- Light the remote client's green acceptance flag (Player2 accepted), and
+-- complete the trade if the local side has already accepted too.
 local function forceRemoteAccept()
 	DebugTradeTable.Player2.Accepted = true
 	setVisible(TradeRoot, "Offer2.Accepted", true)
+	revealSubtree(resolve(TradeRoot, "Offer2.Accepted"))
+	completeTradeIfBothAccepted()
 end
 
 -- Clean close: play the fade, wipe the tables, drop the panel.
@@ -702,7 +770,7 @@ Panel.Parent = PlayerGui
 
 local Window = Instance.new("Frame")
 Window.Name = "Window"
-Window.Size = UDim2.new(0, 250, 0, 384)
+Window.Size = UDim2.new(0, 250, 0, 470)
 Window.Position = UDim2.new(0, 20, 0.5, -160)
 Window.BackgroundColor3 = SLATE_BG
 Window.BorderSizePixel = 0
@@ -800,8 +868,19 @@ track(RequestBtn.MouseButton1Click:Connect(function()
 	showRequestModal(typedName)
 end))
 
--- (c) Mode toggle — redirect inventory clicks to the left/right offer.
-local ModeBtn = makeButton("Mode: Player 1  (left)", 5)
+-- (c) Reliable inventory toggle — opens/closes the item picker regardless of
+--     whether the native Add-Items / Close buttons resolve. This is the robust
+--     way to add items (the picker and Trade panel are mutually exclusive).
+local ItemsOpen = false
+local ItemsBtn = makeButton("▤  Open Item Picker", 5)
+track(ItemsBtn.MouseButton1Click:Connect(function()
+	ItemsOpen = not ItemsOpen
+	if ItemsOpen then openItemsPicker(); ItemsBtn.Text = "▤  Close Item Picker"
+	else closeItemsPicker(); ItemsBtn.Text = "▤  Open Item Picker" end
+end))
+
+-- (d) Mode toggle — redirect inventory clicks to the left/right offer.
+local ModeBtn = makeButton("Mode: Player 1  (left)", 6)
 track(ModeBtn.MouseButton1Click:Connect(function()
 	OfferMode = (OfferMode == "Player1") and "Player2" or "Player1"
 	if OfferMode == "Player1" then
@@ -813,12 +892,21 @@ track(ModeBtn.MouseButton1Click:Connect(function()
 	end
 end))
 
--- (d) Force the remote acceptance flag green.
-local AcceptBtn = makeButton("✔  Force P2 Accept (green)", 6, SLATE_GREEN)
+-- (e) Accept as Player 1 (your green flag) — completes if P2 also accepted.
+local AcceptP1Btn = makeButton("✔  Accept as P1", 7, SLATE_GREEN)
+track(AcceptP1Btn.MouseButton1Click:Connect(function()
+	DebugTradeTable.Player1.Accepted = true
+	setVisible(TradeRoot, "Offer1.Accepted", true)
+	revealSubtree(resolve(TradeRoot, "Offer1.Accepted"))
+	completeTradeIfBothAccepted()
+end))
+
+-- (f) Force the remote (Player 2) acceptance flag green — completes if P1 too.
+local AcceptBtn = makeButton("✔  Accept as P2 (remote)", 8, SLATE_GREEN)
 track(AcceptBtn.MouseButton1Click:Connect(forceRemoteAccept))
 
--- (e) Terminate — close animation + wipe.
-local KillBtn = makeButton("✖  Terminate + Wipe", 7, SLATE_RED)
+-- (g) Terminate — close animation + wipe.
+local KillBtn = makeButton("✖  Terminate + Wipe", 9, SLATE_RED)
 track(KillBtn.MouseButton1Click:Connect(function()
 	terminate(Panel)
 end))
@@ -838,7 +926,7 @@ Status.TextSize = 11
 Status.TextWrapped = true
 Status.TextYAlignment = Enum.TextYAlignment.Top
 Status.TextXAlignment = Enum.TextXAlignment.Left
-Status.LayoutOrder = 8
+Status.LayoutOrder = 10
 Status.Parent = Window
 
 --==============================================================================
@@ -912,30 +1000,44 @@ end
 do
 	local addBtn = resolve(TradeRoot, "Actions.AddItems.ActionButton")
 	if addBtn then
-		track(addBtn.MouseButton1Click:Connect(function()
-			setVisible(TradeGUI, "Container.Trade", false)
-			setVisible(TradeGUI, "Container.Items", true)
-		end))
+		track(addBtn.MouseButton1Click:Connect(openItemsPicker))
 	end
 	local closeBtn = resolve(ItemsPicker, "Tabs.Close.ActionButton")
 	if closeBtn then
-		track(closeBtn.MouseButton1Click:Connect(function()
-			setVisible(TradeGUI, "Container.Items", false)
-			setVisible(TradeGUI, "Container.Trade", true)
+		track(closeBtn.MouseButton1Click:Connect(closeItemsPicker))
+	end
+	-- Weapons / Pets tab buttons in the picker.
+	local weaponsTab = resolve(ItemsPicker, "Tabs.Weapons.View")
+	if weaponsTab then
+		track(weaponsTab.MouseButton1Click:Connect(function()
+			setVisible(TradeGUI, "Container.Items.Main.Weapons", true)
+			setVisible(TradeGUI, "Container.Items.Main.Pets", false)
+			if InventoryFrame then revealAncestors(InventoryFrame) end
 		end))
 	end
-	-- Self-accept (Confirm) simply lights YOUR green flag locally.
+	local petsTab = resolve(ItemsPicker, "Tabs.Pets.View")
+	if petsTab then
+		track(petsTab.MouseButton1Click:Connect(function()
+			setVisible(TradeGUI, "Container.Items.Main.Weapons", false)
+			setVisible(TradeGUI, "Container.Items.Main.Pets", true)
+			if PetsFrame then revealAncestors(PetsFrame) end
+		end))
+	end
+	-- Self-accept (Confirm) lights YOUR green flag and may complete the trade.
 	local confirmBtn = resolve(TradeRoot, "Actions.Accept.Confirm.ActionButton")
 	if confirmBtn then
 		track(confirmBtn.MouseButton1Click:Connect(function()
 			DebugTradeTable.Player1.Accepted = true
 			setVisible(TradeRoot, "Offer1.Accepted", true)
+			revealSubtree(resolve(TradeRoot, "Offer1.Accepted"))
 			setVisible(TradeRoot, "Actions.Accept.Confirm", false)
+			completeTradeIfBothAccepted()
 		end))
 	end
 	local acceptBtn = resolve(TradeRoot, "Actions.Accept.ActionButton")
 	if acceptBtn then
 		track(acceptBtn.MouseButton1Click:Connect(function()
+			revealSubtree(resolve(TradeRoot, "Actions.Accept.Confirm"))
 			setVisible(TradeRoot, "Actions.Accept.Confirm", true)
 		end))
 	end
