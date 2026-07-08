@@ -222,6 +222,44 @@ local OwnedWeapons = {
 }
 local OwnedPets = { Corgi=5, Bunny=2, Dragon=1, Dogey=1 }
 
+-- Try to use the REAL game catalog (read-only data fetch, exactly what the
+-- source scripts call) + your real inventory, so the picker looks like the game.
+-- Falls back to the embedded sample data when unavailable.
+local function tryGetSync(name)
+	local rs = game:GetService("ReplicatedStorage")
+	local gsd = rs:FindFirstChild("GetSyncData")
+	if not gsd then return nil end
+	local ok, data = pcall(function() return gsd:InvokeServer(name) end)
+	if ok and type(data) == "table" then return data end
+	return nil
+end
+do
+	local realItems = tryGetSync("Item")
+	local realPets  = tryGetSync("Pets")
+	local realRar   = tryGetSync("Rarity")
+	if realItems then ItemDB = realItems end
+	if realPets  then PetDB  = realPets  end
+	if realRar   then Rarity = realRar   end
+	Database = { Weapons = ItemDB, Pets = PetDB }
+
+	-- Use your actual owned inventory if the client exposes _G.PlayerData.
+	local pd = rawget(_G, "PlayerData")
+	local function copyOwned(t)
+		local c = {}; if type(t) == "table" then for k, v in pairs(t) do c[k] = v end end; return c
+	end
+	if type(pd) == "table" then
+		if pd.Weapons and pd.Weapons.Owned then OwnedWeapons = copyOwned(pd.Weapons.Owned) end
+		if pd.Pets and pd.Pets.Owned then OwnedPets = copyOwned(pd.Pets.Owned) end
+	end
+end
+
+-- Resolve an item image; wrap a bare asset id in the thumbnail URL (per source).
+local function getImage(img)
+	if img == nil then return "" end
+	if tonumber(img) then return AssetURL .. tostring(img) end
+	return img
+end
+
 --==============================================================================
 -- 4. LOCATE THE TRADE GUI (dynamic resolution from PlayerGui)
 --==============================================================================
@@ -412,6 +450,7 @@ local completeToken = 0
 local CooldownRunning = false
 local Cooldown = 6
 local cooldownToken = 0
+local startAcceptCooldown  -- forward decl (used by renderOffer's remove handler)
 
 --==============================================================================
 -- 6. TEMPLATE EXTRACTION  (capture the native slot framework before clearing)
@@ -552,7 +591,7 @@ local function renderOffer(sideKey, offerFrame)
 		local slot = offerFrame.Container:FindFirstChild("NewItem" .. i)
 		if slot and data then
 			slot.Visible = true
-			setProp(slot, "Container.Icon", "Image", data.Image)
+			setProp(slot, "Container.Icon", "Image", getImage(data.Image))
 			local displayName = data.ItemName or data.Name
 			setProp(slot, "ItemName.Label", "Text", displayName)
 			setProp(slot, "ItemName.Label", "TextColor3", Rarity[data.Rarity] or Color3.new(1,1,1))
@@ -569,7 +608,10 @@ local function renderOffer(sideKey, offerFrame)
 					table.remove(DebugTradeTable[sideKey].Offer, i)
 					DebugTradeTable.Player1.Accepted = false
 					DebugTradeTable.Player2.Accepted = false
+					setVisible(TradeRoot, "Actions.Accept.Confirm", false)
+					setVisible(TradeRoot, "Actions.Accept.Cancel", false)
 					RenderTrade()  -- forward-declared below
+					if startAcceptCooldown then startAcceptCooldown() end  -- 6s cd on offer change
 				end))
 			end
 		end
@@ -668,7 +710,7 @@ end
 
 -- Start / restart the 6s "Please wait before accepting" cooldown, mirroring the
 -- native ResetCooldown that runs on every offer change.
-local function startAcceptCooldown()
+function startAcceptCooldown()
 	Cooldown = 6
 	local cdNode = resolve(TradeRoot, "Actions.Accept.Cooldown")
 	local function setTitle()
@@ -766,7 +808,7 @@ local function renderInventoryPane(frame, owned, db, category)
 			local slot = newSlot()
 			slot.Parent = frame
 			slot.Name = data.ItemName or data.Name or itemKey
-			setProp(slot, "Container.Icon", "Image", data.Image)
+			setProp(slot, "Container.Icon", "Image", getImage(data.Image))
 			setProp(slot, "ItemName.Label", "Text", data.ItemName or data.Name)
 			setProp(slot, "ItemName", "BackgroundColor3", Rarity[data.Rarity] or Color3.new(1,1,1))
 			setProp(slot, "Tags.Chroma", "Visible", data.Chroma ~= nil)
@@ -1316,7 +1358,82 @@ makeRowToggle(pTrade, "Add to Player 2 side", "off = your side (left) / on = rig
 end)
 
 --------------------------------------------------------------------------------
--- PAGE 2 — Accept
+-- PAGE 2 — Spawn (add game items into your inventory)
+--------------------------------------------------------------------------------
+local pSpawn = makeTab("Spawn")
+
+-- Flat, name-sorted index of the whole catalog (weapons + pets).
+local spawnIndex = {}
+for k, v in pairs(ItemDB) do
+	if type(v) == "table" then
+		table.insert(spawnIndex, { key = k, name = tostring(v.ItemName or v.Name or k), cat = "Weapons", rarity = v.Rarity })
+	end
+end
+for k, v in pairs(PetDB) do
+	if type(v) == "table" then
+		table.insert(spawnIndex, { key = k, name = tostring(v.Name or v.ItemName or k), cat = "Pets", rarity = v.Rarity })
+	end
+end
+table.sort(spawnIndex, function(a, b) return a.name:lower() < b.name:lower() end)
+
+local spawnRow = makeRow(pSpawn, "Spawn item", "search the game catalog, tap +")
+local SearchBox = Instance.new("TextBox")
+SearchBox.Size = UDim2.new(0, 118, 0, 30); SearchBox.Position = UDim2.new(1, -130, 0.5, -15)
+SearchBox.BackgroundColor3 = C_BG; SearchBox.Text = ""
+SearchBox.PlaceholderText = "search…"; SearchBox.PlaceholderColor3 = C_DIM
+SearchBox.TextColor3 = C_TXT; SearchBox.Font = Enum.Font.Gotham; SearchBox.TextSize = 12
+SearchBox.ClearTextOnFocus = false; SearchBox.BorderSizePixel = 0; SearchBox.ClipsDescendants = true
+SearchBox.ZIndex = 4; SearchBox.Parent = spawnRow; corner(SearchBox, 8); pad(SearchBox, 6)
+
+rowOrder = rowOrder + 1
+local SpawnList = Instance.new("Frame")
+SpawnList.Size = UDim2.new(1, 0, 0, 0); SpawnList.AutomaticSize = Enum.AutomaticSize.Y
+SpawnList.BackgroundColor3 = C_BG; SpawnList.BorderSizePixel = 0; SpawnList.ZIndex = 2
+SpawnList.LayoutOrder = rowOrder; SpawnList.Parent = pSpawn
+corner(SpawnList, 10)
+local sll = Instance.new("UIListLayout")
+sll.Padding = UDim.new(0, 4); sll.SortOrder = Enum.SortOrder.LayoutOrder; sll.Parent = SpawnList
+pad(SpawnList, 6)
+
+local function refreshSpawn(query)
+	for _, c in ipairs(SpawnList:GetChildren()) do
+		if c:IsA("TextButton") or c:IsA("TextLabel") then c:Destroy() end
+	end
+	query = tostring(query or ""):lower()
+	local shown = 0
+	for _, it in ipairs(spawnIndex) do
+		if shown >= 40 then break end
+		if query == "" or it.name:lower():find(query, 1, true) or tostring(it.key):lower():find(query, 1, true) then
+			shown = shown + 1
+			local b = Instance.new("TextButton")
+			b.Size = UDim2.new(1, 0, 0, 28); b.BackgroundColor3 = C_BTN
+			b.Text = "  " .. it.name .. "   +"
+			b.TextXAlignment = Enum.TextXAlignment.Left
+			b.TextColor3 = Rarity[it.rarity] or C_TXT
+			b.Font = Enum.Font.Gotham; b.TextSize = 12; b.BorderSizePixel = 0
+			b.ZIndex = 3; b.LayoutOrder = shown; b.Parent = SpawnList; corner(b, 6)
+			track(b.MouseButton1Click:Connect(function()
+				local owned = (it.cat == "Pets") and OwnedPets or OwnedWeapons
+				owned[it.key] = (owned[it.key] or 0) + 1
+				renderInventory()  -- refresh the trade inventory immediately
+				b.Text = "  " .. it.name .. "   ✓ x" .. owned[it.key]
+			end))
+		end
+	end
+	if shown == 0 then
+		local e = Instance.new("TextLabel")
+		e.Size = UDim2.new(1, 0, 0, 24); e.BackgroundTransparency = 1
+		e.Text = "no matches"; e.TextColor3 = C_DIM; e.Font = Enum.Font.Gotham
+		e.TextSize = 12; e.ZIndex = 3; e.Parent = SpawnList
+	end
+end
+track(SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+	refreshSpawn(SearchBox.Text)
+end))
+refreshSpawn("")
+
+--------------------------------------------------------------------------------
+-- PAGE 3 — Accept
 --------------------------------------------------------------------------------
 local pAccept = makeTab("Accept")
 
