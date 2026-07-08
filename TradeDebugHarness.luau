@@ -223,20 +223,27 @@ local OwnedPets = { Corgi=5, Bunny=2, Dragon=1, Dogey=1 }
 local UIS = game:GetService("UserInputService")
 local IsTouch = UIS.TouchEnabled and not UIS.MouseEnabled
 
+-- A ScreenGui "looks like" a trade GUI if it owns Container.Trade, or is named
+-- Trade/…Phone with a Container. NOTE: we deliberately do NOT require Offer1 —
+-- it may resolve on a different node, and requiring it made the GUI undetected.
+local function looksLikeTrade(gui)
+	if not gui:IsA("ScreenGui") then return false end
+	if resolve(gui, "Container.Trade") then return true end
+	local n = string.lower(gui.Name)
+	if (string.find(n, "trade") or string.find(n, "phone")) and gui:FindFirstChild("Container") then
+		return true
+	end
+	return false
+end
+
 local function findTradeGui()
-	-- Gather every ScreenGui that actually owns the trade tree.
 	local candidates = {}
 	for _, gui in ipairs(PlayerGui:GetChildren()) do
-		if gui:IsA("ScreenGui") and resolve(gui, "Container.Trade.Offer1") then
-			table.insert(candidates, gui)
-		end
+		if looksLikeTrade(gui) then table.insert(candidates, gui) end
 	end
 	if #candidates == 0 then
-		-- Deep fallback across descendants (nested ScreenGuis).
 		for _, gui in ipairs(PlayerGui:GetDescendants()) do
-			if gui:IsA("ScreenGui") and resolve(gui, "Container.Trade.Offer1") then
-				table.insert(candidates, gui)
-			end
+			if looksLikeTrade(gui) then table.insert(candidates, gui) end
 		end
 	end
 
@@ -264,28 +271,24 @@ local function findTradeGui()
 end
 
 local TradeGUI = findTradeGui()
+-- Do NOT abort if the trade GUI isn't found — the debug panel must still appear
+-- (it's the only on-screen feedback). Everything below is nil-guarded.
 if not TradeGUI then
-	warn("[TradeDebug] Could not find a Trade ScreenGui in PlayerGui. Aborting.\n" ..
-		"[TradeDebug] ScreenGuis present: " .. (function()
-			local names = {}
-			for _, g in ipairs(PlayerGui:GetChildren()) do table.insert(names, g.Name) end
-			return table.concat(names, ", ")
-		end)())
-	return
+	warn("[TradeDebug] Trade GUI not found — panel will still show with status.")
 end
 
 -- Resolve the key sub-frames (GUI2 "Container" layout). Prefer the exact path,
 -- but fall back to a recursive by-name search so slightly different trees still
 -- bind. Every downstream access is nil-guarded regardless.
-local Offer1  = resolve(TradeGUI, "Container.Trade.Offer1") or TradeGUI:FindFirstChild("Offer1", true)
-local Offer2  = resolve(TradeGUI, "Container.Trade.Offer2") or TradeGUI:FindFirstChild("Offer2", true)
-local TradeRoot = (Offer1 and Offer1.Parent) or resolve(TradeGUI, "Container.Trade")   -- the trade panel
-local Container = (TradeRoot and TradeRoot.Parent) or resolve(TradeGUI, "Container")
-	or TradeGUI:FindFirstChild("Container")
-local ItemsPicker = resolve(TradeGUI, "Container.Items")
-	or (Container and Container:FindFirstChild("Items")) or TradeGUI:FindFirstChild("Items", true)
-local InventoryFrame = resolve(TradeGUI, "Container.Items.Main.Weapons.Items.Container.Current.Container")
-local PetsFrame      = resolve(TradeGUI, "Container.Items.Main.Pets.Items.Container.Current.Container")
+local function ffc(root, name) return root and root:FindFirstChild(name, true) or nil end
+local Offer1  = (TradeGUI and resolve(TradeGUI, "Container.Trade.Offer1")) or ffc(TradeGUI, "Offer1")
+local Offer2  = (TradeGUI and resolve(TradeGUI, "Container.Trade.Offer2")) or ffc(TradeGUI, "Offer2")
+local TradeRoot = (Offer1 and Offer1.Parent) or (TradeGUI and resolve(TradeGUI, "Container.Trade"))
+local Container = (TradeRoot and TradeRoot.Parent) or (TradeGUI and resolve(TradeGUI, "Container")) or ffc(TradeGUI, "Container")
+local ItemsPicker = (TradeGUI and resolve(TradeGUI, "Container.Items"))
+	or (Container and Container:FindFirstChild("Items")) or ffc(TradeGUI, "Items")
+local InventoryFrame = TradeGUI and resolve(TradeGUI, "Container.Items.Main.Weapons.Items.Container.Current.Container")
+local PetsFrame      = TradeGUI and resolve(TradeGUI, "Container.Items.Main.Pets.Items.Container.Current.Container")
 
 -- The request modal lives on the main leaderboard GUI, not the Trade GUI.
 -- A recursive search for anything named "TradeRequest" is the most robust find
@@ -311,15 +314,14 @@ local RequestFrame = findRequestFrame()
 -- Lobby "Waiting" screen). On phone the native flow is: a "!" badge appears on
 -- the leaderboard "+" button, and the request shows once the tab is opened.
 local IsPhone = IsTouch
-	or (string.find(string.lower(TradeGUI.Name), "phone") ~= nil)
-	or (RequestFrame ~= nil and RequestFrame:FindFirstAncestor("Waiting") ~= nil)
+	or (TradeGUI ~= nil and string.find(string.lower(TradeGUI.Name), "phone") ~= nil)
 	or (RequestFrame ~= nil and RequestFrame:FindFirstAncestor("Waiting") ~= nil)
 
 -- Find the "+" leaderboard button's notification badge (phone only).
 local function findPlusBadge()
 	if not RequestFrame then return nil end
 	local waiting = RequestFrame:FindFirstAncestor("Waiting")
-	local scope = waiting or (TradeGUI:IsA("ScreenGui") and TradeGUI) or PlayerGui
+	local scope = waiting or (TradeGUI and TradeGUI:IsA("ScreenGui") and TradeGUI) or PlayerGui
 	local leaderBar = scope:FindFirstChild("LeaderBar", true)
 	if leaderBar then
 		return resolve(leaderBar, "Main.Plus") or leaderBar:FindFirstChild("Plus", true)
@@ -693,7 +695,7 @@ local function completeTradeIfBothAccepted()
 		if processing then revealAncestors(processing); processing.Visible = true end
 		task.delay(2, function()
 			if processing then processing.Visible = false end
-			if TradeGUI:IsA("ScreenGui") then TradeGUI.Enabled = false end
+			if TradeGUI and TradeGUI:IsA("ScreenGui") then TradeGUI.Enabled = false end
 			if Container then Container.Visible = false end
 		end)
 	end
@@ -713,7 +715,7 @@ local function startTrade(player2Name)
 
 	-- Open the Trade panel (Items hidden — native default). Bring the trade
 	-- ScreenGui + ancestor chain on-screen so the layout pops on.
-	if TradeGUI:IsA("ScreenGui") then TradeGUI.Enabled = true end
+	if TradeGUI and TradeGUI:IsA("ScreenGui") then TradeGUI.Enabled = true end
 	revealAncestors(Offer1 or TradeRoot or Container)
 	if Container then Container.Visible = true end
 	if TradeRoot then TradeRoot.Visible = true end
@@ -743,7 +745,7 @@ local function terminate(panel)
 		end)
 	end
 	task.delay(0.35, function()
-		if TradeGUI:IsA("ScreenGui") then TradeGUI.Enabled = false end
+		if TradeGUI and TradeGUI:IsA("ScreenGui") then TradeGUI.Enabled = false end
 		setVisible(TradeGUI, "Container.Trade", false)
 		setVisible(TradeGUI, "Container.Items", false)
 	end)
@@ -947,7 +949,7 @@ Status.Size = UDim2.new(1, 0, 0, 66)
 Status.BackgroundTransparency = 1
 local function ok(x) return x and "OK" or "nil" end
 Status.Text = ("layout: %s (%s)\nReq %s | Trade %s | Cont %s\nItems %s | Inv %s | Pets %s"):format(
-	TradeGUI.Name, IsPhone and "phone" or "pc", ok(RequestFrame), ok(TradeRoot), ok(Container),
+	(TradeGUI and TradeGUI.Name or "NOT FOUND"), IsPhone and "phone" or "pc", ok(RequestFrame), ok(TradeRoot), ok(Container),
 	ok(ItemsPicker), ok(InventoryFrame), ok(PetsFrame))
 Status.TextColor3 = TEXT_DIM
 Status.Font = Enum.Font.Gotham
@@ -1072,5 +1074,5 @@ do
 	end
 end
 
-print("[TradeDebug] Harness loaded. Layout: " .. TradeGUI.Name ..
+print("[TradeDebug] Harness loaded. Layout: " .. (TradeGUI and TradeGUI.Name or "NOT FOUND") ..
 	" | Use the TradeDebugPanel to drive the offline trade.")
