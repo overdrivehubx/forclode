@@ -1169,22 +1169,32 @@ Dump.TextWrapped = true; Dump.TextYAlignment = Enum.TextYAlignment.Top
 Dump.TextXAlignment = Enum.TextXAlignment.Left; Dump.Visible = false; Dump.Parent = pInfo
 pad(Dump, 8); corner(Dump, 8)
 
-makeRowButton(pInfo, "Offer structure", "read child names of Offer1/Offer2", "Dump", C_ACCENT, function()
+makeRowButton(pInfo, "Trade tree", "dump the real node names", "Dump", C_ACCENT, function()
 	local lines = {}
-	for _, side in ipairs({ "Offer1", "Offer2" }) do
-		local n = 0
-		for _, d in ipairs(PlayerGui:GetDescendants()) do
-			if d.Name == side and d:IsA("GuiObject") then
-				n = n + 1
-				local kids = {}
-				for _, c in ipairs(d:GetChildren()) do table.insert(kids, c.Name) end
-				table.insert(lines, side .. " #" .. n .. " <" .. d.Parent.Name .. ">: " .. table.concat(kids, ", "))
+	local count = 0
+	local function walk(inst, depth)
+		if depth > 3 or count > 140 then return end
+		for _, c in ipairs(inst:GetChildren()) do
+			count = count + 1
+			if count > 140 then table.insert(lines, "  …(truncated)"); return end
+			local extra = ""
+			if c:IsA("TextLabel") or c:IsA("TextButton") then
+				extra = ' "' .. string.sub(tostring(c.Text), 1, 22) .. '"'
 			end
+			table.insert(lines, string.rep(" ", depth * 2) .. c.Name .. " [" .. c.ClassName .. "]" .. extra)
+			walk(c, depth + 1)
 		end
-		if n == 0 then table.insert(lines, side .. ": (none found)") end
 	end
-	Dump.Text = table.concat(lines, "\n\n")
+	local root = TradeRoot or Container or TradeGUI
+	if root then
+		table.insert(lines, "ROOT " .. root:GetFullName())
+		walk(root, 0)
+	else
+		table.insert(lines, "no trade root resolved")
+	end
+	Dump.Text = table.concat(lines, "\n")
 	Dump.Visible = true
+	Dump.Size = UDim2.new(1, 0, 0, 10)
 end)
 
 selectTab("Trade")
