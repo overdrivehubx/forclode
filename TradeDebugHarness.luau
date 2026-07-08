@@ -52,8 +52,10 @@ local PlayerGui     = LocalPlayer:WaitForChild("PlayerGui")
 -- Destroy a stale panel and tear down the previous runtime BEFORE building a
 -- fresh one, so the harness can be re-run any number of times in one session.
 do
-	local Old = PlayerGui:FindFirstChild("TradeDebugPanel")
-	if Old then Old:Destroy() end
+	for _, n in ipairs({ "TradeDebugPanel", "TradeDebugRequest" }) do
+		local Old = PlayerGui:FindFirstChild(n)
+		if Old then Old:Destroy() end
+	end
 
 	local Prev = _G.__TradeDebug
 	if Prev then
@@ -186,43 +188,74 @@ local function findTradeGui()
 	-- Preferred explicit names, newest first.
 	for _, name in ipairs({ "Trade", "TradeGUI_Phone" }) do
 		local gui = PlayerGui:FindFirstChild(name)
-		if gui then return gui end
+		if gui and gui:IsA("ScreenGui") and gui:FindFirstChild("Container") then return gui end
 	end
-	-- Fallback: sniff any ScreenGui that owns the tell-tale Container.Trade path.
-	for _, gui in ipairs(PlayerGui:GetChildren()) do
+	-- Sniff any ScreenGui that owns the tell-tale Container.Trade.Offer1 path.
+	for _, gui in ipairs(PlayerGui:GetDescendants()) do
 		if gui:IsA("ScreenGui") and resolve(gui, "Container.Trade.Offer1") then
 			return gui
 		end
+	end
+	-- Last resort: find an "Offer1" frame anywhere and climb to its ScreenGui.
+	local anyOffer = PlayerGui:FindFirstChild("Offer1", true)
+	if anyOffer then
+		local a = anyOffer
+		while a and not a:IsA("ScreenGui") do a = a.Parent end
+		if a then return a end
 	end
 	return nil
 end
 
 local TradeGUI = findTradeGui()
 if not TradeGUI then
-	warn("[TradeDebug] Could not find a Trade ScreenGui in PlayerGui. Aborting.")
+	warn("[TradeDebug] Could not find a Trade ScreenGui in PlayerGui. Aborting.\n" ..
+		"[TradeDebug] ScreenGuis present: " .. (function()
+			local names = {}
+			for _, g in ipairs(PlayerGui:GetChildren()) do table.insert(names, g.Name) end
+			return table.concat(names, ", ")
+		end)())
 	return
 end
 
--- Resolve the key sub-frames (GUI2 "Container" layout). Some may be nil on
--- other layouts; every access below is guarded.
-local TradeRoot   = resolve(TradeGUI, "Container.Trade")               -- the trade panel
-local Offer1       = resolve(TradeGUI, "Container.Trade.Offer1")
-local Offer2       = resolve(TradeGUI, "Container.Trade.Offer2")
-local ItemsPicker  = resolve(TradeGUI, "Container.Items")             -- inventory picker
+-- Resolve the key sub-frames (GUI2 "Container" layout). Prefer the exact path,
+-- but fall back to a recursive by-name search so slightly different trees still
+-- bind. Every downstream access is nil-guarded regardless.
+local Offer1  = resolve(TradeGUI, "Container.Trade.Offer1") or TradeGUI:FindFirstChild("Offer1", true)
+local Offer2  = resolve(TradeGUI, "Container.Trade.Offer2") or TradeGUI:FindFirstChild("Offer2", true)
+local TradeRoot = (Offer1 and Offer1.Parent) or resolve(TradeGUI, "Container.Trade")   -- the trade panel
+local Container = (TradeRoot and TradeRoot.Parent) or resolve(TradeGUI, "Container")
+	or TradeGUI:FindFirstChild("Container")
+local ItemsPicker = resolve(TradeGUI, "Container.Items")
+	or (Container and Container:FindFirstChild("Items")) or TradeGUI:FindFirstChild("Items", true)
 local InventoryFrame = resolve(TradeGUI, "Container.Items.Main.Weapons.Items.Container.Current.Container")
 local PetsFrame      = resolve(TradeGUI, "Container.Items.Main.Pets.Items.Container.Current.Container")
 
 -- The request modal lives on the main leaderboard GUI, not the Trade GUI.
+-- A recursive search for anything named "TradeRequest" is the most robust find
+-- across the PC / Phone / Xbox / legacy layouts.
 local function findRequestFrame()
+	-- Explicit known paths first (fast, unambiguous).
 	for _, gui in ipairs(PlayerGui:GetChildren()) do
 		local rf = resolve(gui, "Leaderboard.Container.TradeRequest")
 			or resolve(gui, "Game.Leaderboard.Container.TradeRequest")
 			or resolve(gui, "Lobby.Screens.Waiting.Leaderboard.Container.OverlayMenu.TradeRequest")
 		if rf then return rf end
 	end
-	return nil
+	-- Recursive fallback: any descendant literally named "TradeRequest".
+	return PlayerGui:FindFirstChild("TradeRequest", true)
 end
 local RequestFrame = findRequestFrame()
+
+-- Diagnostic dump so the runtime tree is visible in the console if anything is
+-- missing. Share this line if a frame fails to bind.
+local function fn(inst) return inst and inst:GetFullName() or "nil" end
+print("[TradeDebug] Discovery:")
+print("  TradeGUI      = " .. fn(TradeGUI))
+print("  Container     = " .. fn(Container))
+print("  TradeRoot     = " .. fn(TradeRoot))
+print("  Offer1/Offer2 = " .. fn(Offer1) .. "  |  " .. fn(Offer2))
+print("  ItemsPicker   = " .. fn(ItemsPicker))
+print("  RequestFrame  = " .. fn(RequestFrame) .. (RequestFrame and "" or "  (will use synthetic fallback)"))
 
 --==============================================================================
 -- 5. THE LOCAL TRADE STATE  (replaces the entire server backend)
@@ -509,36 +542,113 @@ end
 -- 8. REQUEST MODAL + TRADE LIFECYCLE  (local stand-ins for the Remote chain)
 --==============================================================================
 
--- Show the native "trade request" modal (accepting variant) with the P2 name.
--- This ONLY reveals the modal — the main trade panels stay hidden until the
--- game's built-in green Accept button is clicked (see the hook in section 10).
+-- Forward declaration so the synthetic modal's Accept button can call it.
+local startTrade
+
+-- A synthetic MM2-style request modal, built with Instance.new, used ONLY when
+-- the native TradeRequest frame can't be located — so the request window always
+-- appears for capture. Created lazily, reused across shows.
+local SyntheticGui, SyntheticName
+local function ensureSyntheticModal()
+	if SyntheticGui and SyntheticGui.Parent then return end
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "TradeDebugRequest"
+	gui.ResetOnSpawn = false
+	gui.DisplayOrder = 999
+	gui.Enabled = true
+	gui.Parent = PlayerGui
+
+	local card = Instance.new("Frame")
+	card.Name = "Card"
+	card.Size = UDim2.new(0, 320, 0, 150)
+	card.Position = UDim2.new(0.5, -160, 0.28, 0)
+	card.BackgroundColor3 = Color3.fromRGB(33, 38, 47)
+	card.BorderSizePixel = 0
+	card.Parent = gui
+	local cc = Instance.new("UICorner"); cc.CornerRadius = UDim.new(0, 12); cc.Parent = card
+	local cs = Instance.new("UIStroke"); cs.Color = Color3.fromRGB(60, 68, 84); cs.Thickness = 1; cs.Parent = card
+
+	local title = Instance.new("TextLabel")
+	title.Name = "Title"
+	title.Size = UDim2.new(1, -24, 0, 60)
+	title.Position = UDim2.new(0, 12, 0, 12)
+	title.BackgroundTransparency = 1
+	title.TextColor3 = Color3.fromRGB(228, 232, 240)
+	title.Font = Enum.Font.GothamBold
+	title.TextSize = 16
+	title.TextWrapped = true
+	title.Text = "wants to trade."
+	title.Parent = card
+
+	local function mk(name, txt, color, xScale)
+		local b = Instance.new("TextButton")
+		b.Name = name
+		b.Size = UDim2.new(0.5, -18, 0, 40)
+		b.Position = UDim2.new(xScale, xScale == 0 and 12 or 6, 1, -52)
+		b.BackgroundColor3 = color
+		b.Text = txt
+		b.TextColor3 = Color3.fromRGB(255, 255, 255)
+		b.Font = Enum.Font.GothamMedium
+		b.TextSize = 14
+		b.BorderSizePixel = 0
+		b.Parent = card
+		local bc = Instance.new("UICorner"); bc.CornerRadius = UDim.new(0, 8); bc.Parent = b
+		return b
+	end
+	local accept = mk("Accept", "Accept", Color3.fromRGB(46, 160, 87), 0)
+	local decline = mk("Decline", "Decline", Color3.fromRGB(190, 60, 60), 0.5)
+
+	accept.MouseButton1Click:Connect(function()
+		gui.Enabled = false
+		if startTrade then startTrade(PendingP2Name or "Player2") end
+	end)
+	decline.MouseButton1Click:Connect(function()
+		gui.Enabled = false
+	end)
+
+	SyntheticGui = gui
+	SyntheticName = title
+end
+
+-- Show the request modal (accepting variant) with the P2 name. This ONLY reveals
+-- the modal — the main trade panels stay hidden until the game's built-in green
+-- Accept button (or the synthetic one) is clicked.
 local function showRequestModal(player2Name)
 	PendingP2Name = player2Name
-	if not RequestFrame then
-		warn("[TradeDebug] Request modal frame (Leaderboard...TradeRequest) not found.")
-		return
+	if RequestFrame then
+		setVisible(RequestFrame, "Accepting", true)
+		setVisible(RequestFrame, "Sending", false)
+		setProp(RequestFrame, "Accepting.Username", "Text", player2Name)
+		setProp(RequestFrame, "Accepting.Title", "Text", player2Name .. " wants to trade.")
+		setProp(TradeRoot, "Offer2.Username", "Text", "(" .. player2Name .. ")")
+		RequestFrame.Visible = true
+	else
+		-- No native frame — fall back to the synthetic modal so a window shows.
+		ensureSyntheticModal()
+		SyntheticName.Text = player2Name .. " wants to trade."
+		SyntheticGui.Enabled = true
+		setProp(TradeRoot, "Offer2.Username", "Text", "(" .. player2Name .. ")")
 	end
-	setVisible(RequestFrame, "Accepting", true)
-	setVisible(RequestFrame, "Sending", false)
-	setProp(RequestFrame, "Accepting.Username", "Text", player2Name)
-	setProp(TradeRoot, "Offer2.Username", "Text", "(" .. player2Name .. ")")
-	RequestFrame.Visible = true
 end
 
 -- Begin the offline trade: hide the modal, reset offers, open the panels, render.
--- Invoked by the native MM2 Accept button (not directly by the debug button),
--- mirroring the real AcceptRequest -> StartTrade -> UpdateTrade lifecycle.
-local function startTrade(player2Name)
+-- Invoked by the native (or synthetic) Accept button, mirroring the real
+-- AcceptRequest -> StartTrade -> UpdateTrade lifecycle.
+function startTrade(player2Name)
 	DebugTradeTable.Player2.Player = { Name = player2Name, __fake = true }
 	DebugTradeTable.Player1.Offer = {}
 	DebugTradeTable.Player2.Offer = {}
 	DebugTradeTable.Player1.Accepted = false
 	DebugTradeTable.Player2.Accepted = false
 	if RequestFrame then RequestFrame.Visible = false end
+	if SyntheticGui then SyntheticGui.Enabled = false end
 
-	-- Open the actual game panels now that the native Accept was clicked.
-	-- Set every screen explicitly so the interface pops on instantly.
+	-- Open the actual game panels now that Accept was clicked. Drive the resolved
+	-- instances directly (most robust) AND the string paths (belt-and-braces).
 	if TradeGUI:IsA("ScreenGui") then TradeGUI.Enabled = true end
+	if Container   then Container.Visible = true end
+	if TradeRoot   then TradeRoot.Visible = true end
+	if ItemsPicker then ItemsPicker.Visible = true end
 	setVisible(TradeGUI, "Container", true)
 	setVisible(TradeGUI, "Container.Trade", true)
 	setVisible(TradeGUI, "Container.Items", true)
@@ -568,6 +678,9 @@ local function terminate(panel)
 		setVisible(TradeGUI, "Container.Trade", false)
 		setVisible(TradeGUI, "Container.Items", false)
 	end)
+
+	-- Drop the synthetic request modal if one was created.
+	if SyntheticGui then pcall(function() SyntheticGui:Destroy() end) SyntheticGui = nil end
 
 	-- Wipe environment tables.
 	clearRenderConnections()
@@ -758,7 +871,9 @@ Status.Parent = Window
 --==============================================================================
 -- Clicking the game's built-in green Accept button (not the debug button) is
 -- what opens the real trade layout — mirroring AcceptRequest -> StartTrade.
-do
+-- Skipped entirely when there is no native RequestFrame (synthetic modal wires
+-- its own Accept button in ensureSyntheticModal).
+if RequestFrame then
 	-- Return `inst` if it is a button, else the first GuiButton nested inside it.
 	local function firstButtonIn(inst)
 		if not inst then return nil end

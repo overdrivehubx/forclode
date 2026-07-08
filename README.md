@@ -78,5 +78,28 @@ Derived from the provided decompiled scripts:
 - `Sync/Item` — item fields (`ItemName`, `Image`, `ItemType`, `Rarity`,
   `Chroma`, …). A representative slice is embedded so slots render offline.
 
+## Troubleshooting
+
+On load the harness prints a **discovery dump** to the console, e.g.:
+
+```
+[TradeDebug] Discovery:
+  TradeGUI      = Players.You.PlayerGui.Trade
+  Container     = ...Trade.Container
+  TradeRoot     = ...Container.Trade
+  Offer1/Offer2 = ...Offer1  |  ...Offer2
+  ItemsPicker   = ...Container.Items
+  RequestFrame  = ...Leaderboard.Container.TradeRequest
+```
+
+- If **RequestFrame = nil**, the native trade-request frame wasn't found, and a
+  **synthetic MM2-style modal** is shown instead so the request window still
+  appears. Its green Accept opens the trade exactly like the native button.
+- If **TradeRoot / Container / ItemsPicker** are `nil`, your GUI tree differs
+  from the expected paths — paste the discovery line and the paths can be pinned.
+
+Discovery is resilient: it resolves the exact paths first, then falls back to a
+recursive by-name search (`Offer1`, `Container`, `Items`, `TradeRequest`).
+
 > This harness only manipulates the local `PlayerGui`. It sends nothing to the
 > server and cannot affect real trades, other players, or saved data.
