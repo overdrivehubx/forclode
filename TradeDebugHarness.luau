@@ -403,6 +403,11 @@ local OfferMode = "Player1"
 -- green Accept button is clicked (mirrors AcceptRequest -> StartTrade).
 local PendingP2Name = "Player2"
 
+-- Hooks run at the start of every new trade (used to reset panel toggles etc.).
+local onNewTrade = {}
+-- Token that invalidates a pending "trade complete" close if a new trade starts.
+local completeToken = 0
+
 --==============================================================================
 -- 6. TEMPLATE EXTRACTION  (capture the native slot framework before clearing)
 --==============================================================================
@@ -743,17 +748,33 @@ end
 -- variants never stack on top of each other:
 --   isIncoming = true  -> "Accepting" (someone sends YOU a request: Accept/Decline)
 --   isIncoming = false -> "Sending"   (YOU send a request: waiting + Cancel)
+-- Return the direct child of `root` that (recursively) contains a node named
+-- `descName` — used to identify the request variants by their buttons rather
+-- than by frame name (this build renames the frames).
+local function variantContaining(root, descName)
+	local node = root:FindFirstChild(descName, true)
+	if not node then return nil end
+	while node and node.Parent ~= root do node = node.Parent end
+	return node
+end
+
 local function configureRequest(player2Name, isIncoming)
 	if not RequestFrame then return end
+	-- Identify the two variants robustly by the buttons they contain:
+	--   incoming variant  = the one with an "Accept" button
+	--   outgoing variant  = the one with a "Cancel" button
 	local accepting = RequestFrame:FindFirstChild("Accepting")
-	local sending   = RequestFrame:FindFirstChild("Sending")
+		or variantContaining(RequestFrame, "Accept")
+	local sending = RequestFrame:FindFirstChild("Sending")
+		or variantContaining(RequestFrame, "Cancel")
 
-	-- Exactly one variant visible.
-	if accepting then
-		if isIncoming then revealSubtree(accepting) else accepting.Visible = false end
-	end
-	if sending then
-		if isIncoming then sending.Visible = false else revealSubtree(sending) end
+	-- Exactly one variant visible; force the other hidden (fixes stacked frames).
+	if isIncoming then
+		if accepting then revealSubtree(accepting) end
+		if sending and sending ~= accepting then sending.Visible = false end
+	else
+		if sending then revealSubtree(sending) end
+		if accepting and accepting ~= sending then accepting.Visible = false end
 	end
 	if not accepting and not sending then revealSubtree(RequestFrame) end
 
@@ -826,10 +847,19 @@ local function completeTradeIfBothAccepted()
 		local processing = resolve(TradeGUI, "Container.Processing")
 			or (Container and Container:FindFirstChild("Processing"))
 		if processing then revealAncestors(processing); processing.Visible = true end
+		completeToken = completeToken + 1
+		local myToken = completeToken
 		task.delay(2, function()
+			-- Abort if a new trade started in the meantime.
+			if myToken ~= completeToken then return end
 			if processing then processing.Visible = false end
 			if TradeGUI and TradeGUI:IsA("ScreenGui") then TradeGUI.Enabled = false end
 			if Container then Container.Visible = false end
+			-- Reset accepted state so the NEXT trade starts clean.
+			DebugTradeTable.Player1.Accepted = false
+			DebugTradeTable.Player2.Accepted = false
+			showAcceptedBadge("your", false); showAcceptedBadge("their", false)
+			for _, f in ipairs(onNewTrade) do pcall(f) end
 		end)
 	end
 end
@@ -838,6 +868,7 @@ end
 -- Invoked by the native MM2 Accept button, mirroring the real
 -- AcceptRequest -> StartTrade -> UpdateTrade lifecycle.
 local function startTrade(player2Name)
+	completeToken = completeToken + 1  -- cancel any pending "trade complete" close
 	DebugTradeTable.Player2.Player = { Name = player2Name, __fake = true }
 	DebugTradeTable.Player1.Offer = {}
 	DebugTradeTable.Player2.Offer = {}
@@ -845,6 +876,9 @@ local function startTrade(player2Name)
 	DebugTradeTable.Player2.Accepted = false
 	if RequestFrame then RequestFrame.Visible = false end
 	if IsPhone then local b = findPlusBadge(); if b then pcall(function() b.Visible = false end) end end
+	-- Clear any leftover accepted badges + reset panel toggles for a fresh trade.
+	showAcceptedBadge("your", false); showAcceptedBadge("their", false)
+	for _, f in ipairs(onNewTrade) do pcall(f) end
 
 	-- Open the Trade panel (Items hidden — native default). Bring the trade
 	-- ScreenGui + ancestor chain on-screen so the layout pops on.
@@ -1134,7 +1168,7 @@ end
 local pTrade = makeTab("Trade")
 
 -- Name input (a full-width row with a TextBox).
-local nameRow = makeRow(pTrade, "Second player", "name shown in request & trade")
+local nameRow = makeRow(pTrade, "Second player", "pick from server ▼ or type")
 local NameBox = Instance.new("TextBox")
 NameBox.Size = UDim2.new(0, 118, 0, 30); NameBox.Position = UDim2.new(1, -130, 0.5, -15)
 NameBox.BackgroundColor3 = C_BG; NameBox.Text = "Player2"
@@ -1149,6 +1183,57 @@ local function currentName()
 	return n
 end
 
+-- Player picker: a collapsible list of the players currently on the server.
+local pickRow = makeRow(pTrade, "Choose player", "tap to select from server")
+local PickBtn = Instance.new("TextButton")
+PickBtn.Size = UDim2.new(0, 74, 0, 30); PickBtn.Position = UDim2.new(1, -86, 0.5, -15)
+PickBtn.BackgroundColor3 = C_ACCENT; PickBtn.Text = "Players ▼"; PickBtn.TextColor3 = C_TXT
+PickBtn.Font = Enum.Font.GothamMedium; PickBtn.TextSize = 12; PickBtn.BorderSizePixel = 0
+PickBtn.ZIndex = 4; PickBtn.Parent = pickRow; corner(PickBtn, 8)
+
+rowOrder = rowOrder + 1
+local PlayerList = Instance.new("Frame")
+PlayerList.Size = UDim2.new(1, 0, 0, 0); PlayerList.AutomaticSize = Enum.AutomaticSize.Y
+PlayerList.BackgroundColor3 = C_BG; PlayerList.BorderSizePixel = 0; PlayerList.ZIndex = 2
+PlayerList.LayoutOrder = rowOrder; PlayerList.Visible = false; PlayerList.Parent = pTrade
+corner(PlayerList, 10)
+local pll = Instance.new("UIListLayout")
+pll.Padding = UDim.new(0, 4); pll.SortOrder = Enum.SortOrder.LayoutOrder; pll.Parent = PlayerList
+pad(PlayerList, 6)
+
+local function refreshPlayers()
+	for _, c in ipairs(PlayerList:GetChildren()) do
+		if c:IsA("TextButton") then c:Destroy() end
+	end
+	local n = 0
+	for _, pl in ipairs(Players:GetPlayers()) do
+		if pl ~= LocalPlayer then
+			n = n + 1
+			local b = Instance.new("TextButton")
+			b.Size = UDim2.new(1, 0, 0, 28); b.BackgroundColor3 = C_BTN
+			b.Text = pl.Name; b.TextColor3 = C_TXT; b.Font = Enum.Font.Gotham; b.TextSize = 12
+			b.BorderSizePixel = 0; b.ZIndex = 3; b.LayoutOrder = n; b.Parent = PlayerList
+			corner(b, 6)
+			b.MouseButton1Click:Connect(function()
+				NameBox.Text = pl.Name
+				PlayerList.Visible = false
+				PickBtn.Text = "Players ▼"
+			end)
+		end
+	end
+	if n == 0 then
+		local e = Instance.new("TextLabel")
+		e.Size = UDim2.new(1, 0, 0, 24); e.BackgroundTransparency = 1
+		e.Text = "no other players"; e.TextColor3 = C_DIM; e.Font = Enum.Font.Gotham
+		e.TextSize = 12; e.ZIndex = 3; e.Parent = PlayerList
+	end
+end
+track(PickBtn.MouseButton1Click:Connect(function()
+	PlayerList.Visible = not PlayerList.Visible
+	PickBtn.Text = PlayerList.Visible and "Players ▲" or "Players ▼"
+	if PlayerList.Visible then refreshPlayers() end
+end))
+
 makeRowButton(pTrade, "Incoming request", "someone sends YOU a request", "Show", C_ACCENT, function()
 	showRequestModal(currentName(), true)
 end)
@@ -1161,6 +1246,7 @@ local _, setItemsToggle = makeRowToggle(pTrade, "Item picker", "open inventory t
 	ItemsOpen = on
 	if on then openItemsPicker() else closeItemsPicker() end
 end)
+table.insert(onNewTrade, function() ItemsOpen = false; setItemsToggle(false) end)
 
 makeRowToggle(pTrade, "Add to Player 2 side", "off = your side (left) / on = right", false, function(on)
 	OfferMode = on and "Player2" or "Player1"
@@ -1171,16 +1257,18 @@ end)
 --------------------------------------------------------------------------------
 local pAccept = makeTab("Accept")
 
-makeRowToggle(pAccept, "You accepted (P1)", "YOU HAVE ACCEPTED.", false, function(on)
+local _, setAccP1 = makeRowToggle(pAccept, "You accepted (P1)", "YOU HAVE ACCEPTED.", false, function(on)
 	DebugTradeTable.Player1.Accepted = on
 	showAcceptedBadge("your", on, "YOU HAVE ACCEPTED.")
 	if on then completeTradeIfBothAccepted() end
 end)
-makeRowToggle(pAccept, "Other accepted (P2)", "OTHER PLAYER HAS ACCEPTED.", false, function(on)
+local _, setAccP2 = makeRowToggle(pAccept, "Other accepted (P2)", "OTHER PLAYER HAS ACCEPTED.", false, function(on)
 	DebugTradeTable.Player2.Accepted = on
 	showAcceptedBadge("their", on, "OTHER PLAYER HAS ACCEPTED.")
 	if on then completeTradeIfBothAccepted() end
 end)
+-- Reset both accept toggles whenever a fresh trade starts.
+table.insert(onNewTrade, function() setAccP1(false); setAccP2(false) end)
 makeRowButton(pAccept, "Terminate", "close & wipe the harness", "Wipe", C_RED, function()
 	terminate(Panel)
 end)
@@ -1229,10 +1317,16 @@ makeRowButton(pInfo, "Trade tree", "dump the real node names", "Dump", C_ACCENT,
 	end
 	local root = TradeRoot or Container or TradeGUI
 	if root then
-		table.insert(lines, "ROOT " .. root:GetFullName())
+		table.insert(lines, "TRADE " .. root:GetFullName())
 		walk(root, 0)
 	else
 		table.insert(lines, "no trade root resolved")
+	end
+	if RequestFrame then
+		table.insert(lines, "")
+		table.insert(lines, "REQUEST " .. RequestFrame:GetFullName())
+		count = 0
+		walk(RequestFrame, 0)
 	end
 	Dump.Text = table.concat(lines, "\n")
 	Dump.Visible = true
