@@ -408,6 +408,11 @@ local onNewTrade = {}
 -- Token that invalidates a pending "trade complete" close if a new trade starts.
 local completeToken = 0
 
+-- 6-second accept cooldown that starts whenever an offer changes (native MM2).
+local CooldownRunning = false
+local Cooldown = 6
+local cooldownToken = 0
+
 --==============================================================================
 -- 6. TEMPLATE EXTRACTION  (capture the native slot framework before clearing)
 --==============================================================================
@@ -661,6 +666,46 @@ function RenderTrade()
 	renderOffer("Player2", Offer2)
 end
 
+-- Start / restart the 6s "Please wait before accepting" cooldown, mirroring the
+-- native ResetCooldown that runs on every offer change.
+local function startAcceptCooldown()
+	Cooldown = 6
+	local cdNode = resolve(TradeRoot, "Actions.Accept.Cooldown")
+	local function setTitle()
+		local txt = " Please wait (" .. Cooldown .. ") before accepting."
+		setProp(TradeRoot, "Actions.Accept.Cooldown.Title", "Text", txt)
+		if cdNode and cdNode:IsA("TextLabel") then pcall(function() cdNode.Text = txt end) end
+	end
+	setTitle()
+	if not CooldownRunning then
+		if cdNode then revealAncestors(cdNode) end
+		setVisible(TradeRoot, "Actions.Accept.Cooldown", true)
+		CooldownRunning = true
+		cooldownToken = cooldownToken + 1
+		local myToken = cooldownToken
+		task.spawn(function()
+			repeat
+				task.wait(1)
+				if myToken ~= cooldownToken then return end  -- aborted by a new trade
+				Cooldown = Cooldown - 1
+				setTitle()
+			until Cooldown <= 0
+			if myToken ~= cooldownToken then return end
+			CooldownRunning = false
+			setVisible(TradeRoot, "Actions.Accept.Cooldown", false)
+		end)
+	else
+		Cooldown = 6  -- already running: just restart the countdown
+	end
+end
+
+-- Force-stop the cooldown (on new trade / reset).
+local function stopAcceptCooldown()
+	cooldownToken = cooldownToken + 1
+	CooldownRunning = false
+	setVisible(TradeRoot, "Actions.Accept.Cooldown", false)
+end
+
 -- Offer an item into whichever side OfferMode currently targets.
 local function offerItemLocal(itemKey, category)
 	if itemKey == "DefaultKnife" or itemKey == "DefaultGun" then return end
@@ -687,6 +732,7 @@ local function offerItemLocal(itemKey, category)
 	setVisible(TradeRoot, "Actions.Accept.Confirm", false)
 	setVisible(TradeRoot, "Actions.Accept.Cancel", false)
 	RenderTrade()
+	startAcceptCooldown()  -- 6s "please wait before accepting"
 end
 
 -- Sorting helper reused for both inventory panes.
@@ -894,6 +940,7 @@ local function startTrade(player2Name)
 	if IsPhone then local b = findPlusBadge(); if b then pcall(function() b.Visible = false end) end end
 	-- Clear any leftover accepted badges + reset panel toggles for a fresh trade.
 	showAcceptedBadge("your", false); showAcceptedBadge("their", false)
+	stopAcceptCooldown()
 	for _, f in ipairs(onNewTrade) do pcall(f) end
 
 	-- Open the Trade panel (Items hidden — native default). Bring the trade
@@ -1448,6 +1495,7 @@ do
 	local acceptBtn = resolve(TradeRoot, "Actions.Accept.ActionButton")
 	if acceptBtn then
 		track(acceptBtn.MouseButton1Click:Connect(function()
+			if CooldownRunning then return end                   -- blocked during 6s cooldown
 			if DebugTradeTable.Player1.Accepted then return end  -- already accepted (Cancel showing)
 			revealSubtree(resolve(TradeRoot, "Actions.Accept.Confirm"))
 			setVisible(TradeRoot, "Actions.Accept.Confirm", true)
@@ -1456,6 +1504,7 @@ do
 	local confirmBtn = resolve(TradeRoot, "Actions.Accept.Confirm.ActionButton")
 	if confirmBtn then
 		track(confirmBtn.MouseButton1Click:Connect(function()
+			if CooldownRunning then return end                   -- blocked during 6s cooldown
 			setYourAcceptedUI(true)   -- hides Confirm, shows Cancel, lights badge
 			if setAccP1 then setAccP1(true) end
 		end))
