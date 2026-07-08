@@ -260,12 +260,19 @@ local function findTradeGui()
 
 	local function isPhone(g) return string.find(string.lower(g.Name), "phone") ~= nil end
 
-	-- On touch prefer the *_Phone GUI; on desktop prefer the non-phone one.
+	-- Deterministic: the game only clones the platform's GUI, so if a *_Phone
+	-- trade GUI exists at all we are on mobile — use it. Touch is a tiebreaker.
 	for _, gui in ipairs(candidates) do
-		if IsTouch and isPhone(gui) then return gui end
-		if (not IsTouch) and (not isPhone(gui)) then return gui end
+		if isPhone(gui) then return gui end
 	end
-	-- Otherwise prefer whichever is currently Enabled, then just the first.
+	if IsTouch then
+		-- touch but no phone-named GUI: still prefer an Enabled candidate.
+		for _, gui in ipairs(candidates) do if gui.Enabled then return gui end end
+	end
+	-- Desktop / fallback: first non-phone, then Enabled, then first.
+	for _, gui in ipairs(candidates) do
+		if not isPhone(gui) then return gui end
+	end
 	for _, gui in ipairs(candidates) do
 		if gui.Enabled then return gui end
 	end
@@ -542,26 +549,35 @@ local function renderOffer(sideKey, offerFrame)
 	end
 end
 
--- Robustly show/hide the green "accepted" badge for one side. Finds the
--- "Accepted" node inside the offer frame (recursively, so odd layouts still
--- bind), forces it + its ancestors + its text visible, and stamps the native
--- message ("YOU HAVE ACCEPTED." / "OTHER PLAYER HAS ACCEPTED.").
-local function showAcceptedBadge(offerFrame, visible, message)
-	if not offerFrame then return end
-	local acc = offerFrame:FindFirstChild("Accepted", true)
-	if not acc then return end
-	if visible then
-		revealAncestors(acc)   -- ensure the offer/trade chain is on-screen
-		revealSubtree(acc)     -- show the badge frame and its text child
-		if message then
-			if acc:IsA("TextLabel") then pcall(function() acc.Text = message end) end
-			for _, d in ipairs(acc:GetDescendants()) do
-				if d:IsA("TextLabel") then pcall(function() d.Text = message end) end
-			end
+-- Per the source, the accepted indicator is Container.Trade.Offer1.Accepted /
+-- Offer2.Accepted, toggled purely by .Visible. To be immune to PC-vs-phone GUI
+-- selection, we light the "Accepted" node on EVERY offer frame of that side
+-- found anywhere in PlayerGui — only the currently-visible trade panel actually
+-- displays it (hidden panels keep their parents hidden, so nothing leaks).
+local function eachAcceptedNode(sideName, fn)
+	for _, d in ipairs(PlayerGui:GetDescendants()) do
+		if d.Name == sideName then
+			local acc = d:FindFirstChild("Accepted") or d:FindFirstChild("Accepted", true)
+			if acc then fn(acc) end
 		end
-	else
-		pcall(function() acc.Visible = false end)
 	end
+end
+
+-- sideName = "Offer1" (you) or "Offer2" (other).
+local function showAcceptedBadge(sideName, visible, message)
+	eachAcceptedNode(sideName, function(acc)
+		if visible then
+			revealSubtree(acc)  -- show the badge + its text child (not ancestors)
+			if message then
+				if acc:IsA("TextLabel") then pcall(function() acc.Text = message end) end
+				for _, d in ipairs(acc:GetDescendants()) do
+					if d:IsA("TextLabel") then pcall(function() d.Text = message end) end
+				end
+			end
+		else
+			pcall(function() acc.Visible = false end)
+		end
+	end)
 end
 
 -- Full re-render of the trade panel CONTENT from the local state table.
@@ -575,8 +591,8 @@ function RenderTrade()
 	setProp(TradeRoot, "Offer2.Username", "Text", "(" .. DebugTradeTable.Player2.Player.Name .. ")")
 
 	-- Acceptance flags -> the green "Accepted" badges.
-	showAcceptedBadge(Offer1, DebugTradeTable.Player1.Accepted, "YOU HAVE ACCEPTED.")
-	showAcceptedBadge(Offer2, DebugTradeTable.Player2.Accepted, "OTHER PLAYER HAS ACCEPTED.")
+	showAcceptedBadge("Offer1", DebugTradeTable.Player1.Accepted, "YOU HAVE ACCEPTED.")
+	showAcceptedBadge("Offer2", DebugTradeTable.Player2.Accepted, "OTHER PLAYER HAS ACCEPTED.")
 
 	renderOffer("Player1", Offer1)
 	renderOffer("Player2", Offer2)
@@ -794,7 +810,7 @@ end
 -- complete the trade if the local side has already accepted too.
 local function forceRemoteAccept()
 	DebugTradeTable.Player2.Accepted = true
-	showAcceptedBadge(Offer2, true, "OTHER PLAYER HAS ACCEPTED.")
+	showAcceptedBadge("Offer2", true, "OTHER PLAYER HAS ACCEPTED.")
 	completeTradeIfBothAccepted()
 end
 
@@ -1101,12 +1117,12 @@ local pAccept = makeTab("Accept")
 
 makeRowToggle(pAccept, "You accepted (P1)", "YOU HAVE ACCEPTED.", false, function(on)
 	DebugTradeTable.Player1.Accepted = on
-	showAcceptedBadge(Offer1, on, "YOU HAVE ACCEPTED.")
+	showAcceptedBadge("Offer1", on, "YOU HAVE ACCEPTED.")
 	if on then completeTradeIfBothAccepted() end
 end)
 makeRowToggle(pAccept, "Other accepted (P2)", "OTHER PLAYER HAS ACCEPTED.", false, function(on)
 	DebugTradeTable.Player2.Accepted = on
-	showAcceptedBadge(Offer2, on, "OTHER PLAYER HAS ACCEPTED.")
+	showAcceptedBadge("Offer2", on, "OTHER PLAYER HAS ACCEPTED.")
 	if on then completeTradeIfBothAccepted() end
 end)
 makeRowButton(pAccept, "Terminate", "close & wipe the harness", "Wipe", C_RED, function()
@@ -1230,7 +1246,7 @@ do
 	if confirmBtn then
 		track(confirmBtn.MouseButton1Click:Connect(function()
 			DebugTradeTable.Player1.Accepted = true
-			showAcceptedBadge(Offer1, true, "YOU HAVE ACCEPTED.")
+			showAcceptedBadge("Offer1", true, "YOU HAVE ACCEPTED.")
 			setVisible(TradeRoot, "Actions.Accept.Confirm", false)
 			completeTradeIfBothAccepted()
 		end))
