@@ -44,7 +44,15 @@ local TweenService  = game:GetService("TweenService")
 local RunService    = game:GetService("RunService")
 
 local LocalPlayer   = Players.LocalPlayer
-local PlayerGui     = LocalPlayer:WaitForChild("PlayerGui")
+-- Timed WaitForChild so a device that loads GUIs in a different order can't
+-- freeze the thread forever; fall back to a direct lookup if it times out.
+local PlayerGui     = LocalPlayer:WaitForChild("PlayerGui", 5)
+	or LocalPlayer:FindFirstChildOfClass("PlayerGui")
+	or LocalPlayer:FindFirstChild("PlayerGui")
+if not PlayerGui then
+	warn("[TradeDebug] PlayerGui unavailable — aborting.")
+	return
+end
 
 --==============================================================================
 -- 1. IDEMPOTENCE — strict garbage collection of any previous cycle
@@ -55,8 +63,11 @@ do
 	-- Destroy EVERY stale panel, wherever an executor may have parented it
 	-- (PlayerGui and, for some executors, a protected CoreGui container).
 	local scopes = { PlayerGui }
-	pcall(function() table.insert(scopes, game:GetService("CoreGui")) end)
-	pcall(function() if gethui then table.insert(scopes, gethui()) end end)
+	-- CoreGui access throws a Security Exception on some clients; isolate it so
+	-- it can never kill the thread before the panel is drawn.
+	local success, coreGui = pcall(function() return game:GetService("CoreGui") end)
+	if success and coreGui then table.insert(scopes, coreGui) end
+	if gethui then pcall(function() table.insert(scopes, gethui()) end) end
 	for _, scope in ipairs(scopes) do
 		for _, child in ipairs(scope:GetChildren()) do
 			if child.Name == "TradeDebugPanel" or child.Name == "TradeDebugRequest" then
@@ -531,6 +542,28 @@ local function renderOffer(sideKey, offerFrame)
 	end
 end
 
+-- Robustly show/hide the green "accepted" badge for one side. Finds the
+-- "Accepted" node inside the offer frame (recursively, so odd layouts still
+-- bind), forces it + its ancestors + its text visible, and stamps the native
+-- message ("YOU HAVE ACCEPTED." / "OTHER PLAYER HAS ACCEPTED.").
+local function showAcceptedBadge(offerFrame, visible, message)
+	if not offerFrame then return end
+	local acc = offerFrame:FindFirstChild("Accepted", true)
+	if not acc then return end
+	if visible then
+		revealAncestors(acc)   -- ensure the offer/trade chain is on-screen
+		revealSubtree(acc)     -- show the badge frame and its text child
+		if message then
+			if acc:IsA("TextLabel") then pcall(function() acc.Text = message end) end
+			for _, d in ipairs(acc:GetDescendants()) do
+				if d:IsA("TextLabel") then pcall(function() d.Text = message end) end
+			end
+		end
+	else
+		pcall(function() acc.Visible = false end)
+	end
+end
+
 -- Full re-render of the trade panel CONTENT from the local state table.
 -- NOTE: this must NOT toggle panel visibility (Enabled / Container.Trade /
 -- Items) — that is owned by startTrade / openItemsPicker / closeItemsPicker.
@@ -542,8 +575,8 @@ function RenderTrade()
 	setProp(TradeRoot, "Offer2.Username", "Text", "(" .. DebugTradeTable.Player2.Player.Name .. ")")
 
 	-- Acceptance flags -> the green "Accepted" badges.
-	setVisible(TradeRoot, "Offer1.Accepted", DebugTradeTable.Player1.Accepted)
-	setVisible(TradeRoot, "Offer2.Accepted", DebugTradeTable.Player2.Accepted)
+	showAcceptedBadge(Offer1, DebugTradeTable.Player1.Accepted, "YOU HAVE ACCEPTED.")
+	showAcceptedBadge(Offer2, DebugTradeTable.Player2.Accepted, "OTHER PLAYER HAS ACCEPTED.")
 
 	renderOffer("Player1", Offer1)
 	renderOffer("Player2", Offer2)
@@ -761,8 +794,7 @@ end
 -- complete the trade if the local side has already accepted too.
 local function forceRemoteAccept()
 	DebugTradeTable.Player2.Accepted = true
-	setVisible(TradeRoot, "Offer2.Accepted", true)
-	revealSubtree(resolve(TradeRoot, "Offer2.Accepted"))
+	showAcceptedBadge(Offer2, true, "OTHER PLAYER HAS ACCEPTED.")
 	completeTradeIfBothAccepted()
 end
 
@@ -801,24 +833,25 @@ local function terminate(panel)
 end
 
 --==============================================================================
--- 9. THE DEBUG CONTROLLER PANEL  —  "MollyHub"  (grey-blue, Instance.new)
+-- 9. THE DEBUG CONTROLLER PANEL  —  "MollyHub"  (sidebar UI, grey-blue)
 --==============================================================================
 -- Background image: upload your image to Roblox, then paste its decal/image
 -- asset id below (keep the "rbxassetid://" prefix). Leave 0 for no image.
 local BG_IMAGE = "rbxassetid://0"
 
--- Grey-blue palette.
-local C_BG      = Color3.fromRGB(28, 34, 46)   -- window base
-local C_PANEL   = Color3.fromRGB(41, 49, 66)   -- inputs / sunken
-local C_BTN     = Color3.fromRGB(53, 64, 86)   -- buttons
-local C_ACCENT  = Color3.fromRGB(97, 133, 184) -- blue-grey accent
-local C_GREEN   = Color3.fromRGB(60, 158, 110)
-local C_RED     = Color3.fromRGB(190, 82, 82)
-local C_TXT     = Color3.fromRGB(226, 232, 244)
-local C_DIM     = Color3.fromRGB(154, 170, 200)
+-- Grey-blue palette (with a soft blue neon accent, like the reference layout).
+local C_BG     = Color3.fromRGB(22, 27, 38)    -- window base
+local C_SIDE   = Color3.fromRGB(29, 35, 49)    -- sidebar
+local C_ROW    = Color3.fromRGB(35, 43, 60)    -- row / input panel
+local C_BTN    = Color3.fromRGB(52, 64, 88)    -- buttons
+local C_ACCENT = Color3.fromRGB(108, 150, 210) -- blue neon accent
+local C_GREEN  = Color3.fromRGB(60, 170, 115)
+local C_RED    = Color3.fromRGB(198, 84, 84)
+local C_TXT    = Color3.fromRGB(228, 234, 246)
+local C_DIM    = Color3.fromRGB(150, 166, 198)
 
-local function corner(inst, radius)
-	local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, radius or 8); c.Parent = inst; return c
+local function corner(inst, r)
+	local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, r or 8); c.Parent = inst; return c
 end
 local function pad(inst, px)
 	local p = Instance.new("UIPadding")
@@ -835,52 +868,81 @@ Panel.IgnoreGuiInset = true
 Panel.DisplayOrder = 1000
 Panel.Parent = PlayerGui
 
+-- Floating OPEN button (always present) — toggles the window.
+local OpenBtn = Instance.new("TextButton")
+OpenBtn.Name = "OpenButton"
+OpenBtn.Size = UDim2.new(0, 118, 0, 40)
+OpenBtn.Position = UDim2.new(0, 16, 0, 90)
+OpenBtn.BackgroundColor3 = C_SIDE
+OpenBtn.Text = "☰  MollyHub"
+OpenBtn.TextColor3 = C_TXT
+OpenBtn.Font = Enum.Font.GothamBold
+OpenBtn.TextSize = 14
+OpenBtn.BorderSizePixel = 0
+OpenBtn.Active = true
+OpenBtn.Parent = Panel
+corner(OpenBtn, 10)
+local ObStroke = Instance.new("UIStroke")
+ObStroke.Color = C_ACCENT; ObStroke.Thickness = 1.5; ObStroke.Transparency = 0.2; ObStroke.Parent = OpenBtn
+
 local Window = Instance.new("Frame")
 Window.Name = "Window"
-Window.Size = UDim2.new(0, 268, 0, 440)
-Window.Position = UDim2.new(0, 24, 0.5, -220)
+Window.Size = UDim2.new(0, 430, 0, 300)
+Window.Position = UDim2.new(0.5, -215, 0.5, -150)
 Window.BackgroundColor3 = C_BG
 Window.BorderSizePixel = 0
 Window.ClipsDescendants = true
 Window.Parent = Panel
-corner(Window, 14)
+corner(Window, 16)
 local WStroke = Instance.new("UIStroke")
-WStroke.Color = Color3.fromRGB(84, 104, 140); WStroke.Thickness = 1; WStroke.Parent = Window
+WStroke.Color = C_ACCENT; WStroke.Thickness = 1.5; WStroke.Transparency = 0.25; WStroke.Parent = Window
 
--- Background image + dark blue overlay for readability.
+-- Background image + overlay for readability.
 local Bg = Instance.new("ImageLabel")
 Bg.Name = "Bg"; Bg.Size = UDim2.new(1, 0, 1, 0); Bg.BackgroundTransparency = 1
 Bg.Image = BG_IMAGE; Bg.ScaleType = Enum.ScaleType.Crop
-Bg.ImageTransparency = 0.72; Bg.ZIndex = 0; Bg.Parent = Window
+Bg.ImageTransparency = 0.74; Bg.ZIndex = 0; Bg.Parent = Window
 local Overlay = Instance.new("Frame")
 Overlay.Size = UDim2.new(1, 0, 1, 0); Overlay.BackgroundColor3 = C_BG
-Overlay.BackgroundTransparency = 0.28; Overlay.BorderSizePixel = 0; Overlay.ZIndex = 0; Overlay.Parent = Window
+Overlay.BackgroundTransparency = 0.22; Overlay.BorderSizePixel = 0; Overlay.ZIndex = 0; Overlay.Parent = Window
 
--- Draggable title bar.
-local TitleBar = Instance.new("Frame")
-TitleBar.Name = "TitleBar"; TitleBar.Size = UDim2.new(1, 0, 0, 46)
-TitleBar.BackgroundColor3 = C_PANEL; TitleBar.BackgroundTransparency = 0.15
-TitleBar.BorderSizePixel = 0; TitleBar.ZIndex = 2; TitleBar.Active = true; TitleBar.Parent = Window
-local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, -50, 0, 24); Title.Position = UDim2.new(0, 14, 0, 6)
-Title.BackgroundTransparency = 1; Title.Text = "MollyHub"; Title.TextColor3 = C_TXT
-Title.Font = Enum.Font.GothamBold; Title.TextSize = 18; Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.ZIndex = 3; Title.Parent = TitleBar
-local Sub = Instance.new("TextLabel")
-Sub.Size = UDim2.new(1, -50, 0, 12); Sub.Position = UDim2.new(0, 14, 0, 28)
-Sub.BackgroundTransparency = 1; Sub.Text = "offline trade sandbox"; Sub.TextColor3 = C_DIM
-Sub.Font = Enum.Font.Gotham; Sub.TextSize = 11; Sub.TextXAlignment = Enum.TextXAlignment.Left
-Sub.ZIndex = 3; Sub.Parent = TitleBar
-local CloseX = Instance.new("TextButton")
-CloseX.Size = UDim2.new(0, 30, 0, 30); CloseX.Position = UDim2.new(1, -38, 0, 8)
-CloseX.BackgroundColor3 = C_RED; CloseX.Text = "×"; CloseX.TextColor3 = C_TXT
-CloseX.Font = Enum.Font.GothamBold; CloseX.TextSize = 20; CloseX.BorderSizePixel = 0
-CloseX.ZIndex = 3; CloseX.Parent = TitleBar; corner(CloseX, 8)
+-- Sidebar (left).
+local Side = Instance.new("Frame")
+Side.Name = "Sidebar"; Side.Size = UDim2.new(0, 122, 1, 0)
+Side.BackgroundColor3 = C_SIDE; Side.BackgroundTransparency = 0.1
+Side.BorderSizePixel = 0; Side.ZIndex = 2; Side.Parent = Window
+local Brand = Instance.new("TextLabel")
+Brand.Size = UDim2.new(1, -16, 0, 26); Brand.Position = UDim2.new(0, 12, 0, 12)
+Brand.BackgroundTransparency = 1; Brand.Text = "MollyHub"; Brand.TextColor3 = C_TXT
+Brand.Font = Enum.Font.GothamBold; Brand.TextSize = 18; Brand.TextXAlignment = Enum.TextXAlignment.Left
+Brand.ZIndex = 3; Brand.Parent = Side
+local BrandSub = Instance.new("TextLabel")
+BrandSub.Size = UDim2.new(1, -16, 0, 12); BrandSub.Position = UDim2.new(0, 12, 0, 34)
+BrandSub.BackgroundTransparency = 1; BrandSub.Text = "trade sandbox"; BrandSub.TextColor3 = C_DIM
+BrandSub.Font = Enum.Font.Gotham; BrandSub.TextSize = 10; BrandSub.TextXAlignment = Enum.TextXAlignment.Left
+BrandSub.ZIndex = 3; BrandSub.Parent = Side
+local TabHolder = Instance.new("Frame")
+TabHolder.Size = UDim2.new(1, -16, 1, -104); TabHolder.Position = UDim2.new(0, 8, 0, 56)
+TabHolder.BackgroundTransparency = 1; TabHolder.ZIndex = 3; TabHolder.Parent = Side
+local TabLayout = Instance.new("UIListLayout")
+TabLayout.Padding = UDim.new(0, 6); TabLayout.SortOrder = Enum.SortOrder.LayoutOrder; TabLayout.Parent = TabHolder
+-- Close button pinned to bottom of the sidebar.
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.new(1, -16, 0, 32); CloseBtn.Position = UDim2.new(0, 8, 1, -40)
+CloseBtn.BackgroundColor3 = C_ROW; CloseBtn.Text = "✕ Close"; CloseBtn.TextColor3 = C_DIM
+CloseBtn.Font = Enum.Font.GothamMedium; CloseBtn.TextSize = 12; CloseBtn.BorderSizePixel = 0
+CloseBtn.ZIndex = 3; CloseBtn.Parent = Side; corner(CloseBtn, 8)
 
--- Manual dragging (works on touch + mouse) via the title bar.
+-- Content area (right).
+local Content = Instance.new("Frame")
+Content.Name = "Content"; Content.Size = UDim2.new(1, -122, 1, 0); Content.Position = UDim2.new(0, 122, 0, 0)
+Content.BackgroundTransparency = 1; Content.ZIndex = 2; Content.Parent = Window
+
+-- Draggable via the sidebar brand area.
+Side.Active = true
 do
 	local dragging, dragStart, startPos
-	track(TitleBar.InputBegan:Connect(function(input)
+	track(Side.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1
 			or input.UserInputType == Enum.UserInputType.Touch then
 			dragging = true; dragStart = input.Position; startPos = Window.Position
@@ -900,64 +962,114 @@ do
 	end))
 end
 
--- Scrollable body so every control fits on small phone screens.
-local Body = Instance.new("ScrollingFrame")
-Body.Name = "Body"; Body.Size = UDim2.new(1, 0, 1, -46); Body.Position = UDim2.new(0, 0, 0, 46)
-Body.BackgroundTransparency = 1; Body.BorderSizePixel = 0
-Body.ScrollBarThickness = 4; Body.ScrollBarImageColor3 = C_ACCENT
-Body.AutomaticCanvasSize = Enum.AutomaticSize.Y; Body.CanvasSize = UDim2.new(0, 0, 0, 0)
-Body.ZIndex = 2; Body.Parent = Window
-local BodyLayout = Instance.new("UIListLayout")
-BodyLayout.Padding = UDim.new(0, 8); BodyLayout.SortOrder = Enum.SortOrder.LayoutOrder
-BodyLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center; BodyLayout.Parent = Body
-pad(Body, 12)
+-- Open/close wiring.
+track(OpenBtn.MouseButton1Click:Connect(function() Window.Visible = not Window.Visible end))
+track(CloseBtn.MouseButton1Click:Connect(function() Window.Visible = false end))
 
-local order = 0
-local function nextOrder() order = order + 1; return order end
-
--- Section label.
-local function label(text)
-	local l = Instance.new("TextLabel")
-	l.Size = UDim2.new(1, 0, 0, 14); l.BackgroundTransparency = 1
-	l.Text = text; l.TextColor3 = C_DIM; l.Font = Enum.Font.GothamMedium; l.TextSize = 11
-	l.TextXAlignment = Enum.TextXAlignment.Left; l.ZIndex = 2
-	l.LayoutOrder = nextOrder(); l.Parent = Body
-	return l
+--------------------------------------------------------------------------------
+-- Tab + page system
+--------------------------------------------------------------------------------
+local pages, tabs = {}, {}
+local tabOrder = 0
+local function selectTab(name)
+	for n, page in pairs(pages) do page.Visible = (n == name) end
+	for n, btn in pairs(tabs) do
+		btn.BackgroundColor3 = (n == name) and C_ACCENT or C_ROW
+		btn.TextColor3 = (n == name) and Color3.fromRGB(255,255,255) or C_DIM
+	end
 end
-
--- Button factory (widthScale < 1 for side-by-side rows).
-local function makeButton(text, color, widthScale, parent, ord)
+local function makeTab(name)
+	tabOrder = tabOrder + 1
 	local btn = Instance.new("TextButton")
-	btn.Size = UDim2.new(widthScale or 1, widthScale and -4 or 0, 0, 34)
-	btn.BackgroundColor3 = color or C_BTN; btn.AutoButtonColor = true
-	btn.Text = text; btn.TextColor3 = C_TXT; btn.Font = Enum.Font.GothamMedium; btn.TextSize = 13
-	btn.BorderSizePixel = 0; btn.ZIndex = 2
-	btn.LayoutOrder = ord or nextOrder(); btn.Parent = parent or Body
+	btn.Size = UDim2.new(1, 0, 0, 34); btn.BackgroundColor3 = C_ROW
+	btn.Text = name; btn.TextColor3 = C_DIM; btn.Font = Enum.Font.GothamMedium; btn.TextSize = 13
+	btn.BorderSizePixel = 0; btn.ZIndex = 3; btn.LayoutOrder = tabOrder; btn.Parent = TabHolder
 	corner(btn, 8)
-	return btn
-end
--- A horizontal row holding two half-width buttons.
-local function row()
-	local r = Instance.new("Frame")
-	r.Size = UDim2.new(1, 0, 0, 34); r.BackgroundTransparency = 1; r.ZIndex = 2
-	r.LayoutOrder = nextOrder(); r.Parent = Body
-	local rl = Instance.new("UIListLayout")
-	rl.FillDirection = Enum.FillDirection.Horizontal; rl.Padding = UDim.new(0, 8)
-	rl.HorizontalAlignment = Enum.HorizontalAlignment.Center; rl.Parent = r
-	return r
+	local page = Instance.new("ScrollingFrame")
+	page.Name = name; page.Size = UDim2.new(1, 0, 1, 0); page.BackgroundTransparency = 1
+	page.BorderSizePixel = 0; page.ScrollBarThickness = 4; page.ScrollBarImageColor3 = C_ACCENT
+	page.CanvasSize = UDim2.new(0,0,0,0); page.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	page.ZIndex = 2; page.Visible = false; page.Parent = Content
+	local ll = Instance.new("UIListLayout")
+	ll.Padding = UDim.new(0, 8); ll.SortOrder = Enum.SortOrder.LayoutOrder
+	ll.HorizontalAlignment = Enum.HorizontalAlignment.Center; ll.Parent = page
+	pad(page, 12)
+	pages[name] = page; tabs[name] = btn
+	track(btn.MouseButton1Click:Connect(function() selectTab(name) end))
+	return page
 end
 
-CloseX.MouseButton1Click:Connect(function() terminate(Panel) end)
+-- A settings-style row: title + description on the left, a control on the right.
+local rowOrder = 0
+local function makeRow(page, title, desc)
+	rowOrder = rowOrder + 1
+	local rowF = Instance.new("Frame")
+	rowF.Size = UDim2.new(1, 0, 0, 52); rowF.BackgroundColor3 = C_ROW
+	rowF.BorderSizePixel = 0; rowF.ZIndex = 2; rowF.LayoutOrder = rowOrder; rowF.Parent = page
+	corner(rowF, 10)
+	local t = Instance.new("TextLabel")
+	t.Size = UDim2.new(1, -96, 0, 18); t.Position = UDim2.new(0, 12, 0, 8)
+	t.BackgroundTransparency = 1; t.Text = title; t.TextColor3 = C_TXT
+	t.Font = Enum.Font.GothamMedium; t.TextSize = 13; t.TextXAlignment = Enum.TextXAlignment.Left
+	t.ZIndex = 3; t.Parent = rowF
+	local d = Instance.new("TextLabel")
+	d.Size = UDim2.new(1, -96, 0, 16); d.Position = UDim2.new(0, 12, 0, 27)
+	d.BackgroundTransparency = 1; d.Text = desc or ""; d.TextColor3 = C_DIM
+	d.Font = Enum.Font.Gotham; d.TextSize = 11; d.TextXAlignment = Enum.TextXAlignment.Left
+	d.TextTruncate = Enum.TextTruncate.AtEnd; d.ZIndex = 3; d.Parent = rowF
+	return rowF
+end
 
--- (a) Player 2 name.
-label("SECOND PLAYER NAME")
+-- Pill toggle placed on the right of a row. cb(state) fires on change.
+local function makeRowToggle(page, title, desc, initial, cb)
+	local rowF = makeRow(page, title, desc)
+	local state = initial and true or false
+	local track_ = Instance.new("TextButton")
+	track_.Size = UDim2.new(0, 46, 0, 24); track_.Position = UDim2.new(1, -58, 0.5, -12)
+	track_.AutoButtonColor = false; track_.Text = ""; track_.BorderSizePixel = 0
+	track_.BackgroundColor3 = state and C_ACCENT or Color3.fromRGB(60, 68, 88)
+	track_.ZIndex = 4; track_.Parent = rowF; corner(track_, 12)
+	local knob = Instance.new("Frame")
+	knob.Size = UDim2.new(0, 20, 0, 20); knob.BorderSizePixel = 0
+	knob.BackgroundColor3 = Color3.fromRGB(255,255,255); knob.ZIndex = 5; knob.Parent = track_
+	corner(knob, 10)
+	local function paint()
+		track_.BackgroundColor3 = state and C_ACCENT or Color3.fromRGB(60, 68, 88)
+		knob.Position = state and UDim2.new(1, -22, 0.5, -10) or UDim2.new(0, 2, 0.5, -10)
+	end
+	paint()
+	track(track_.MouseButton1Click:Connect(function()
+		state = not state; paint(); cb(state)
+	end))
+	return function() return state end, function(v) state = v; paint() end
+end
+
+-- A button placed on the right of a row. cb() fires on click.
+local function makeRowButton(page, title, desc, btnText, color, cb)
+	local rowF = makeRow(page, title, desc)
+	local b = Instance.new("TextButton")
+	b.Size = UDim2.new(0, 74, 0, 30); b.Position = UDim2.new(1, -86, 0.5, -15)
+	b.BackgroundColor3 = color or C_BTN; b.Text = btnText; b.TextColor3 = C_TXT
+	b.Font = Enum.Font.GothamMedium; b.TextSize = 12; b.BorderSizePixel = 0
+	b.ZIndex = 4; b.Parent = rowF; corner(b, 8)
+	track(b.MouseButton1Click:Connect(cb))
+	return b
+end
+
+--------------------------------------------------------------------------------
+-- PAGE 1 — Trade
+--------------------------------------------------------------------------------
+local pTrade = makeTab("Trade")
+
+-- Name input (a full-width row with a TextBox).
+local nameRow = makeRow(pTrade, "Second player", "name shown in request & trade")
 local NameBox = Instance.new("TextBox")
-NameBox.Size = UDim2.new(1, 0, 0, 34); NameBox.BackgroundColor3 = C_PANEL
-NameBox.Text = "Player2"; NameBox.PlaceholderText = "type a name…"; NameBox.PlaceholderColor3 = C_DIM
-NameBox.TextColor3 = C_TXT; NameBox.Font = Enum.Font.Gotham; NameBox.TextSize = 13
+NameBox.Size = UDim2.new(0, 118, 0, 30); NameBox.Position = UDim2.new(1, -130, 0.5, -15)
+NameBox.BackgroundColor3 = C_BG; NameBox.Text = "Player2"
+NameBox.PlaceholderText = "name…"; NameBox.PlaceholderColor3 = C_DIM
+NameBox.TextColor3 = C_TXT; NameBox.Font = Enum.Font.Gotham; NameBox.TextSize = 12
 NameBox.ClearTextOnFocus = false; NameBox.BorderSizePixel = 0; NameBox.ClipsDescendants = true
-NameBox.ZIndex = 2; NameBox.LayoutOrder = nextOrder(); NameBox.Parent = Body
-corner(NameBox, 8); pad(NameBox, 8)
+NameBox.ZIndex = 4; NameBox.Parent = nameRow; corner(NameBox, 8); pad(NameBox, 6)
 
 local function currentName()
 	local n = tostring(NameBox.Text)
@@ -965,67 +1077,59 @@ local function currentName()
 	return n
 end
 
--- (b) Request direction — two separate buttons so the frames never overlap.
-label("TRADE REQUEST")
-local reqRow = row()
-local IncomingBtn = makeButton("📥 They → You", C_ACCENT, 0.5, reqRow, nextOrder())
-local OutgoingBtn = makeButton("📤 You → Them", C_BTN, 0.5, reqRow, nextOrder())
-track(IncomingBtn.MouseButton1Click:Connect(function()
-	showRequestModal(currentName(), true)   -- incoming: Accept/Decline (opens trade on Accept)
-end))
-track(OutgoingBtn.MouseButton1Click:Connect(function()
-	showRequestModal(currentName(), false)  -- outgoing: waiting + Cancel
-end))
+makeRowButton(pTrade, "Incoming request", "someone sends YOU a request", "Show", C_ACCENT, function()
+	showRequestModal(currentName(), true)
+end)
+makeRowButton(pTrade, "Outgoing request", "YOU send a request (waiting)", "Show", C_BTN, function()
+	showRequestModal(currentName(), false)
+end)
 
--- (c) Inventory picker toggle.
-label("TRADE")
 local ItemsOpen = false
-local ItemsBtn = makeButton("▤  Open Item Picker", C_BTN)
-track(ItemsBtn.MouseButton1Click:Connect(function()
-	ItemsOpen = not ItemsOpen
-	if ItemsOpen then openItemsPicker(); ItemsBtn.Text = "▤  Close Item Picker"
-	else closeItemsPicker(); ItemsBtn.Text = "▤  Open Item Picker" end
-end))
+local _, setItemsToggle = makeRowToggle(pTrade, "Item picker", "open inventory to add items", false, function(on)
+	ItemsOpen = on
+	if on then openItemsPicker() else closeItemsPicker() end
+end)
 
--- (d) Mode toggle — which side inventory clicks push into.
-local ModeBtn = makeButton("Add to: Player 1  (left)", C_BTN)
-track(ModeBtn.MouseButton1Click:Connect(function()
-	OfferMode = (OfferMode == "Player1") and "Player2" or "Player1"
-	if OfferMode == "Player1" then
-		ModeBtn.Text = "Add to: Player 1  (left)"; ModeBtn.BackgroundColor3 = C_BTN
-	else
-		ModeBtn.Text = "Add to: Player 2  (right)"; ModeBtn.BackgroundColor3 = C_ACCENT
-	end
-end))
+makeRowToggle(pTrade, "Add to Player 2 side", "off = your side (left) / on = right", false, function(on)
+	OfferMode = on and "Player2" or "Player1"
+end)
 
--- (e) Accept flags — P1 (you) and P2 (remote); completes when both are set.
-label("ACCEPT")
-local accRow = row()
-local AcceptP1Btn = makeButton("✔ Accept P1", C_GREEN, 0.5, accRow, nextOrder())
-local AcceptBtn   = makeButton("✔ Accept P2", C_GREEN, 0.5, accRow, nextOrder())
-track(AcceptP1Btn.MouseButton1Click:Connect(function()
-	DebugTradeTable.Player1.Accepted = true
-	setVisible(TradeRoot, "Offer1.Accepted", true)
-	revealSubtree(resolve(TradeRoot, "Offer1.Accepted"))
-	completeTradeIfBothAccepted()
-end))
-track(AcceptBtn.MouseButton1Click:Connect(forceRemoteAccept))
+--------------------------------------------------------------------------------
+-- PAGE 2 — Accept
+--------------------------------------------------------------------------------
+local pAccept = makeTab("Accept")
 
--- (f) Terminate.
-local KillBtn = makeButton("✖  Terminate + Wipe", C_RED)
-track(KillBtn.MouseButton1Click:Connect(function() terminate(Panel) end))
+makeRowToggle(pAccept, "You accepted (P1)", "YOU HAVE ACCEPTED.", false, function(on)
+	DebugTradeTable.Player1.Accepted = on
+	showAcceptedBadge(Offer1, on, "YOU HAVE ACCEPTED.")
+	if on then completeTradeIfBothAccepted() end
+end)
+makeRowToggle(pAccept, "Other accepted (P2)", "OTHER PLAYER HAS ACCEPTED.", false, function(on)
+	DebugTradeTable.Player2.Accepted = on
+	showAcceptedBadge(Offer2, on, "OTHER PLAYER HAS ACCEPTED.")
+	if on then completeTradeIfBothAccepted() end
+end)
+makeRowButton(pAccept, "Terminate", "close & wipe the harness", "Wipe", C_RED, function()
+	terminate(Panel)
+end)
 
--- On-screen bind status (no console needed): OK = bound, nil = NOT found.
+--------------------------------------------------------------------------------
+-- PAGE 3 — Info
+--------------------------------------------------------------------------------
+local pInfo = makeTab("Info")
 local function ok(x) return x and "OK" or "nil" end
 local Status = Instance.new("TextLabel")
-Status.Size = UDim2.new(1, 0, 0, 52); Status.BackgroundTransparency = 1
-Status.Text = ("%s (%s)\nReq %s · Trade %s · Cont %s\nItems %s · Inv %s · Pets %s"):format(
+Status.Size = UDim2.new(1, 0, 0, 120); Status.BackgroundColor3 = C_ROW
+Status.BorderSizePixel = 0; Status.ZIndex = 2; Status.LayoutOrder = 1; Status.Parent = pInfo
+Status.Text = ("  layout: %s (%s)\n  Req %s · Trade %s · Cont %s\n  Items %s · Inv %s · Pets %s\n\n  offline • no server calls"):format(
 	(TradeGUI and TradeGUI.Name or "NOT FOUND"), IsPhone and "phone" or "pc",
 	ok(RequestFrame), ok(TradeRoot), ok(Container), ok(ItemsPicker), ok(InventoryFrame), ok(PetsFrame))
-Status.TextColor3 = C_DIM; Status.Font = Enum.Font.Gotham; Status.TextSize = 10
+Status.TextColor3 = C_DIM; Status.Font = Enum.Font.Gotham; Status.TextSize = 12
 Status.TextWrapped = true; Status.TextYAlignment = Enum.TextYAlignment.Top
-Status.TextXAlignment = Enum.TextXAlignment.Left; Status.ZIndex = 2
-Status.LayoutOrder = nextOrder(); Status.Parent = Body
+Status.TextXAlignment = Enum.TextXAlignment.Left
+corner(Status, 10)
+
+selectTab("Trade")
 
 --==============================================================================
 -- 10a. HOOK THE NATIVE MM2 "ACCEPT" BUTTON INSIDE THE REQUEST MODAL
@@ -1126,8 +1230,7 @@ do
 	if confirmBtn then
 		track(confirmBtn.MouseButton1Click:Connect(function()
 			DebugTradeTable.Player1.Accepted = true
-			setVisible(TradeRoot, "Offer1.Accepted", true)
-			revealSubtree(resolve(TradeRoot, "Offer1.Accepted"))
+			showAcceptedBadge(Offer1, true, "YOU HAVE ACCEPTED.")
 			setVisible(TradeRoot, "Actions.Accept.Confirm", false)
 			completeTradeIfBothAccepted()
 		end))
