@@ -526,6 +526,15 @@ local function startTrade(player2Name)
 	DebugTradeTable.Player1.Accepted = false
 	DebugTradeTable.Player2.Accepted = false
 	if RequestFrame then RequestFrame.Visible = false end
+
+	-- Force the actual game panels open immediately for capture. RenderTrade
+	-- already enables the GUI, but set every screen explicitly here so the
+	-- interface pops on instantly the moment Request is clicked.
+	if TradeGUI:IsA("ScreenGui") then TradeGUI.Enabled = true end
+	setVisible(TradeGUI, "Container", true)
+	setVisible(TradeGUI, "Container.Trade", true)
+	setVisible(TradeGUI, "Container.Items", true)
+
 	RenderTrade()
 	renderInventory()
 end
