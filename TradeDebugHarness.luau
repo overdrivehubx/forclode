@@ -683,8 +683,9 @@ local function offerItemLocal(itemKey, category)
 	DebugTradeTable.Player1.Accepted = false
 	DebugTradeTable.Player2.Accepted = false
 
-	-- Editing an offer also collapses the "confirm" step, matching the live UI.
+	-- Editing an offer collapses the confirm/cancel steps, matching the live UI.
 	setVisible(TradeRoot, "Actions.Accept.Confirm", false)
+	setVisible(TradeRoot, "Actions.Accept.Cancel", false)
 	RenderTrade()
 end
 
@@ -861,6 +862,21 @@ local function completeTradeIfBothAccepted()
 			showAcceptedBadge("your", false); showAcceptedBadge("their", false)
 			for _, f in ipairs(onNewTrade) do pcall(f) end
 		end)
+	end
+end
+
+-- Drive the LOCAL (your) accept UI to match MM2: on accept the green button
+-- turns into "Cancel" (Confirm hidden, Cancel shown); on cancel it reverts.
+local function setYourAcceptedUI(accepted)
+	DebugTradeTable.Player1.Accepted = accepted
+	showAcceptedBadge("your", accepted, "YOU HAVE ACCEPTED.")
+	setVisible(TradeRoot, "Actions.Accept.Confirm", false)
+	setProp(TradeRoot, "Actions.Accept.Confirm", "Active", false)
+	setVisible(TradeRoot, "Actions.Accept.Cancel", accepted)
+	setProp(TradeRoot, "Actions.Accept.Cancel", "Active", accepted)
+	if accepted then
+		revealSubtree(resolve(TradeRoot, "Actions.Accept.Cancel"))
+		completeTradeIfBothAccepted()
 	end
 end
 
@@ -1258,9 +1274,7 @@ end)
 local pAccept = makeTab("Accept")
 
 local _, setAccP1 = makeRowToggle(pAccept, "You accepted (P1)", "YOU HAVE ACCEPTED.", false, function(on)
-	DebugTradeTable.Player1.Accepted = on
-	showAcceptedBadge("your", on, "YOU HAVE ACCEPTED.")
-	if on then completeTradeIfBothAccepted() end
+	setYourAcceptedUI(on)  -- also flips the green Accept button to Cancel
 end)
 local _, setAccP2 = makeRowToggle(pAccept, "Other accepted (P2)", "OTHER PLAYER HAS ACCEPTED.", false, function(on)
 	DebugTradeTable.Player2.Accepted = on
@@ -1429,21 +1443,29 @@ do
 			if PetsFrame then revealAncestors(PetsFrame) end
 		end))
 	end
-	-- Self-accept (Confirm) lights YOUR green flag and may complete the trade.
-	local confirmBtn = resolve(TradeRoot, "Actions.Accept.Confirm.ActionButton")
-	if confirmBtn then
-		track(confirmBtn.MouseButton1Click:Connect(function()
-			DebugTradeTable.Player1.Accepted = true
-			showAcceptedBadge("your", true, "YOU HAVE ACCEPTED.")
-			setVisible(TradeRoot, "Actions.Accept.Confirm", false)
-			completeTradeIfBothAccepted()
-		end))
-	end
+	-- Accept flow (matches MM2): Accept -> Confirm shows -> Confirm -> accepted,
+	-- the green button becomes Cancel -> Cancel reverts.
 	local acceptBtn = resolve(TradeRoot, "Actions.Accept.ActionButton")
 	if acceptBtn then
 		track(acceptBtn.MouseButton1Click:Connect(function()
+			if DebugTradeTable.Player1.Accepted then return end  -- already accepted (Cancel showing)
 			revealSubtree(resolve(TradeRoot, "Actions.Accept.Confirm"))
 			setVisible(TradeRoot, "Actions.Accept.Confirm", true)
+		end))
+	end
+	local confirmBtn = resolve(TradeRoot, "Actions.Accept.Confirm.ActionButton")
+	if confirmBtn then
+		track(confirmBtn.MouseButton1Click:Connect(function()
+			setYourAcceptedUI(true)   -- hides Confirm, shows Cancel, lights badge
+			if setAccP1 then setAccP1(true) end
+		end))
+	end
+	-- Cancel your acceptance -> revert the button back to Accept.
+	local cancelBtn = resolve(TradeRoot, "Actions.Accept.Cancel.ActionButton")
+	if cancelBtn then
+		track(cancelBtn.MouseButton1Click:Connect(function()
+			setYourAcceptedUI(false)
+			if setAccP1 then setAccP1(false) end
 		end))
 	end
 end
