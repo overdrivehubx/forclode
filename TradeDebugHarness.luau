@@ -554,18 +554,18 @@ end
 -- selection, we light the "Accepted" node on EVERY offer frame of that side
 -- found anywhere in PlayerGui — only the currently-visible trade panel actually
 -- displays it (hidden panels keep their parents hidden, so nothing leaks).
-local function eachAcceptedNode(sideName, fn)
+-- Iterate every offer frame of a side ("Offer1"/"Offer2") anywhere in PlayerGui.
+local function eachOffer(sideName, fn)
 	for _, d in ipairs(PlayerGui:GetDescendants()) do
-		if d.Name == sideName then
-			local acc = d:FindFirstChild("Accepted") or d:FindFirstChild("Accepted", true)
-			if acc then fn(acc) end
-		end
+		if d.Name == sideName and d:IsA("GuiObject") then fn(d) end
 	end
 end
 
 -- sideName = "Offer1" (you) or "Offer2" (other).
 local function showAcceptedBadge(sideName, visible, message)
-	eachAcceptedNode(sideName, function(acc)
+	eachOffer(sideName, function(offer)
+		local acc = offer:FindFirstChild("Accepted") or offer:FindFirstChild("Accepted", true)
+		if not acc then return end
 		if visible then
 			revealSubtree(acc)  -- show the badge + its text child (not ancestors)
 			if message then
@@ -580,6 +580,22 @@ local function showAcceptedBadge(sideName, visible, message)
 	end)
 end
 
+-- Stamp a player name onto every matching offer's Username label (sweep, so it
+-- reaches the visible GUI regardless of PC/phone selection).
+local function setOfferUsername(sideName, text)
+	eachOffer(sideName, function(offer)
+		local u = offer:FindFirstChild("Username") or offer:FindFirstChild("Username", true)
+		if not u then return end
+		if u:IsA("TextLabel") or u:IsA("TextBox") then
+			pcall(function() u.Text = text end)
+		else
+			for _, d in ipairs(u:GetDescendants()) do
+				if d:IsA("TextLabel") then pcall(function() d.Text = text end) end
+			end
+		end
+	end)
+end
+
 -- Full re-render of the trade panel CONTENT from the local state table.
 -- NOTE: this must NOT toggle panel visibility (Enabled / Container.Trade /
 -- Items) — that is owned by startTrade / openItemsPicker / closeItemsPicker.
@@ -587,8 +603,8 @@ end
 function RenderTrade()
 	clearRenderConnections()
 
-	-- Second participant's display name.
-	setProp(TradeRoot, "Offer2.Username", "Text", "(" .. DebugTradeTable.Player2.Player.Name .. ")")
+	-- Second participant's display name (swept across all offer frames).
+	setOfferUsername("Offer2", "(" .. DebugTradeTable.Player2.Player.Name .. ")")
 
 	-- Acceptance flags -> the green "Accepted" badges.
 	showAcceptedBadge("Offer1", DebugTradeTable.Player1.Accepted, "YOU HAVE ACCEPTED.")
@@ -713,7 +729,7 @@ local function configureRequest(player2Name, isIncoming)
 	end
 
 	RequestFrame.Visible = true
-	setProp(TradeRoot, "Offer2.Username", "Text", "(" .. player2Name .. ")")
+	setOfferUsername("Offer2", "(" .. player2Name .. ")")
 end
 
 -- Show the request in a chosen direction. PC: reveal it directly in the
@@ -796,11 +812,9 @@ local function startTrade(player2Name)
 	if TradeRoot then TradeRoot.Visible = true end
 	if ItemsPicker then ItemsPicker.Visible = false end
 
-	-- Stamp the second player's name into the trade panel (overrides the game's
-	-- "OnlyTwoChracter" placeholder on Offer2.Username).
-	setProp(TradeRoot, "Offer2.Username", "Text", "(" .. player2Name .. ")")
-	local myName = LocalPlayer.Name
-	setProp(TradeRoot, "Offer1.Username", "Text", "(" .. myName .. ")")
+	-- Stamp usernames onto every offer frame (overrides "OnlyTwoChracter").
+	setOfferUsername("Offer2", "(" .. player2Name .. ")")
+	setOfferUsername("Offer1", "(" .. LocalPlayer.Name .. ")")
 
 	RenderTrade()
 	renderInventory()  -- pre-populate so the picker is ready when opened
@@ -1144,6 +1158,34 @@ Status.TextColor3 = C_DIM; Status.Font = Enum.Font.Gotham; Status.TextSize = 12
 Status.TextWrapped = true; Status.TextYAlignment = Enum.TextYAlignment.Top
 Status.TextXAlignment = Enum.TextXAlignment.Left
 corner(Status, 10)
+
+-- Diagnostic: list the real child names of every Offer1/Offer2 frame, so we can
+-- see whether "Accepted" / "Username" exist and their exact names.
+local Dump = Instance.new("TextLabel")
+Dump.Size = UDim2.new(1, 0, 0, 10); Dump.AutomaticSize = Enum.AutomaticSize.Y
+Dump.BackgroundColor3 = C_BG; Dump.BorderSizePixel = 0; Dump.ZIndex = 2; Dump.LayoutOrder = 3
+Dump.Text = ""; Dump.TextColor3 = C_DIM; Dump.Font = Enum.Font.Code; Dump.TextSize = 11
+Dump.TextWrapped = true; Dump.TextYAlignment = Enum.TextYAlignment.Top
+Dump.TextXAlignment = Enum.TextXAlignment.Left; Dump.Visible = false; Dump.Parent = pInfo
+pad(Dump, 8); corner(Dump, 8)
+
+makeRowButton(pInfo, "Offer structure", "read child names of Offer1/Offer2", "Dump", C_ACCENT, function()
+	local lines = {}
+	for _, side in ipairs({ "Offer1", "Offer2" }) do
+		local n = 0
+		for _, d in ipairs(PlayerGui:GetDescendants()) do
+			if d.Name == side and d:IsA("GuiObject") then
+				n = n + 1
+				local kids = {}
+				for _, c in ipairs(d:GetChildren()) do table.insert(kids, c.Name) end
+				table.insert(lines, side .. " #" .. n .. " <" .. d.Parent.Name .. ">: " .. table.concat(kids, ", "))
+			end
+		end
+		if n == 0 then table.insert(lines, side .. ": (none found)") end
+	end
+	Dump.Text = table.concat(lines, "\n\n")
+	Dump.Visible = true
+end)
 
 selectTab("Trade")
 
