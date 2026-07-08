@@ -699,9 +699,12 @@ NameBox.Parent = Window
 corner(NameBox, 8)
 pad(NameBox, 8)
 
+-- Capture the raw TextBox contents verbatim. NO whitespace stripping,
+-- truncation, or length limits — only substitute a default when the box is
+-- genuinely empty so a valid typed name is never overwritten.
 local function currentName()
-	local n = NameBox.Text
-	if n == nil or n:gsub("%s", "") == "" then n = "Player2" end
+	local n = tostring(NameBox.Text)
+	if n == "" then n = "Player2" end
 	return n
 end
 
@@ -709,7 +712,10 @@ end
 --     they open when the game's built-in green Accept button is clicked.
 local RequestBtn = makeButton("▶  Prompt Trade Request", 4, SLATE_ACCENT)
 track(RequestBtn.MouseButton1Click:Connect(function()
-	showRequestModal(currentName())
+	-- Explicitly snapshot exactly what is typed at the moment of the click.
+	local typedName = tostring(NameBox.Text)
+	if typedName == "" then typedName = "Player2" end
+	showRequestModal(typedName)
 end))
 
 -- (c) Mode toggle — redirect inventory clicks to the left/right offer.
@@ -753,7 +759,18 @@ Status.Parent = Window
 -- Clicking the game's built-in green Accept button (not the debug button) is
 -- what opens the real trade layout — mirroring AcceptRequest -> StartTrade.
 do
-	-- The button's exact path differs per layout, so probe the known candidates.
+	-- Return `inst` if it is a button, else the first GuiButton nested inside it.
+	local function firstButtonIn(inst)
+		if not inst then return nil end
+		if inst:IsA("GuiButton") then return inst end
+		for _, d in ipairs(inst:GetDescendants()) do
+			if d:IsA("GuiButton") then return d end
+		end
+		return nil
+	end
+
+	-- The button's exact path differs per layout, so probe every known candidate
+	-- and, as a last resort, recursively find a node literally named "Accept".
 	local function findRequestAccept()
 		if not RequestFrame then return nil end
 		local candidates = {
@@ -763,30 +780,26 @@ do
 			"Accepting.Accept",
 		}
 		for _, path in ipairs(candidates) do
-			local node = resolve(RequestFrame, path)
-			if node and node:IsA("GuiButton") then return node end
+			local btn = firstButtonIn(resolve(RequestFrame, path))
+			if btn then return btn end
 		end
-		-- Fallback: any descendant named "Accept" that is (or contains) a button.
-		local accepting = resolve(RequestFrame, "Accepting")
-		if accepting then
-			local acc = accepting:FindFirstChild("Accept", true)
-			if acc then
-				if acc:IsA("GuiButton") then return acc end
-				local ab = acc:FindFirstChild("ActionButton")
-				if ab and ab:IsA("GuiButton") then return ab end
-			end
-		end
-		return nil
+		-- Fallback: recursive search for a descendant named "Accept" (or its button).
+		local scope = resolve(RequestFrame, "Accepting") or RequestFrame
+		return firstButtonIn(scope:FindFirstChild("Accept", true))
 	end
 
 	local acceptBtn = findRequestAccept()
 	if acceptBtn then
-		track(acceptBtn.MouseButton1Click:Connect(function()
-			-- Only react while the request modal is actually showing.
-			if RequestFrame and RequestFrame.Visible then
-				startTrade(PendingP2Name or currentName())
-			end
-		end))
+		-- Fire on both signals so the hook triggers regardless of button class,
+		-- guarding against a double-open with a short debounce.
+		local lastOpen = 0
+		local function onAccept()
+			if os.clock() - lastOpen < 0.3 then return end
+			lastOpen = os.clock()
+			startTrade(PendingP2Name or currentName())
+		end
+		track(acceptBtn.MouseButton1Click:Connect(onAccept))
+		track(acceptBtn.Activated:Connect(onAccept))
 	else
 		warn("[TradeDebug] Native request Accept button not found; " ..
 			"could not wire the trade-open hook.")
