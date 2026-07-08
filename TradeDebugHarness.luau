@@ -299,14 +299,31 @@ end
 -- but fall back to a recursive by-name search so slightly different trees still
 -- bind. Every downstream access is nil-guarded regardless.
 local function ffc(root, name) return root and root:FindFirstChild(name, true) or nil end
--- Anchor on Container.Trade first, then read Offer1/Offer2 FROM it. This avoids
--- a stray recursively-found "Offer1" pointing us at the wrong trade panel (which
--- was making Offer2.Username and the Accepted badges target dead nodes).
+
+-- This build renames the offer frames: YourOffer / TheirOffer (not Offer1/Offer2).
+-- Keep both sets of candidates so the harness binds on either naming.
+local OFFER_NAMES = {
+	your  = { "Offer1", "YourOffer", "Your", "MyOffer" },
+	their = { "Offer2", "TheirOffer", "Their", "OtherOffer" },
+}
+-- Find an offer frame by candidate names, direct child first then recursive.
+local function findOffer(root, side)
+	if not root then return nil end
+	for _, nm in ipairs(OFFER_NAMES[side]) do
+		local f = root:FindFirstChild(nm)
+		if f and f:IsA("GuiObject") then return f end
+	end
+	for _, nm in ipairs(OFFER_NAMES[side]) do
+		local f = root:FindFirstChild(nm, true)
+		if f and f:IsA("GuiObject") then return f end
+	end
+	return nil
+end
+
+-- Anchor on Container.Trade, then read the two offer frames from it.
 local TradeRoot = (TradeGUI and resolve(TradeGUI, "Container.Trade")) or nil
-local Offer1 = (TradeRoot and resolve(TradeRoot, "Offer1"))
-	or (TradeGUI and resolve(TradeGUI, "Container.Trade.Offer1")) or ffc(TradeGUI, "Offer1")
-local Offer2 = (TradeRoot and resolve(TradeRoot, "Offer2"))
-	or (TradeGUI and resolve(TradeGUI, "Container.Trade.Offer2")) or ffc(TradeGUI, "Offer2")
+local Offer1 = findOffer(TradeRoot, "your")  or findOffer(TradeGUI, "your")
+local Offer2 = findOffer(TradeRoot, "their") or findOffer(TradeGUI, "their")
 if not TradeRoot and Offer1 then TradeRoot = Offer1.Parent end
 local Container = (TradeRoot and TradeRoot.Parent) or (TradeGUI and resolve(TradeGUI, "Container")) or ffc(TradeGUI, "Container")
 local ItemsPicker = (TradeGUI and resolve(TradeGUI, "Container.Items"))
@@ -549,50 +566,75 @@ local function renderOffer(sideKey, offerFrame)
 	end
 end
 
--- Per the source, the accepted indicator is Container.Trade.Offer1.Accepted /
--- Offer2.Accepted, toggled purely by .Visible. To be immune to PC-vs-phone GUI
--- selection, we light the "Accepted" node on EVERY offer frame of that side
--- found anywhere in PlayerGui — only the currently-visible trade panel actually
--- displays it (hidden panels keep their parents hidden, so nothing leaks).
--- Iterate every offer frame of a side ("Offer1"/"Offer2") anywhere in PlayerGui.
-local function eachOffer(sideName, fn)
+-- Iterate every offer frame of a side ("your"/"their") anywhere in PlayerGui,
+-- matching this build's names (YourOffer/TheirOffer) as well as Offer1/Offer2.
+local function isOfferName(name, side)
+	for _, nm in ipairs(OFFER_NAMES[side]) do if nm == name then return true end end
+	return false
+end
+local function eachOffer(side, fn)
 	for _, d in ipairs(PlayerGui:GetDescendants()) do
-		if d.Name == sideName and d:IsA("GuiObject") then fn(d) end
+		if d:IsA("GuiObject") and isOfferName(d.Name, side) then fn(d) end
 	end
 end
 
--- sideName = "Offer1" (you) or "Offer2" (other).
-local function showAcceptedBadge(sideName, visible, message)
-	eachOffer(sideName, function(offer)
-		local acc = offer:FindFirstChild("Accepted") or offer:FindFirstChild("Accepted", true)
-		if not acc then return end
+local function setLabelText(inst, text)
+	if inst:IsA("TextLabel") or inst:IsA("TextButton") then pcall(function() inst.Text = text end) end
+	for _, d in ipairs(inst:GetDescendants()) do
+		if d:IsA("TextLabel") or d:IsA("TextButton") then pcall(function() d.Text = text end) end
+	end
+end
+
+-- side = "your" (you) or "their" (other). The accepted indicator: try the native
+-- node ("Accepted"/"TradeAccepted"); if this build has none, inject our own
+-- green overlay label so the "ACCEPTED" text always shows over the offer.
+local function showAcceptedBadge(side, visible, message)
+	eachOffer(side, function(offer)
+		local native = offer:FindFirstChild("Accepted") or offer:FindFirstChild("Accepted", true)
+			or offer:FindFirstChild("TradeAccepted", true)
 		if visible then
-			revealSubtree(acc)  -- show the badge + its text child (not ancestors)
-			if message then
-				if acc:IsA("TextLabel") then pcall(function() acc.Text = message end) end
-				for _, d in ipairs(acc:GetDescendants()) do
-					if d:IsA("TextLabel") then pcall(function() d.Text = message end) end
+			local acc = native
+			if not acc then
+				-- No native node on this build — inject our own green overlay label.
+				acc = offer:FindFirstChild("__MHAccepted")
+				if not acc then
+					acc = Instance.new("TextLabel")
+					acc.Name = "__MHAccepted"
+					acc.Size = UDim2.new(1, 0, 1, 0)
+					acc.BackgroundTransparency = 1
+					acc.Font = Enum.Font.GothamBold
+					acc.TextSize = 20
+					acc.TextColor3 = Color3.fromRGB(60, 220, 90)
+					acc.TextStrokeTransparency = 0.4
+					acc.ZIndex = 50
+					acc.Parent = offer
 				end
 			end
+			revealSubtree(acc)
+			if message then setLabelText(acc, message) end
 		else
-			pcall(function() acc.Visible = false end)
+			if native then pcall(function() native.Visible = false end) end
+			local inj = offer:FindFirstChild("__MHAccepted")
+			if inj then inj.Visible = false end
 		end
 	end)
 end
 
--- Stamp a player name onto every matching offer's Username label (sweep, so it
--- reaches the visible GUI regardless of PC/phone selection).
-local function setOfferUsername(sideName, text)
-	eachOffer(sideName, function(offer)
+-- Stamp a player name onto every matching offer's Username label. Tries common
+-- child names, then a fuzzy match on placeholder-looking text.
+local function setOfferUsername(side, text)
+	eachOffer(side, function(offer)
 		local u = offer:FindFirstChild("Username") or offer:FindFirstChild("Username", true)
-		if not u then return end
-		if u:IsA("TextLabel") or u:IsA("TextBox") then
-			pcall(function() u.Text = text end)
-		else
-			for _, d in ipairs(u:GetDescendants()) do
-				if d:IsA("TextLabel") then pcall(function() d.Text = text end) end
+			or offer:FindFirstChild("PlayerName", true) or offer:FindFirstChild("Name", true)
+		if not u then
+			for _, d in ipairs(offer:GetDescendants()) do
+				if d:IsA("TextLabel") then
+					local t = tostring(d.Text)
+					if t:find("haracter") or t:find("OnlyTw") or t:sub(1, 1) == "(" then u = d; break end
+				end
 			end
 		end
+		if u then setLabelText(u, text) end
 	end)
 end
 
@@ -604,11 +646,11 @@ function RenderTrade()
 	clearRenderConnections()
 
 	-- Second participant's display name (swept across all offer frames).
-	setOfferUsername("Offer2", "(" .. DebugTradeTable.Player2.Player.Name .. ")")
+	setOfferUsername("their", "(" .. DebugTradeTable.Player2.Player.Name .. ")")
 
 	-- Acceptance flags -> the green "Accepted" badges.
-	showAcceptedBadge("Offer1", DebugTradeTable.Player1.Accepted, "YOU HAVE ACCEPTED.")
-	showAcceptedBadge("Offer2", DebugTradeTable.Player2.Accepted, "OTHER PLAYER HAS ACCEPTED.")
+	showAcceptedBadge("your", DebugTradeTable.Player1.Accepted, "YOU HAVE ACCEPTED.")
+	showAcceptedBadge("their", DebugTradeTable.Player2.Accepted, "OTHER PLAYER HAS ACCEPTED.")
 
 	renderOffer("Player1", Offer1)
 	renderOffer("Player2", Offer2)
@@ -729,7 +771,7 @@ local function configureRequest(player2Name, isIncoming)
 	end
 
 	RequestFrame.Visible = true
-	setOfferUsername("Offer2", "(" .. player2Name .. ")")
+	setOfferUsername("their", "(" .. player2Name .. ")")
 end
 
 -- Show the request in a chosen direction. PC: reveal it directly in the
@@ -813,8 +855,8 @@ local function startTrade(player2Name)
 	if ItemsPicker then ItemsPicker.Visible = false end
 
 	-- Stamp usernames onto every offer frame (overrides "OnlyTwoChracter").
-	setOfferUsername("Offer2", "(" .. player2Name .. ")")
-	setOfferUsername("Offer1", "(" .. LocalPlayer.Name .. ")")
+	setOfferUsername("their", "(" .. player2Name .. ")")
+	setOfferUsername("your", "(" .. LocalPlayer.Name .. ")")
 
 	RenderTrade()
 	renderInventory()  -- pre-populate so the picker is ready when opened
@@ -824,7 +866,7 @@ end
 -- complete the trade if the local side has already accepted too.
 local function forceRemoteAccept()
 	DebugTradeTable.Player2.Accepted = true
-	showAcceptedBadge("Offer2", true, "OTHER PLAYER HAS ACCEPTED.")
+	showAcceptedBadge("their", true, "OTHER PLAYER HAS ACCEPTED.")
 	completeTradeIfBothAccepted()
 end
 
@@ -1131,12 +1173,12 @@ local pAccept = makeTab("Accept")
 
 makeRowToggle(pAccept, "You accepted (P1)", "YOU HAVE ACCEPTED.", false, function(on)
 	DebugTradeTable.Player1.Accepted = on
-	showAcceptedBadge("Offer1", on, "YOU HAVE ACCEPTED.")
+	showAcceptedBadge("your", on, "YOU HAVE ACCEPTED.")
 	if on then completeTradeIfBothAccepted() end
 end)
 makeRowToggle(pAccept, "Other accepted (P2)", "OTHER PLAYER HAS ACCEPTED.", false, function(on)
 	DebugTradeTable.Player2.Accepted = on
-	showAcceptedBadge("Offer2", on, "OTHER PLAYER HAS ACCEPTED.")
+	showAcceptedBadge("their", on, "OTHER PLAYER HAS ACCEPTED.")
 	if on then completeTradeIfBothAccepted() end
 end)
 makeRowButton(pAccept, "Terminate", "close & wipe the harness", "Wipe", C_RED, function()
@@ -1298,7 +1340,7 @@ do
 	if confirmBtn then
 		track(confirmBtn.MouseButton1Click:Connect(function()
 			DebugTradeTable.Player1.Accepted = true
-			showAcceptedBadge("Offer1", true, "YOU HAVE ACCEPTED.")
+			showAcceptedBadge("your", true, "YOU HAVE ACCEPTED.")
 			setVisible(TradeRoot, "Actions.Accept.Confirm", false)
 			completeTradeIfBothAccepted()
 		end))
