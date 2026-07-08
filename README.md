@@ -92,11 +92,17 @@ On load the harness prints a **discovery dump** to the console, e.g.:
   RequestFrame  = ...Leaderboard.Container.TradeRequest
 ```
 
-- If **RequestFrame = nil**, the native trade-request frame wasn't found, and a
-  **synthetic MM2-style modal** is shown instead so the request window still
-  appears. Its green Accept opens the trade exactly like the native button.
-- If **TradeRoot / Container / ItemsPicker** are `nil`, your GUI tree differs
-  from the expected paths — paste the discovery line and the paths can be pinned.
+The same bind status is shown **on the debug panel itself** (no console needed):
+a line like `Req OK | Trade OK | Cont OK` / `Items OK | Inv nil | Pets nil`.
+`OK` = the frame was found, `nil` = it wasn't.
+
+- If **Req = nil**, the native `TradeRequest` frame wasn't found in `PlayerGui`.
+- If **Inv/Items = nil**, the inventory scroll frame path differs in your build.
+
+The harness only ever drives the **real frames from the game** — there is no
+synthetic UI. When it shows the request it forces the whole leaderboard-tab
+ancestor chain visible (and the `Accepting` content), so the request renders in
+the player-list tab instead of appearing as an empty dark rectangle.
 
 Discovery is resilient: it resolves the exact paths first, then falls back to a
 recursive by-name search (`Offer1`, `Container`, `Items`, `TradeRequest`).

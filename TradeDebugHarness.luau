@@ -114,6 +114,32 @@ local function setVisible(root, path, visible)
 	return setProp(root, path, "Visible", visible)
 end
 
+-- Walk UP from `inst` and force every ancestor GuiObject Visible = true (and the
+-- owning ScreenGui Enabled = true). This is the fix for "a frame is set visible
+-- but nothing shows because a parent tab/container is still hidden".
+local function revealAncestors(inst)
+	local node = inst
+	while node and node.Parent do
+		if node:IsA("ScreenGui") then
+			pcall(function() node.Enabled = true end)
+			break
+		elseif node:IsA("GuiObject") then
+			pcall(function() node.Visible = true end)
+		end
+		node = node.Parent
+	end
+end
+
+-- Force `frame` and its whole subtree of GuiObjects visible (reveals the
+-- buttons/labels inside a request panel regardless of the exact sub-structure).
+local function revealSubtree(frame)
+	if not frame then return end
+	pcall(function() frame.Visible = true end)
+	for _, d in ipairs(frame:GetDescendants()) do
+		if d:IsA("GuiObject") then pcall(function() d.Visible = true end) end
+	end
+end
+
 --==============================================================================
 -- 3. LOCAL "SYNCED DATA" — a compact offline Item / Pet / Rarity database
 --==============================================================================
@@ -255,7 +281,7 @@ print("  Container     = " .. fn(Container))
 print("  TradeRoot     = " .. fn(TradeRoot))
 print("  Offer1/Offer2 = " .. fn(Offer1) .. "  |  " .. fn(Offer2))
 print("  ItemsPicker   = " .. fn(ItemsPicker))
-print("  RequestFrame  = " .. fn(RequestFrame) .. (RequestFrame and "" or "  (will use synthetic fallback)"))
+print("  RequestFrame  = " .. fn(RequestFrame) .. (RequestFrame and "" or "  (NOT FOUND — request cannot show)"))
 
 --==============================================================================
 -- 5. THE LOCAL TRADE STATE  (replaces the entire server backend)
@@ -542,110 +568,56 @@ end
 -- 8. REQUEST MODAL + TRADE LIFECYCLE  (local stand-ins for the Remote chain)
 --==============================================================================
 
--- Forward declaration so the synthetic modal's Accept button can call it.
-local startTrade
-
--- A synthetic MM2-style request modal, built with Instance.new, used ONLY when
--- the native TradeRequest frame can't be located — so the request window always
--- appears for capture. Created lazily, reused across shows.
-local SyntheticGui, SyntheticName
-local function ensureSyntheticModal()
-	if SyntheticGui and SyntheticGui.Parent then return end
-	local gui = Instance.new("ScreenGui")
-	gui.Name = "TradeDebugRequest"
-	gui.ResetOnSpawn = false
-	gui.DisplayOrder = 999
-	gui.Enabled = true
-	gui.Parent = PlayerGui
-
-	local card = Instance.new("Frame")
-	card.Name = "Card"
-	card.Size = UDim2.new(0, 320, 0, 150)
-	card.Position = UDim2.new(0.5, -160, 0.28, 0)
-	card.BackgroundColor3 = Color3.fromRGB(33, 38, 47)
-	card.BorderSizePixel = 0
-	card.Parent = gui
-	local cc = Instance.new("UICorner"); cc.CornerRadius = UDim.new(0, 12); cc.Parent = card
-	local cs = Instance.new("UIStroke"); cs.Color = Color3.fromRGB(60, 68, 84); cs.Thickness = 1; cs.Parent = card
-
-	local title = Instance.new("TextLabel")
-	title.Name = "Title"
-	title.Size = UDim2.new(1, -24, 0, 60)
-	title.Position = UDim2.new(0, 12, 0, 12)
-	title.BackgroundTransparency = 1
-	title.TextColor3 = Color3.fromRGB(228, 232, 240)
-	title.Font = Enum.Font.GothamBold
-	title.TextSize = 16
-	title.TextWrapped = true
-	title.Text = "wants to trade."
-	title.Parent = card
-
-	local function mk(name, txt, color, xScale)
-		local b = Instance.new("TextButton")
-		b.Name = name
-		b.Size = UDim2.new(0.5, -18, 0, 40)
-		b.Position = UDim2.new(xScale, xScale == 0 and 12 or 6, 1, -52)
-		b.BackgroundColor3 = color
-		b.Text = txt
-		b.TextColor3 = Color3.fromRGB(255, 255, 255)
-		b.Font = Enum.Font.GothamMedium
-		b.TextSize = 14
-		b.BorderSizePixel = 0
-		b.Parent = card
-		local bc = Instance.new("UICorner"); bc.CornerRadius = UDim.new(0, 8); bc.Parent = b
-		return b
-	end
-	local accept = mk("Accept", "Accept", Color3.fromRGB(46, 160, 87), 0)
-	local decline = mk("Decline", "Decline", Color3.fromRGB(190, 60, 60), 0.5)
-
-	accept.MouseButton1Click:Connect(function()
-		gui.Enabled = false
-		if startTrade then startTrade(PendingP2Name or "Player2") end
-	end)
-	decline.MouseButton1Click:Connect(function()
-		gui.Enabled = false
-	end)
-
-	SyntheticGui = gui
-	SyntheticName = title
-end
-
--- Show the request modal (accepting variant) with the P2 name. This ONLY reveals
--- the modal — the main trade panels stay hidden until the game's built-in green
--- Accept button (or the synthetic one) is clicked.
+-- Show the native request panel (the one that lives in the leaderboard /
+-- player-list tab, exactly as in the source scripts) in its "Accepting" variant
+-- with the P2 name. This ONLY reveals the request — the main trade panels stay
+-- hidden until the game's built-in green Accept button is clicked.
 local function showRequestModal(player2Name)
 	PendingP2Name = player2Name
-	if RequestFrame then
-		setVisible(RequestFrame, "Accepting", true)
-		setVisible(RequestFrame, "Sending", false)
-		setProp(RequestFrame, "Accepting.Username", "Text", player2Name)
-		setProp(RequestFrame, "Accepting.Title", "Text", player2Name .. " wants to trade.")
-		setProp(TradeRoot, "Offer2.Username", "Text", "(" .. player2Name .. ")")
-		RequestFrame.Visible = true
-	else
-		-- No native frame — fall back to the synthetic modal so a window shows.
-		ensureSyntheticModal()
-		SyntheticName.Text = player2Name .. " wants to trade."
-		SyntheticGui.Enabled = true
-		setProp(TradeRoot, "Offer2.Username", "Text", "(" .. player2Name .. ")")
+	if not RequestFrame then
+		warn("[TradeDebug] TradeRequest frame not found in PlayerGui — cannot show request.")
+		return
 	end
+
+	-- Bring the whole leaderboard-tab ancestor chain on-screen, then reveal the
+	-- request frame and everything inside its "Accepting" branch so the username
+	-- label and the Accept/Decline buttons actually render (not just a dark box).
+	revealAncestors(RequestFrame)
+	RequestFrame.Visible = true
+
+	local accepting = RequestFrame:FindFirstChild("Accepting")
+	local sending   = RequestFrame:FindFirstChild("Sending")
+	if sending then sending.Visible = false end
+	if accepting then
+		revealSubtree(accepting)
+	else
+		-- Some layouts don't split Accepting/Sending — just reveal the content.
+		revealSubtree(RequestFrame)
+	end
+
+	-- Fill in the target name on whatever label(s) the layout uses.
+	local uName = RequestFrame:FindFirstChild("Username", true)
+	if uName then pcall(function() uName.Text = player2Name end) end
+	local title = RequestFrame:FindFirstChild("Title", true)
+	if title then pcall(function() title.Text = player2Name .. " wants to trade." end) end
+	setProp(TradeRoot, "Offer2.Username", "Text", "(" .. player2Name .. ")")
 end
 
--- Begin the offline trade: hide the modal, reset offers, open the panels, render.
--- Invoked by the native (or synthetic) Accept button, mirroring the real
+-- Begin the offline trade: hide the request, reset offers, open the panels, render.
+-- Invoked by the native MM2 Accept button, mirroring the real
 -- AcceptRequest -> StartTrade -> UpdateTrade lifecycle.
-function startTrade(player2Name)
+local function startTrade(player2Name)
 	DebugTradeTable.Player2.Player = { Name = player2Name, __fake = true }
 	DebugTradeTable.Player1.Offer = {}
 	DebugTradeTable.Player2.Offer = {}
 	DebugTradeTable.Player1.Accepted = false
 	DebugTradeTable.Player2.Accepted = false
 	if RequestFrame then RequestFrame.Visible = false end
-	if SyntheticGui then SyntheticGui.Enabled = false end
 
-	-- Open the actual game panels now that Accept was clicked. Drive the resolved
-	-- instances directly (most robust) AND the string paths (belt-and-braces).
+	-- Open the actual game panels. Bring the trade ScreenGui + its ancestor chain
+	-- on-screen, then force every trade sub-frame visible so the layout pops on.
 	if TradeGUI:IsA("ScreenGui") then TradeGUI.Enabled = true end
+	revealAncestors(Offer1 or TradeRoot or Container)
 	if Container   then Container.Visible = true end
 	if TradeRoot   then TradeRoot.Visible = true end
 	if ItemsPicker then ItemsPicker.Visible = true end
@@ -678,9 +650,6 @@ local function terminate(panel)
 		setVisible(TradeGUI, "Container.Trade", false)
 		setVisible(TradeGUI, "Container.Items", false)
 	end)
-
-	-- Drop the synthetic request modal if one was created.
-	if SyntheticGui then pcall(function() SyntheticGui:Destroy() end) SyntheticGui = nil end
 
 	-- Wipe environment tables.
 	clearRenderConnections()
@@ -733,7 +702,7 @@ Panel.Parent = PlayerGui
 
 local Window = Instance.new("Frame")
 Window.Name = "Window"
-Window.Size = UDim2.new(0, 250, 0, 320)
+Window.Size = UDim2.new(0, 250, 0, 384)
 Window.Position = UDim2.new(0, 20, 0.5, -160)
 Window.BackgroundColor3 = SLATE_BG
 Window.BorderSizePixel = 0
@@ -854,14 +823,20 @@ track(KillBtn.MouseButton1Click:Connect(function()
 	terminate(Panel)
 end))
 
--- Small live status line.
+-- On-screen bind status (no console needed). Shows which frames resolved so a
+-- missing path is visible at a glance: OK = bound, nil = NOT found.
 local Status = Instance.new("TextLabel")
-Status.Size = UDim2.new(1, 0, 0, 14)
+Status.Size = UDim2.new(1, 0, 0, 66)
 Status.BackgroundTransparency = 1
-Status.Text = "layout: " .. TradeGUI.Name
+local function ok(x) return x and "OK" or "nil" end
+Status.Text = ("layout: %s\nReq %s | Trade %s | Cont %s\nItems %s | Inv %s | Pets %s"):format(
+	TradeGUI.Name, ok(RequestFrame), ok(TradeRoot), ok(Container),
+	ok(ItemsPicker), ok(InventoryFrame), ok(PetsFrame))
 Status.TextColor3 = TEXT_DIM
 Status.Font = Enum.Font.Gotham
 Status.TextSize = 11
+Status.TextWrapped = true
+Status.TextYAlignment = Enum.TextYAlignment.Top
 Status.TextXAlignment = Enum.TextXAlignment.Left
 Status.LayoutOrder = 8
 Status.Parent = Window
@@ -871,8 +846,7 @@ Status.Parent = Window
 --==============================================================================
 -- Clicking the game's built-in green Accept button (not the debug button) is
 -- what opens the real trade layout — mirroring AcceptRequest -> StartTrade.
--- Skipped entirely when there is no native RequestFrame (synthetic modal wires
--- its own Accept button in ensureSyntheticModal).
+-- Skipped entirely when there is no native RequestFrame.
 if RequestFrame then
 	-- Return `inst` if it is a button, else the first GuiButton nested inside it.
 	local function firstButtonIn(inst)
