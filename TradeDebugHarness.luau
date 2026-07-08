@@ -215,21 +215,44 @@ local OwnedPets = { Corgi=5, Bunny=2, Dragon=1, Dogey=1 }
 -- 4. LOCATE THE TRADE GUI (dynamic resolution from PlayerGui)
 --==============================================================================
 -- The live game ships several layouts (GUI2/MainPC, GUI2/MainMobile "phone",
--- Xbox, legacy GUI). We locate whichever Trade ScreenGui exists and detect its
--- flavour from the frame tree, so the same harness drives any of them.
+-- Xbox, legacy GUI). Both "Trade" (PC) and "TradeGUI_Phone" can exist at once,
+-- so we must pick the one that matches the current platform — otherwise we drive
+-- an inactive GUI (frames resolve fine, but nothing shows on screen and a second
+-- native panel appears). Touch (no mouse) => phone.
+
+local UIS = game:GetService("UserInputService")
+local IsTouch = UIS.TouchEnabled and not UIS.MouseEnabled
 
 local function findTradeGui()
-	-- Preferred explicit names, newest first.
-	for _, name in ipairs({ "Trade", "TradeGUI_Phone" }) do
-		local gui = PlayerGui:FindFirstChild(name)
-		if gui and gui:IsA("ScreenGui") and gui:FindFirstChild("Container") then return gui end
-	end
-	-- Sniff any ScreenGui that owns the tell-tale Container.Trade.Offer1 path.
-	for _, gui in ipairs(PlayerGui:GetDescendants()) do
+	-- Gather every ScreenGui that actually owns the trade tree.
+	local candidates = {}
+	for _, gui in ipairs(PlayerGui:GetChildren()) do
 		if gui:IsA("ScreenGui") and resolve(gui, "Container.Trade.Offer1") then
-			return gui
+			table.insert(candidates, gui)
 		end
 	end
+	if #candidates == 0 then
+		-- Deep fallback across descendants (nested ScreenGuis).
+		for _, gui in ipairs(PlayerGui:GetDescendants()) do
+			if gui:IsA("ScreenGui") and resolve(gui, "Container.Trade.Offer1") then
+				table.insert(candidates, gui)
+			end
+		end
+	end
+
+	local function isPhone(g) return string.find(string.lower(g.Name), "phone") ~= nil end
+
+	-- On touch prefer the *_Phone GUI; on desktop prefer the non-phone one.
+	for _, gui in ipairs(candidates) do
+		if IsTouch and isPhone(gui) then return gui end
+		if (not IsTouch) and (not isPhone(gui)) then return gui end
+	end
+	-- Otherwise prefer whichever is currently Enabled, then just the first.
+	for _, gui in ipairs(candidates) do
+		if gui.Enabled then return gui end
+	end
+	if candidates[1] then return candidates[1] end
+
 	-- Last resort: find an "Offer1" frame anywhere and climb to its ScreenGui.
 	local anyOffer = PlayerGui:FindFirstChild("Offer1", true)
 	if anyOffer then
@@ -268,22 +291,28 @@ local PetsFrame      = resolve(TradeGUI, "Container.Items.Main.Pets.Items.Contai
 -- A recursive search for anything named "TradeRequest" is the most robust find
 -- across the PC / Phone / Xbox / legacy layouts.
 local function findRequestFrame()
-	-- Explicit known paths first (fast, unambiguous).
-	for _, gui in ipairs(PlayerGui:GetChildren()) do
-		local rf = resolve(gui, "Leaderboard.Container.TradeRequest")
-			or resolve(gui, "Game.Leaderboard.Container.TradeRequest")
-			or resolve(gui, "Lobby.Screens.Waiting.Leaderboard.Container.OverlayMenu.TradeRequest")
-		if rf then return rf end
+	-- Collect every TradeRequest frame present (PC + phone can both exist).
+	local found = {}
+	for _, rf in ipairs(PlayerGui:GetDescendants()) do
+		if rf.Name == "TradeRequest" then table.insert(found, rf) end
 	end
-	-- Recursive fallback: any descendant literally named "TradeRequest".
-	return PlayerGui:FindFirstChild("TradeRequest", true)
+	local function underWaiting(rf) return rf:FindFirstAncestor("Waiting") ~= nil end
+	-- On touch prefer the phone request (under the Lobby "Waiting" screen),
+	-- on desktop prefer the leaderboard one.
+	for _, rf in ipairs(found) do
+		if IsTouch and underWaiting(rf) then return rf end
+		if (not IsTouch) and (not underWaiting(rf)) then return rf end
+	end
+	return found[1]
 end
 local RequestFrame = findRequestFrame()
 
--- Phone layout? (TradeGUI_Phone, or the request lives under the Lobby "Waiting"
--- screen). On phone the native flow is: a "!" badge appears on the leaderboard
--- "+" button, and the request only shows once the leaderboard tab is opened.
-local IsPhone = (TradeGUI.Name == "TradeGUI_Phone")
+-- Phone layout? (TradeGUI_Phone, touch device, or the request lives under the
+-- Lobby "Waiting" screen). On phone the native flow is: a "!" badge appears on
+-- the leaderboard "+" button, and the request shows once the tab is opened.
+local IsPhone = IsTouch
+	or (string.find(string.lower(TradeGUI.Name), "phone") ~= nil)
+	or (RequestFrame ~= nil and RequestFrame:FindFirstAncestor("Waiting") ~= nil)
 	or (RequestFrame ~= nil and RequestFrame:FindFirstAncestor("Waiting") ~= nil)
 
 -- Find the "+" leaderboard button's notification badge (phone only).
@@ -917,8 +946,8 @@ local Status = Instance.new("TextLabel")
 Status.Size = UDim2.new(1, 0, 0, 66)
 Status.BackgroundTransparency = 1
 local function ok(x) return x and "OK" or "nil" end
-Status.Text = ("layout: %s\nReq %s | Trade %s | Cont %s\nItems %s | Inv %s | Pets %s"):format(
-	TradeGUI.Name, ok(RequestFrame), ok(TradeRoot), ok(Container),
+Status.Text = ("layout: %s (%s)\nReq %s | Trade %s | Cont %s\nItems %s | Inv %s | Pets %s"):format(
+	TradeGUI.Name, IsPhone and "phone" or "pc", ok(RequestFrame), ok(TradeRoot), ok(Container),
 	ok(ItemsPicker), ok(InventoryFrame), ok(PetsFrame))
 Status.TextColor3 = TEXT_DIM
 Status.Font = Enum.Font.Gotham
