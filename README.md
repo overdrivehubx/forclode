@@ -43,7 +43,8 @@ table, `_G.DebugTradeTable`, that mirrors the real MM2 trade structure.
 | Control | Effect |
 |---|---|
 | **Player 2 name** (TextBox) | Overrides the profile name shown for the second participant. |
-| **Prompt Request + Open Trade** | Shows the native trade-request modal, then opens the trade panel. |
+| **Prompt Trade Request** | Shows *only* the native trade-request modal (`TradeRequest`, Accepting variant) with the target name. The main trade panels stay hidden. |
+| *(native green Accept button)* | Clicking the game's own Accept button inside the modal hides the request, enables the Trade GUI, opens `Container.Trade` + `Container.Items`, and renders — mirroring `AcceptRequest → StartTrade`. |
 | **Mode: Player 1 / Player 2** | Redirects inventory-slot clicks to the **left** or **right** side of the offer table. |
 | **Force P2 Accept (green)** | Lights the remote client's green acceptance flag (`Player2.Accepted = true`). |
 | **Terminate + Wipe** | Plays the close animation, wipes the state tables, and removes the panel. |
@@ -57,12 +58,13 @@ executor) and run it once, in a session where the game's Trade GUI already
 exists in `PlayerGui`. Then use the on-screen **TradeDebugPanel**:
 
 1. Type the second player's name.
-2. **Prompt Request + Open Trade.**
-3. Click inventory items to stack them into the current side; toggle **Mode**
+2. **Prompt Trade Request** — the native incoming-request modal appears.
+3. Click the game's built-in **green Accept** button in that modal to open the trade layout.
+4. Click inventory items to stack them into the current side; toggle **Mode**
    to fill the other side.
-4. **Force P2 Accept** to show the green flag; use the in-panel Accept/Confirm
+5. **Force P2 Accept** to show the green flag; use the in-panel Accept/Confirm
    for your own side.
-5. **Terminate + Wipe** when done.
+6. **Terminate + Wipe** when done.
 
 ## Source analysis (what was mapped)
 

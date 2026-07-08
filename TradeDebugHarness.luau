@@ -242,6 +242,10 @@ _G.DebugTradeTable = DebugTradeTable
 -- Which side receives the next inventory click. "Player1" = left, "Player2" = right.
 local OfferMode = "Player1"
 
+-- Name captured when the request modal is shown; consumed when the native
+-- green Accept button is clicked (mirrors AcceptRequest -> StartTrade).
+local PendingP2Name = "Player2"
+
 --==============================================================================
 -- 6. TEMPLATE EXTRACTION  (capture the native slot framework before clearing)
 --==============================================================================
@@ -506,9 +510,12 @@ end
 --==============================================================================
 
 -- Show the native "trade request" modal (accepting variant) with the P2 name.
+-- This ONLY reveals the modal — the main trade panels stay hidden until the
+-- game's built-in green Accept button is clicked (see the hook in section 10).
 local function showRequestModal(player2Name)
+	PendingP2Name = player2Name
 	if not RequestFrame then
-		warn("[TradeDebug] Request modal frame not found; opening trade directly.")
+		warn("[TradeDebug] Request modal frame (Leaderboard...TradeRequest) not found.")
 		return
 	end
 	setVisible(RequestFrame, "Accepting", true)
@@ -518,7 +525,9 @@ local function showRequestModal(player2Name)
 	RequestFrame.Visible = true
 end
 
--- Begin the offline trade: hide the modal, reset offers, render everything.
+-- Begin the offline trade: hide the modal, reset offers, open the panels, render.
+-- Invoked by the native MM2 Accept button (not directly by the debug button),
+-- mirroring the real AcceptRequest -> StartTrade -> UpdateTrade lifecycle.
 local function startTrade(player2Name)
 	DebugTradeTable.Player2.Player = { Name = player2Name, __fake = true }
 	DebugTradeTable.Player1.Offer = {}
@@ -527,9 +536,8 @@ local function startTrade(player2Name)
 	DebugTradeTable.Player2.Accepted = false
 	if RequestFrame then RequestFrame.Visible = false end
 
-	-- Force the actual game panels open immediately for capture. RenderTrade
-	-- already enables the GUI, but set every screen explicitly here so the
-	-- interface pops on instantly the moment Request is clicked.
+	-- Open the actual game panels now that the native Accept was clicked.
+	-- Set every screen explicitly so the interface pops on instantly.
 	if TradeGUI:IsA("ScreenGui") then TradeGUI.Enabled = true end
 	setVisible(TradeGUI, "Container", true)
 	setVisible(TradeGUI, "Container.Trade", true)
@@ -697,13 +705,11 @@ local function currentName()
 	return n
 end
 
--- (b) Prompt the request modal + open the trade.
-local RequestBtn = makeButton("▶  Prompt Request + Open Trade", 4, SLATE_ACCENT)
+-- (b) Prompt the native request modal ONLY. The main trade panels stay hidden;
+--     they open when the game's built-in green Accept button is clicked.
+local RequestBtn = makeButton("▶  Prompt Trade Request", 4, SLATE_ACCENT)
 track(RequestBtn.MouseButton1Click:Connect(function()
-	local n = currentName()
-	showRequestModal(n)
-	task.wait(0.35)          -- brief beat so the modal is visible for capture
-	startTrade(n)
+	showRequestModal(currentName())
 end))
 
 -- (c) Mode toggle — redirect inventory clicks to the left/right offer.
@@ -740,6 +746,62 @@ Status.TextSize = 11
 Status.TextXAlignment = Enum.TextXAlignment.Left
 Status.LayoutOrder = 8
 Status.Parent = Window
+
+--==============================================================================
+-- 10a. HOOK THE NATIVE MM2 "ACCEPT" BUTTON INSIDE THE REQUEST MODAL
+--==============================================================================
+-- Clicking the game's built-in green Accept button (not the debug button) is
+-- what opens the real trade layout — mirroring AcceptRequest -> StartTrade.
+do
+	-- The button's exact path differs per layout, so probe the known candidates.
+	local function findRequestAccept()
+		if not RequestFrame then return nil end
+		local candidates = {
+			"Accepting.Container.Accept.ActionButton",
+			"Accepting.Accept.ActionButton",
+			"Accepting.Container.Accept",
+			"Accepting.Accept",
+		}
+		for _, path in ipairs(candidates) do
+			local node = resolve(RequestFrame, path)
+			if node and node:IsA("GuiButton") then return node end
+		end
+		-- Fallback: any descendant named "Accept" that is (or contains) a button.
+		local accepting = resolve(RequestFrame, "Accepting")
+		if accepting then
+			local acc = accepting:FindFirstChild("Accept", true)
+			if acc then
+				if acc:IsA("GuiButton") then return acc end
+				local ab = acc:FindFirstChild("ActionButton")
+				if ab and ab:IsA("GuiButton") then return ab end
+			end
+		end
+		return nil
+	end
+
+	local acceptBtn = findRequestAccept()
+	if acceptBtn then
+		track(acceptBtn.MouseButton1Click:Connect(function()
+			-- Only react while the request modal is actually showing.
+			if RequestFrame and RequestFrame.Visible then
+				startTrade(PendingP2Name or currentName())
+			end
+		end))
+	else
+		warn("[TradeDebug] Native request Accept button not found; " ..
+			"could not wire the trade-open hook.")
+	end
+
+	-- Wire the native Decline button to simply hide the modal (native behaviour).
+	local declineBtn = resolve(RequestFrame, "Accepting.Container.Decline.ActionButton")
+		or resolve(RequestFrame, "Accepting.Decline.ActionButton")
+		or resolve(RequestFrame, "Accepting.Decline")
+	if declineBtn and declineBtn:IsA("GuiButton") then
+		track(declineBtn.MouseButton1Click:Connect(function()
+			if RequestFrame then RequestFrame.Visible = false end
+		end))
+	end
+end
 
 --==============================================================================
 -- 10. OPTIONAL: wire the panel's Add-Items / tab / close buttons locally
