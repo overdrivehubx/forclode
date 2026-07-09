@@ -225,17 +225,26 @@ local OwnedPets = { Corgi=5, Bunny=2, Dragon=1, Dogey=1 }
 -- Try to use the REAL game catalog (read-only data fetch, exactly what the
 -- source scripts call) + your real inventory, so the picker looks like the game.
 -- Falls back to the embedded sample data when unavailable.
-local function tryGetSync(name)
+-- Find the GetSyncData RemoteFunction (root child first, then anywhere).
+local function findGetSync()
 	local rs = game:GetService("ReplicatedStorage")
-	local gsd = rs:FindFirstChild("GetSyncData")
+	return rs:FindFirstChild("GetSyncData") or rs:FindFirstChild("GetSyncData", true)
+end
+local function tryGetSync(name)
+	local gsd = findGetSync()
 	if not gsd then return nil end
 	local ok, data = pcall(function() return gsd:InvokeServer(name) end)
 	if ok and type(data) == "table" then return data end
 	return nil
 end
 
--- Set by the panel; called (on the main thread scheduler) once real data loads.
+-- Set by the panel; called once real data loads. Also reports the catalog state.
 local onCatalogLoaded
+local CatalogStatus = "loading real catalog…"
+
+local function countKeys(t)
+	local n = 0; if type(t) == "table" then for _ in pairs(t) do n = n + 1 end end; return n
+end
 
 -- Fetch the real catalog + inventory. This may YIELD on InvokeServer, so it MUST
 -- run in a background thread (never at load time) or it will freeze the script
@@ -253,11 +262,23 @@ local function applyRealData()
 	local function copyOwned(t)
 		local c = {}; if type(t) == "table" then for k, v in pairs(t) do c[k] = v end end; return c
 	end
-	if type(pd) == "table" then
-		if pd.Weapons and pd.Weapons.Owned then OwnedWeapons = copyOwned(pd.Weapons.Owned) end
-		if pd.Pets and pd.Pets.Owned then OwnedPets = copyOwned(pd.Pets.Owned) end
+	local havePD = (type(pd) == "table" and pd.Weapons and pd.Weapons.Owned) and true or false
+	if havePD then
+		OwnedWeapons = copyOwned(pd.Weapons.Owned)
+		OwnedPets = copyOwned(pd.Pets and pd.Pets.Owned)
+	elseif realItems then
+		-- Real catalog but no player inventory exposed: start EMPTY so only the
+		-- real items you spawn appear (no fake placeholders).
+		OwnedWeapons = {}
+		OwnedPets = {}
 	end
 
+	if realItems then
+		CatalogStatus = ("real catalog: %d items, %d pets%s"):format(
+			countKeys(ItemDB), countKeys(PetDB), havePD and " · your inventory" or " · spawn to fill")
+	else
+		CatalogStatus = "catalog: FALLBACK (GetSyncData not reachable)"
+	end
 	if onCatalogLoaded then pcall(onCatalogLoaded) end
 end
 
@@ -1389,6 +1410,14 @@ local function buildSpawnIndex()
 end
 buildSpawnIndex()
 
+-- Catalog status line (real vs fallback).
+rowOrder = rowOrder + 1
+local CatLabel = Instance.new("TextLabel")
+CatLabel.Size = UDim2.new(1, 0, 0, 16); CatLabel.BackgroundTransparency = 1
+CatLabel.Text = CatalogStatus; CatLabel.TextColor3 = C_DIM; CatLabel.Font = Enum.Font.Gotham
+CatLabel.TextSize = 11; CatLabel.TextXAlignment = Enum.TextXAlignment.Left
+CatLabel.TextWrapped = true; CatLabel.ZIndex = 2; CatLabel.LayoutOrder = rowOrder; CatLabel.Parent = pSpawn
+
 local spawnRow = makeRow(pSpawn, "Spawn item", "search the game catalog, tap +")
 local SearchBox = Instance.new("TextBox")
 SearchBox.Size = UDim2.new(0, 118, 0, 30); SearchBox.Position = UDim2.new(1, -130, 0.5, -15)
@@ -1450,6 +1479,7 @@ onCatalogLoaded = function()
 	buildSpawnIndex()
 	refreshSpawn(SearchBox.Text)
 	renderInventory()
+	CatLabel.Text = CatalogStatus
 end
 
 --------------------------------------------------------------------------------
