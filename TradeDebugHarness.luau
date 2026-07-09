@@ -188,29 +188,456 @@ local RarityValue = {
 }
 
 local ItemDB = {
-	DefaultKnife = { ItemName="Default Knife", Image="http://www.roblox.com/asset/?id=584555920", ItemType="Knife", Rarity="Common" },
-	DefaultGun   = { ItemName="Default Gun",   Image="http://www.roblox.com/asset/?id=197518111", ItemType="Gun",   Rarity="Common" },
-	Whiteout     = { ItemName="Whiteout",      Image="http://www.roblox.com/asset/?id=191788694", ItemType="Knife", Rarity="Common" },
-	["Bloxy Cola"]= { ItemName="Bloxy Cola",   Image="http://www.roblox.com/asset/?id=10042429263", ItemType="Knife", Rarity="Uncommon" },
-	Cyber        = { ItemName="Cyber",         Image="http://www.roblox.com/asset/?id=10042430931", ItemType="Knife", Rarity="Uncommon" },
-	Summerween   = { ItemName="Summerween",    Image="http://www.roblox.com/asset/?id=10042433636", ItemType="Knife", Rarity="Rare" },
-	["Retro Sunset"]= { ItemName="Retro Sunset", Image="http://www.roblox.com/asset/?id=10042436051", ItemType="Knife", Rarity="Legendary" },
-	Nebula       = { ItemName="Nebula",        Image=AssetURL.."6598123521", ItemType="Knife", Rarity="Godly" },
-	Prismatic    = { ItemName="Prismatic",     Image="http://www.roblox.com/asset/?id=5645266804", ItemType="Knife", Rarity="Godly" },
-	["Galaxy Blade"]= { ItemName="Universe",   Image=AssetURL.."10367060757", ItemType="Knife", Rarity="Godly" },
-	Harvester    = { ItemName="Harvester",     Image=AssetURL.."7800847534", ItemType="Gun",   Rarity="Ancient", Holidays=true, Halloween=true, Year="2021", YearTagHW=true },
-	Logchopper   = { ItemName="Logchopper",    Image="http://www.roblox.com/asset/?id=4528268775", ItemType="Knife", Rarity="Ancient" },
-	["Chroma Pixel Gun"] = { ItemName="Pixel", Image="http://www.roblox.com/asset/?id=10324764035", ItemType="Gun", Rarity="Godly", Chroma=true },
-	SharkSeeker  = { ItemName="SharkSeeker",   Image="http://www.roblox.com/asset/?id=7171844373", ItemType="Gun", Rarity="Victim" },
-	["Chroma Corrupt"] = { ItemName="Corrupt", Image="http://www.roblox.com/asset/?id=10029093063", ItemType="Knife", Rarity="Victim", Chroma=true },
+-- === Real MM2 catalog embedded from Sync.Item (445 items) ===
+	["2015"]={ItemName="2015", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=199026945", ItemType="Knife", Rarity="Common"},
+	["8-BitItemPack"]={ItemName="8-BIT Item Pack", Image="http://www.roblox.com/asset/?id=6070700573", ItemType="Misc", Rarity="Godly"},
+	["8-Bititempack"]={ItemName="8-Bit Item pack", Image="http://www.roblox.com/asset/?id=5807076275", ItemType="Knife", Rarity="Godly"},
+	["8bit"]={ItemName="8bit", Image="http://www.roblox.com/asset/?id=198453482", ItemType="Knife", Rarity="Common"},
+	["Abstract"]={ItemName="Abstract", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=365569428", ItemType="Knife", Rarity="Rare"},
+	["Ace"]={ItemName="Ace", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=238546577", ItemType="Gun", Rarity="Rare"},
+	["Acid"]={ItemName="Acid", Image="http://www.roblox.com/asset/?id=10042432713", ItemType="Knife", Rarity="Uncommon"},
+	["Adurite"]={ItemName="Adurite", Image="http://www.roblox.com/asset/?id=192492943", ItemType="Knife", Rarity="Uncommon"},
+	["AduriteGun"]={ItemName="Adurite", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=175668921", ItemType="Gun", Rarity="Uncommon"},
+	["Aid"]={ItemName="Juice", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=203807397", ItemType="Gun", Rarity="Common"},
+	["Alex"]={ItemName="Alex", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=546159020", ItemType="Knife", Rarity="Common"},
+	["AmericaGun"]={ItemName="America", Image="http://www.roblox.com/asset/?id=164676043", ItemType="Gun", Rarity="Classic"},
+	["AmericaSword"]={ItemName="Old Glory", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=446047742", ItemType="Knife", Rarity="Godly"},
+	["AmericanItemPack"]={ItemName="American Item Pack", Image="http://www.roblox.com/asset/?id=6070700917", ItemType="Misc", Rarity="Godly"},
+	["Americanitempack"]={ItemName="American Item pack", Image="http://www.roblox.com/asset/?id=5807076558", ItemType="Knife", Rarity="Godly"},
+	["Amerilaser"]={ItemName="Amerilaser", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=446050753", ItemType="Gun", Rarity="Godly"},
+	["Aqua"]={ItemName="Aqua", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=315501208", ItemType="Knife", Rarity="Common"},
+	["Asteroid"]={ItemName="Asteroid", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=476599365", ItemType="Gun", Rarity="Common"},
+	["Astral Boneblade"]={ItemName="Astral Boneblade", Image="https://www.roblox.com/asset/?id=8855705248", ItemType="Knife", Rarity="Godly"},
+	["Bacon"]={ItemName="Bacon", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=238546467", ItemType="Gun", Rarity="Rare"},
+	["Bats"]={ItemName="Bats", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=531873625", ItemType="Knife", Rarity="Rare"},
+	["BattleaxeII"]={ItemName="Battleaxe II", Image="http://www.roblox.com/asset/?id=5976301881", ItemType="Knife", Rarity="Godly"},
+	["Batwing"]={ItemName="Batwing", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=375690925", ItemType="Knife", Rarity="Ancient"},
+	["BdaysScythe"]={ItemName="Bday's Scythe", Image="http://www.roblox.com/asset/?id=9970402829", ItemType="Knife", Rarity="Ancient"},
+	["BigKill"]={ItemName="Big Kill", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=162669041", ItemType="Gun", Rarity="Common"},
+	["Bioblade"]={ItemName="Bioblade", Image="http://www.roblox.com/asset/?id=4751572506", ItemType="Knife", Rarity="Godly"},
+	["Biogun"]={ItemName="Biogun", Image="http://www.roblox.com/asset/?id=5805960976", ItemType="Gun", Rarity="Uncommon"},
+	["Bit"]={ItemName="Bit", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=238549030", ItemType="Gun", Rarity="Common"},
+	["Blaster"]={ItemName="Blaster", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=386277381", ItemType="Gun", Rarity="Godly"},
+	["Bleached"]={ItemName="Bleached", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=315500879", ItemType="Knife", Rarity="Common"},
+	["Bleed"]={ItemName="Rupture", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=315100702", ItemType="Gun", Rarity="Legendary"},
+	["Blood Hallowgun"]={ItemName="Blood Hallowgun", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=7333263081", ItemType="Gun", Rarity="Godly"},
+	["Blood Hallowscythe"]={ItemName="Blood HallowScythe", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=7356519141", ItemType="Knife", Rarity="Ancient"},
+	["Blood Vampire's Edge"]={ItemName="Blood Vampire's Edge", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=6917339862", ItemType="Knife", Rarity="Godly"},
+	["BloodKnife"]={ItemName="Blood", Image="http://www.roblox.com/asset/?id=144307188", ItemType="Knife", Rarity="Classic"},
+	["Blossom"]={ItemName="Blossom", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=363150561", ItemType="Knife", Rarity="Common"},
+	["Bloxy Cola"]={ItemName="Bloxy Cola", Image="http://www.roblox.com/asset/?id=10042429263", ItemType="Knife", Rarity="Uncommon"},
+	["Blue Flower"]={ItemName="Blue Flower", Image="http://www.roblox.com/asset/?id=10042422410", ItemType="Knife", Rarity="Common"},
+	["Blue Iceblaster"]={ItemName="Blue Iceblaster", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10530848450", ItemType="Gun", Rarity="Ancient"},
+	["Blue Icebreaker"]={ItemName="Blue Icebreaker", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10280401405", ItemType="Knife", Rarity="Ancient"},
+	["BlueBatwing"]={ItemName="Batwing", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10832639115", ItemType="Knife", Rarity="Ancient"},
+	["BlueElite"]={ItemName="Blue Elite", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=1269374321", ItemType="Knife", Rarity="Legendary"},
+	["BlueLogchopper"]={ItemName="BlueLogchopper", Image="http://www.roblox.com/asset/?id=4849908327", ItemType="Knife", Rarity="Victim"},
+	["BlueMinty"]={ItemName="Blue Minty", Image="http://www.roblox.com/asset/?id=6158546958", ItemType="Gun", Rarity="Victim"},
+	["BlueScratch"]={ItemName="Scratch", Image="http://www.roblox.com/asset/?id=10909353159", ItemType="Knife", Rarity="Legendary"},
+	["BlueSeer"]={ItemName="Blue Seer", Image="http://www.roblox.com/asset/?id=5809284189", ItemType="Knife", Rarity="Godly"},
+	["BlueSwirlyAxe"]={ItemName="Blue Swirly", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=9552048857", ItemType="Knife", Rarity="Godly"},
+	["BlueSwirlyGun"]={ItemName="Blue Swirly", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=9552060741", ItemType="Gun", Rarity="Godly"},
+	["BlueVampiresEdge"]={ItemName="Blue Vampire's Edge", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10454290121", ItemType="Knife", Rarity="Godly"},
+	["Bluesteel"]={ItemName="Bluesteel", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=159947939", ItemType="Knife", Rarity="Uncommon"},
+	["BluesteelGun"]={ItemName="Bluesteel", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=162668203", ItemType="Gun", Rarity="Uncommon"},
+	["Bones"]={ItemName="Bones", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=531873816", ItemType="Knife", Rarity="Common"},
+	["Borders"]={ItemName="Borders", Image="http://www.roblox.com/asset/?id=198453499", ItemType="Knife", Rarity="Common"},
+	["Brains"]={ItemName="Brains", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=531873956", ItemType="Knife", Rarity="Common"},
+	["Brush"]={ItemName="Brush", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=365568602", ItemType="Knife", Rarity="Uncommon"},
+	["Bunny"]={ItemName="Bunny", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=387874365", ItemType="Knife", Rarity="Common"},
+	["Camo"]={ItemName="Camo", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=160024789", ItemType="Gun", Rarity="Uncommon"},
+	["CamoKnife"]={ItemName="Camo", Image="http://www.roblox.com/asset/?id=5805749841", ItemType="Knife", Rarity="Uncommon"},
+	["Candies"]={ItemName="Candies", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=531203559", ItemType="Misc", Rarity="Halloween"},
+	["Candleflame"]={ItemName="Candleflame", Image="http://www.roblox.com/asset/?id=7864019525", ItemType="Knife", Rarity="Godly"},
+	["Candy"]={ItemName="Candy", Image="http://www.roblox.com/asset/?id=10006845422", ItemType="Knife", Rarity="Godly"},
+	["CandyCorn"]={ItemName="Candy Corn", Image="http://www.roblox.com/asset/?id=10909341342", ItemType="Knife", Rarity="Common"},
+	["Cane"]={ItemName="Cane", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=331140746", ItemType="Knife", Rarity="Rare"},
+	["CaneGun"]={ItemName="Cane", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=332497187", ItemType="Gun", Rarity="Rare"},
+	["Cardboard"]={ItemName="Cardboard", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=235366729", ItemType="Knife", Rarity="Common"},
+	["Carrot"]={ItemName="Carrot", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=387874071", ItemType="Knife", Rarity="Common"},
+	["Caution"]={ItemName="Caution", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=238546422", ItemType="Gun", Rarity="Uncommon"},
+	["Checker"]={ItemName="Checker", Image="http://www.roblox.com/asset/?id=198461230", ItemType="Knife", Rarity="Uncommon"},
+	["Cheddar"]={ItemName="Cheddar", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=203808317", ItemType="Gun", Rarity="Uncommon"},
+	["Cheesy"]={ItemName="Cheesy", Image="http://www.roblox.com/asset/?id=198455898", ItemType="Knife", Rarity="Uncommon"},
+	["Cherry"]={ItemName="Cherry", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=235366575", ItemType="Knife", Rarity="Common"},
+	["Chill"]={ItemName="Chill", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=332022166", ItemType="Knife", Rarity="Godly"},
+	["Chips"]={ItemName="Blue", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=473626317", ItemType="Knife", Rarity="Uncommon"},
+	["Choco"]={ItemName="Choco", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=387874991", ItemType="Knife", Rarity="Common"},
+	["Chroma Candleflame"]={ItemName="Candleflame", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=7806149582", ItemType="Knife", Rarity="Godly", Chroma=true},
+	["Chroma Corrupt"]={ItemName="Corrupt", Image="http://www.roblox.com/asset/?id=10029093063", ItemType="Knife", Rarity="Victim", Chroma=true},
+	["Chroma Darkbringer"]={ItemName="Darkbringer", Image="http://www.roblox.com/asset/?id=6997765019", ItemType="Gun", Rarity="Godly", Chroma=true},
+	["Chroma Deathshard"]={ItemName="Deathshard", Image="http://www.roblox.com/asset/?id=5808892571", ItemType="Knife", Rarity="Godly", Chroma=true},
+	["Chroma Fang"]={ItemName="Fang", Image="http://www.roblox.com/asset/?id=6033770460", ItemType="Knife", Rarity="Godly", Chroma=true},
+	["Chroma Gemstone"]={ItemName="Gemstone", Image="http://www.roblox.com/asset/?id=6691390888", ItemType="Knife", Rarity="Godly", Chroma=true},
+	["Chroma Harvester"]={ItemName="Harvester", Image="https://www.roblox.com/asset/?id=8495035484", ItemType="Gun", Rarity="Ancient", Chroma=true},
+	["Chroma Heat"]={ItemName="Heat", Image="http://www.roblox.com/asset/?id=5808893795", ItemType="Knife", Rarity="Godly", Chroma=true},
+	["Chroma Iceblaster"]={ItemName="Iceblaster", Image="http://www.roblox.com/asset/?id=8495021873", ItemType="Gun", Rarity="Ancient", Chroma=true},
+	["Chroma Icebreaker"]={ItemName="Icebreaker", Image="http://www.roblox.com/asset/?id=8495021099", ItemType="Knife", Rarity="Ancient", Chroma=true},
+	["Chroma Laser"]={ItemName="Laser", Image="http://www.roblox.com/asset/?id=6033886856", ItemType="Gun", Rarity="Godly", Chroma=true},
+	["Chroma Lightbringer"]={ItemName="Lightbringer", Image="http://www.roblox.com/asset/?id=6691883035", ItemType="Gun", Rarity="Godly", Chroma=true},
+	["Chroma Luger"]={ItemName="Luger", Image="http://www.roblox.com/asset/?id=5808896276", ItemType="Gun", Rarity="Godly", Chroma=true},
+	["Chroma Pixel Gun"]={ItemName="Pixel", Image="http://www.roblox.com/asset/?id=10324764035", ItemType="Gun", Rarity="Godly", Chroma=true},
+	["Chroma Plasmabeam"]={ItemName="Plasmabeam", Image="http://www.roblox.com/asset/?id=10102253545", ItemType="Gun", Rarity="Godly", Chroma=true},
+	["Chroma Plasmablade"]={ItemName="Plasmablade", Image="http://www.roblox.com/asset/?id=10102250086", ItemType="Knife", Rarity="Godly", Chroma=true},
+	["Chroma Reaver 3"]={ItemName="Reaver", Image="https://www.roblox.com/asset/?id=8363320666", ItemType="Knife", Rarity="Godly", Chroma=true},
+	["Chroma Saw"]={ItemName="Saw", Image="http://www.roblox.com/asset/?id=5808893352", ItemType="Knife", Rarity="Godly", Chroma=true},
+	["Chroma Seer"]={ItemName="Seer", Image="http://www.roblox.com/asset/?id=5808893009", ItemType="Knife", Rarity="Godly", Chroma=true},
+	["Chroma Shark"]={ItemName="Shark", Image="http://www.roblox.com/asset/?id=5808894870", ItemType="Gun", Rarity="Godly", Chroma=true},
+	["Chroma Slasher"]={ItemName="Slasher", Image="http://www.roblox.com/asset/?id=5808897510", ItemType="Knife", Rarity="Godly", Chroma=true},
+	["Chroma Tides"]={ItemName="Tides", Image="http://www.roblox.com/asset/?id=5808894285", ItemType="Knife", Rarity="Godly", Chroma=true},
+	["Chroma Vampire's Edge"]={ItemName="Vampire's Edge", Image="https://www.roblox.com/asset/?id=8495033547", ItemType="Knife", Rarity="Godly", Chroma=true},
+	["ChromaEternal"]={ItemName="Eternal", Image="http://www.roblox.com/asset/?id=6056779978", ItemType="Knife", Rarity="Godly", Chroma=true},
+	["ChromaPrismatic"]={ItemName="Prismatic", Image="http://www.roblox.com/asset/?id=9754262472", ItemType="Knife", Rarity="Godly", Chroma=true},
+	["ChromaScythe"]={ItemName="Chroma Scythe", Image="http://www.roblox.com/asset/?id=6056780228", ItemType="Knife", Rarity="Godly", Chroma=true},
+	["ChromaSwirlyGun"]={ItemName="Swirly Gun", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=8311453396", ItemType="Gun", Rarity="Godly", Chroma=true},
+	["Chromatic Tides"]={ItemName="Chromatic Tides", Image="http://www.roblox.com/asset/?id=9981544572", ItemType="Knife", Rarity="Godly"},
+	["Circuit"]={ItemName="Circuit", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=235366945", ItemType="Knife", Rarity="Uncommon"},
+	["Clan"]={ItemName="Clan", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=235366460", ItemType="Knife", Rarity="Common"},
+	["ClassicLaser"]={ItemName="Laser", Image="http://www.roblox.com/asset/?id=54798135", ItemType="Gun", Rarity="Classic"},
+	["Clockwork"]={ItemName="Clockwork", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=360609441", ItemType="Knife", Rarity="Godly"},
+	["ClockworkItemPack"]={ItemName="Clockwork Item Pack", Image="http://www.roblox.com/asset/?id=6070701470", ItemType="Misc", Rarity="Godly"},
+	["Clockworkitempack"]={ItemName="Clockwork Item pack", Image="http://www.roblox.com/asset/?id=5807073519", ItemType="Knife", Rarity="Godly"},
+	["Clown"]={ItemName="Clown", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=315501118", ItemType="Knife", Rarity="Common"},
+	["ClownGun"]={ItemName="Clown", Image="http://www.roblox.com/asset/?id=5805970971", ItemType="Gun", Rarity="Common"},
+	["Cola"]={ItemName="Soda", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=238546400", ItemType="Gun", Rarity="Uncommon"},
+	["Cold"]={ItemName="Cold", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=161309889", ItemType="Gun", Rarity="Common"},
+	["Combat"]={ItemName="Combat", Image="http://www.roblox.com/asset/?id=5805768116", ItemType="Knife", Rarity="Common"},
+	["Cookieblade"]={ItemName="Cookieblade", Image="http://www.roblox.com/asset/?id=6132429246", ItemType="Knife", Rarity="Godly"},
+	["Copper"]={ItemName="Copper", Image="http://www.roblox.com/asset/?id=5805764400", ItemType="Knife", Rarity="Common"},
+	["Corl"]={ItemName="Corl", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=546161858", ItemType="Knife", Rarity="Common"},
+	["CottonCandy"]={ItemName="Cotton Candy", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=435933179", ItemType="Knife", Rarity="Legendary"},
+	["CyanHarvester"]={ItemName="Cyan Harvester", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10832996299", ItemType="Gun", Rarity="Godly"},
+	["Cyber"]={ItemName="Cyber", Image="http://www.roblox.com/asset/?id=10042430931", ItemType="Knife", Rarity="Uncommon"},
+	["Damp"]={ItemName="Damp", Image="http://www.roblox.com/asset/?id=198461253", ItemType="Knife", Rarity="Rare"},
+	["Dark Candy"]={ItemName="Dark Candy", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10341270178", ItemType="Knife", Rarity="Godly"},
+	["Dark Clockwork"]={ItemName="Dark Clockwork", Image="http://www.roblox.com/asset/?id=9981541954", ItemType="Knife", Rarity="Godly"},
+	["Dark Luger"]={ItemName="Dark Luger", Image="http://www.roblox.com/asset/?id=9981540944", ItemType="Gun", Rarity="Godly"},
+	["Dark Sugar"]={ItemName="Dark Sugar", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10341298265", ItemType="Gun", Rarity="Godly"},
+	["Dark Swirly Blade"]={ItemName="Dark Swirly Blade", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=9767982029", ItemType="Knife", Rarity="Godly"},
+	["Dark Swirly Gun"]={ItemName="Dark Swirly Gun", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=9767955945", ItemType="Gun", Rarity="Godly"},
+	["Darkbringer"]={ItemName="Darkbringer", Image="http://www.roblox.com/asset/?id=5805978387", ItemType="Gun", Rarity="Godly"},
+	["Dartbringer"]={ItemName="Dartbringer", Image="http://www.roblox.com/asset/?id=8787496597", ItemType="Gun", Rarity="Victim"},
+	["Death Luger"]={ItemName="Death Luger", Image="http://www.roblox.com/asset/?id=9981367437", ItemType="Gun", Rarity="Godly"},
+	["Death's Blade"]={ItemName="Death's Blade", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10306335514", ItemType="Knife", Rarity="Ancient"},
+	["Deathshard"]={ItemName="Deathshard", Image="http://www.roblox.com/asset/?id=6017476455", ItemType="Knife", Rarity="Godly"},
+	["Deathstone"]={ItemName="Deathstone", Image="http://www.roblox.com/asset/?id=9981368109", ItemType="Knife", Rarity="Godly"},
+	["DeepSea"]={ItemName="Deep Sea", Image="http://www.roblox.com/asset/?id=5805947767", ItemType="Knife", Rarity="Rare"},
+	["DefaultGun"]={ItemName="Default Gun", Image="http://www.roblox.com/asset/?id=197518111", ItemType="Gun", Rarity="Common"},
+	["DefaultKnife"]={ItemName="Default Knife", Image="http://www.roblox.com/asset/?id=584555920", ItemType="Knife", Rarity="Common"},
+	["Denis"]={ItemName="Denis", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=546161062", ItemType="Knife", Rarity="Common"},
+	["Destiny"]={ItemName="Destiny", Image="http://www.roblox.com/asset/?id=9987790284", ItemType="Knife", Rarity="Godly"},
+	["Dew"]={ItemName="Black", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=473626646", ItemType="Knife", Rarity="Rare"},
+	["Doge"]={ItemName="Doge", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=235371276", ItemType="Knife", Rarity="Uncommon"},
+	["Donut"]={ItemName="Donut", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=235366815", ItemType="Knife", Rarity="Uncommon"},
+	["Doritos"]={ItemName="Purple", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=473626740", ItemType="Knife", Rarity="Rare"},
+	["Eco"]={ItemName="Eco", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=365567889", ItemType="Knife", Rarity="Common"},
+	["Ecto"]={ItemName="Ecto", Image="http://www.roblox.com/asset/?id=10909334330", ItemType="Knife", Rarity="Common"},
+	["Eggblade"]={ItemName="Eggblade", Image="http://www.roblox.com/asset/?id=9782610073", ItemType="Knife", Rarity="Godly"},
+	["Eggs"]={ItemName="Egg", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=387875405", ItemType="Knife", Rarity="Common"},
+	["ElderwoodRevolver"]={ItemName="Elderwood Revolver", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=4468571736", ItemType="Gun", Rarity="Godly"},
+	["ElderwoodScythe"]={ItemName="Elderwood Scythe", Image="http://www.roblox.com/asset/?id=5976324735", ItemType="Knife", Rarity="Ancient"},
+	["Elf"]={ItemName="Elf", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=331746317", ItemType="Knife", Rarity="Common"},
+	["ElfGun"]={ItemName="Elf", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=332767999", ItemType="Gun", Rarity="Common"},
+	["Elite"]={ItemName="Elite", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=241095344", ItemType="Knife", Rarity="Legendary"},
+	["EliteGreen"]={ItemName="Green Elite", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=332754554", ItemType="Knife", Rarity="Legendary"},
+	["Emerald"]={ItemName="Emerald", Image="http://www.roblox.com/asset/?id=198461276", ItemType="Knife", Rarity="Legendary"},
+	["Engraved"]={ItemName="Engraved", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=203807690", ItemType="Gun", Rarity="Common"},
+	["Eternal"]={ItemName="Eternal", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=538706317", ItemType="Knife", Rarity="Godly"},
+	["EternalII"]={ItemName="EternalII", Image="http://www.roblox.com/asset/?id=6019628835", ItemType="Knife", Rarity="Godly"},
+	["EternalIII"]={ItemName="EternalIII", Image="http://www.roblox.com/asset/?id=6019629260", ItemType="Knife", Rarity="Godly"},
+	["EternalIV"]={ItemName="EternalIV", Image="http://www.roblox.com/asset/?id=6019629723", ItemType="Knife", Rarity="Godly"},
+	["Euro"]={ItemName="Euro", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=305504173", ItemType="Knife", Rarity="Common"},
+	["Fade"]={ItemName="Fade", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=315501640", ItemType="Knife", Rarity="Legendary"},
+	["Fallout"]={ItemName="Fallout", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=175668592", ItemType="Gun", Rarity="Common"},
+	["Fang"]={ItemName="Fang", Image="http://www.roblox.com/asset/?id=6017472147", ItemType="Knife", Rarity="Godly"},
+	["Fanta"]={ItemName="Orange", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=473626025", ItemType="Knife", Rarity="Common"},
+	["Fidget's Scythe"]={ItemName="Batwing", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10531500968", ItemType="Knife", Rarity="Ancient"},
+	["Flames"]={ItemName="Flames", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=585873746", ItemType="Knife", Rarity="Godly"},
+	["Frostbite"]={ItemName="Frostbite", Image="http://www.roblox.com/asset/?id=6132363139", ItemType="Knife", Rarity="Godly"},
+	["Fusion"]={ItemName="Fusion", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=365569686", ItemType="Knife", Rarity="Legendary"},
+	["Future"]={ItemName="Future", Image="http://www.roblox.com/asset/?id=197639041", ItemType="Knife", Rarity="Uncommon"},
+	["FuturisticItemPack"]={ItemName="Futuristic Item Pack", Image="http://www.roblox.com/asset/?id=6070701952", ItemType="Misc", Rarity="Godly"},
+	["Galactic"]={ItemName="Galactic", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=173913533", ItemType="Gun", Rarity="Rare"},
+	["Galaxy"]={ItemName="Galaxy", Image="http://www.roblox.com/asset/?id=192480941", ItemType="Knife", Rarity="Rare"},
+	["Galaxy Beam"]={ItemName="Cosmos", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10367104489", ItemType="Gun", Rarity="Godly"},
+	["Galaxy Blade"]={ItemName="Universe", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10367060757", ItemType="Knife", Rarity="Godly"},
+	["Galaxy Darkbringer"]={ItemName="Darkbringer", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10367178553", ItemType="Gun", Rarity="Godly"},
+	["Galaxy Deathshard"]={ItemName="Deathshard", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10367349773", ItemType="Knife", Rarity="Godly"},
+	["Galaxy Gemstone"]={ItemName="Gemstone", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10367334828", ItemType="Knife", Rarity="Godly"},
+	["Galaxy Hallow's Edge"]={ItemName="Hallow's Edge", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10367370257", ItemType="Knife", Rarity="Godly"},
+	["Galaxy Heat"]={ItemName="Heat", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10367038434", ItemType="Knife", Rarity="Godly"},
+	["Galaxy Laser"]={ItemName="Laser", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10367229709", ItemType="Gun", Rarity="Godly"},
+	["Galaxy Lightbringer"]={ItemName="Lightbringer", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10367171658", ItemType="Gun", Rarity="Godly"},
+	["Galaxy Luger"]={ItemName="Luger", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10367244640", ItemType="Gun", Rarity="Godly"},
+	["Galaxy Saw"]={ItemName="Saw", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10367287876", ItemType="Knife", Rarity="Godly"},
+	["Galaxy Shark"]={ItemName="Shark", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10367273241", ItemType="Gun", Rarity="Godly"},
+	["Galaxy Slasher"]={ItemName="Slasher", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10367311943", ItemType="Knife", Rarity="Godly"},
+	["Gemstone"]={ItemName="Gemstone", Image="http://www.roblox.com/asset/?id=3183657748", ItemType="Knife", Rarity="Godly"},
+	["GhostKnife"]={ItemName="Ghost", Image="http://www.roblox.com/asset/?id=144268841", ItemType="Knife", Rarity="Classic"},
+	["Ghostblade"]={ItemName="Ghostblade", Image="http://www.roblox.com/asset/?id=5838251023", ItemType="Knife", Rarity="Godly"},
+	["Ghosty"]={ItemName="Ghosty", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=531873080", ItemType="Knife", Rarity="Common"},
+	["Gift"]={ItemName="Gifts 2015", Image="https://www.roblox.com/asset/?id=330192109", ItemType="Misc", Rarity="Christmas"},
+	["GiftBag"]={ItemName="Gift Bag", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=6121864813", ItemType="Gun", Rarity="Common"},
+	["Gifted"]={ItemName="Gifted", Image="http://www.roblox.com/asset/?id=197627734", ItemType="Knife", Rarity="Uncommon"},
+	["Ginger"]={ItemName="Ginger", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=331744703", ItemType="Knife", Rarity="Rare"},
+	["GingerGun"]={ItemName="Ginger", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=332497038", ItemType="Gun", Rarity="Rare"},
+	["Gingerbread"]={ItemName="Gingerbread", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=6121860619", ItemType="Gun", Rarity="Uncommon"},
+	["Glitched Blaster"]={ItemName="Glitched Blaster", Image="https://www.roblox.com/asset/?id=8692361926", ItemType="Gun", Rarity="Godly"},
+	["Glitched Katana"]={ItemName="Glitched Katana", Image="https://www.roblox.com/asset/?id=8692362860", ItemType="Knife", Rarity="Godly"},
+	["Glittered Luger"]={ItemName="Glittered Luger", Image="https://www.roblox.com/asset/?id=9833300267", ItemType="Gun", Rarity="Godly"},
+	["Gold Batwing"]={ItemName="Gold Batwing", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10531500968", ItemType="Knife", Rarity="Ancient"},
+	["GoldElderwoodRevolver"]={ItemName="Gold Elderwood Revolver", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=4468584345", ItemType="Gun", Rarity="Victim"},
+	["GoldIceblaster"]={ItemName="Iceblaster", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10457086628", ItemType="Gun", Rarity="Victim"},
+	["GoldIcebreaker"]={ItemName="Icebreaker", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10457081269", ItemType="Knife", Rarity="Victim"},
+	["GoldenGun"]={ItemName="Golden", Image="http://www.roblox.com/asset/?id=147835357", ItemType="Gun", Rarity="Classic"},
+	["Goo"]={ItemName="Goo", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=237336076", ItemType="Knife", Rarity="Common"},
+	["Graffiti"]={ItemName="Graffiti", Image="http://www.roblox.com/asset/?id=5805956212", ItemType="Knife", Rarity="Uncommon"},
+	["Grass"]={ItemName="Grass", Image="http://www.roblox.com/asset/?id=10042426156", ItemType="Knife", Rarity="Common"},
+	["GreenBlaster"]={ItemName="Blaster", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10784346994", ItemType="Gun", Rarity="Godly"},
+	["GreenElite"]={ItemName="Green Elite", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=332754554", ItemType="Knife", Rarity="Legendary"},
+	["GreenLuger"]={ItemName="Green Luger", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=332044679", ItemType="Gun", Rarity="Godly"},
+	["GreenMarble"]={ItemName="Green Marble", Image="http://www.roblox.com/asset/?id=10909351660", ItemType="Knife", Rarity="Rare"},
+	["GreenVirtual"]={ItemName="Virtual", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10784347612", ItemType="Knife", Rarity="Godly"},
+	["Grind"]={ItemName="Grind", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=305503942", ItemType="Knife", Rarity="Common"},
+	["Gun1"]={ItemName="Cowboy", Image="http://www.roblox.com/asset/?id=144290769", ItemType="Gun", Rarity="Classic"},
+	["HL2"]={ItemName="HL2", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=238546100", ItemType="Gun", Rarity="Common"},
+	["Hacker"]={ItemName="Hacker", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=203819271", ItemType="Gun", Rarity="Rare"},
+	["Hallow"]={ItemName="Hallow's Edge", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=531878205", ItemType="Knife", Rarity="Godly"},
+	["HallowsBlade"]={ItemName="Hallow's Blade", Image="http://www.roblox.com/asset/?id=10909488343", ItemType="Knife", Rarity="Godly"},
+	["Handsaw"]={ItemName="Handsaw", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=332042435", ItemType="Knife", Rarity="Godly"},
+	["Hardened"]={ItemName="Hardened", Image="http://www.roblox.com/asset/?id=5805761191", ItemType="Knife", Rarity="Common"},
+	["Harvester"]={ItemName="Harvester", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=7800847534", ItemType="Gun", Rarity="Ancient"},
+	["Hazmat"]={ItemName="Hazmat", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=315501297", ItemType="Knife", Rarity="Uncommon"},
+	["Heartblade"]={ItemName="Heartblade", Image="http://www.roblox.com/asset/?id=6413214382", ItemType="Knife", Rarity="Godly"},
+	["Hearts"]={ItemName="Hearts", Image="https://www.roblox.com/asset/?id=363362737", ItemType="Knife", Rarity="Common"},
+	["Heat"]={ItemName="Heat", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=6017472462", ItemType="Knife", Rarity="Godly"},
+	["HighTech"]={ItemName="High Tech", Image="http://www.roblox.com/asset/?id=5805953977", ItemType="Knife", Rarity="Uncommon"},
+	["Hive"]={ItemName="Hive", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=315501434", ItemType="Knife", Rarity="Uncommon"},
+	["HyperEdge"]={ItemName="Hyper's Edge", Image="https://www.roblox.com/asset/?id=8590484098", ItemType="Knife", Rarity="Godly"},
+	["Ice"]={ItemName="Ice", Image="http://www.roblox.com/asset/?id=191976710", ItemType="Knife", Rarity="Common"},
+	["Ice Cream"]={ItemName="Ice Cream", Image="http://www.roblox.com/asset/?id=10042435267", ItemType="Knife", Rarity="Rare"},
+	["IceDragon"]={ItemName="Ice Dragon", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=585846454", ItemType="Knife", Rarity="Godly"},
+	["IceShared"]={ItemName="Ice Shared", Image="http://www.roblox.com/asset/?id=6106353862", ItemType="Knife", Rarity="Godly"},
+	["Iceblaster"]={ItemName="Iceblaster", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=6121579464", ItemType="Gun", Rarity="Godly"},
+	["Icebreaker"]={ItemName="Icebreaker", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=6121572723", ItemType="Knife", Rarity="Ancient"},
+	["Icecracker"]={ItemName="Icecracker", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=6121848805", ItemType="Knife", Rarity="Legendary"},
+	["Icewing"]={ItemName="Icewing", Image="http://www.roblox.com/asset/?id=10029194550", ItemType="Knife", Rarity="Ancient"},
+	["Imbued"]={ItemName="Imbued", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=162668312", ItemType="Gun", Rarity="Rare"},
+	["Indy"]={ItemName="Indy", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=305506951", ItemType="Knife", Rarity="Common"},
+	["Infected"]={ItemName="Infected", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=200953094", ItemType="Knife", Rarity="Common"},
+	["Infiltrator"]={ItemName="Infiltrator", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=203806022", ItemType="Gun", Rarity="Common"},
+	["Iron"]={ItemName="Iron", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=160201541", ItemType="Gun", Rarity="Common"},
+	["JD"]={ItemName="JD", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=566867312", ItemType="Knife", Rarity="Legendary"},
+	["Jack"]={ItemName="Jack", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=315099010", ItemType="Knife", Rarity="Rare"},
+	["Jigsaw"]={ItemName="Jigsaw", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=365569126", ItemType="Knife", Rarity="Uncommon"},
+	["Knife1"]={ItemName="Splitter", Image="http://www.roblox.com/asset/?id=143820641", ItemType="Knife", Rarity="Classic"},
+	["Kool"]={ItemName="Yellow", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=473625906", ItemType="Knife", Rarity="Common"},
+	["Korblox"]={ItemName="Korblox", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=315501501", ItemType="Knife", Rarity="Rare"},
+	["Krypto"]={ItemName="Krypto", Image="http://www.roblox.com/asset/?id=198458841", ItemType="Knife", Rarity="Rare"},
+	["LMFAO"]={ItemName="Pink", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=473626473", ItemType="Knife", Rarity="Uncommon"},
+	["Laser"]={ItemName="Laser", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=6017472763", ItemType="Gun", Rarity="Godly"},
+	["Leaf"]={ItemName="Leaf", Image="http://www.roblox.com/asset/?id=5805963918", ItemType="Knife", Rarity="Common"},
+	["Lightbringer"]={ItemName="Lightbringer", Image="http://www.roblox.com/asset/?id=5805977276", ItemType="Gun", Rarity="Godly"},
+	["Linked"]={ItemName="Linked", Image="http://www.roblox.com/asset/?id=198453528", ItemType="Knife", Rarity="Common"},
+	["Log"]={ItemName="Log", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=365567962", ItemType="Knife", Rarity="Common"},
+	["Logchopper"]={ItemName="Logchopper", Image="http://www.roblox.com/asset/?id=4528268775", ItemType="Knife", Rarity="Ancient"},
+	["Love"]={ItemName="Love", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=196750845", ItemType="Knife", Rarity="Common"},
+	["LoveGun"]={ItemName="Love", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=203867650", ItemType="Gun", Rarity="Uncommon"},
+	["Lovely"]={ItemName="Lovely", Image="http://www.roblox.com/asset/?id=5805966103", ItemType="Knife", Rarity="Common"},
+	["Lucky"]={ItemName="Lucky", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=365569265", ItemType="Knife", Rarity="Uncommon"},
+	["Luger"]={ItemName="Luger", Image="http://www.roblox.com/asset/?id=6017473071", ItemType="Gun", Rarity="Godly"},
+	["MLG"]={ItemName="Shiny", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=473626979", ItemType="Knife", Rarity="Legendary"},
+	["Magma"]={ItemName="Magma", Image="http://www.roblox.com/asset/?id=10909350159", ItemType="Knife", Rarity="Rare"},
+	["Marina"]={ItemName="Marina", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=203808190", ItemType="Gun", Rarity="Uncommon"},
+	["Marley"]={ItemName="Green", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=473625785", ItemType="Knife", Rarity="Common"},
+	["Melon"]={ItemName="Melon", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=315501369", ItemType="Knife", Rarity="Uncommon"},
+	["Midnight"]={ItemName="Midnight", Image="http://www.roblox.com/asset/?id=197664126", ItemType="Knife", Rarity="Legendary"},
+	["Midnight Fang"]={ItemName="Midnight Fang", Image="http://www.roblox.com/asset/?id=9970375658", ItemType="Knife", Rarity="Godly"},
+	["Midnight Luger"]={ItemName="Midnight Luger", Image="http://www.roblox.com/asset/?id=9970374733", ItemType="Gun", Rarity="Godly"},
+	["Missing"]={ItemName="Missing", Image="http://www.roblox.com/asset/?id=198455936", ItemType="Knife", Rarity="Uncommon"},
+	["Molten"]={ItemName="Molten", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=203869308", ItemType="Gun", Rarity="Rare"},
+	["MoltenKnife"]={ItemName="Molten", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=235371809", ItemType="Knife", Rarity="Rare"},
+	["Moons"]={ItemName="Moons", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=531873154", ItemType="Knife", Rarity="Uncommon"},
+	["Mummy"]={ItemName="Mummy", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=315155591", ItemType="Gun", Rarity="Rare"},
+	["Mummy2"]={ItemName="Mummy", Image="http://www.roblox.com/asset/?id=10909344882", ItemType="Knife", Rarity="Uncommon"},
+	["Musical"]={ItemName="Musical", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=365569566", ItemType="Knife", Rarity="Rare"},
+	["MysteryKey"]={ItemName="Mystery Key", Image="rbxassetid://8636997898", ItemType="Misc", Rarity="Common"},
+	["Nebula"]={ItemName="Nebula", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=6598123521", ItemType="Knife", Rarity="Godly"},
+	["Nebula Sword"]={ItemName="Nebula Sword", Image="http://www.roblox.com/asset/?id=9981540182", ItemType="Knife", Rarity="Godly"},
+	["Neo-Harvester"]={ItemName="Bday's Harvester", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10291680038", ItemType="Gun", Rarity="Ancient"},
+	["Neon"]={ItemName="Neon", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=159746637", ItemType="Knife", Rarity="Common"},
+	["Neon Luger"]={ItemName="Neon Luger", Image="http://www.roblox.com/asset/?id=9970373678", ItemType="Gun", Rarity="Godly"},
+	["Nether"]={ItemName="Nether", Image="http://www.roblox.com/asset/?id=197657098", ItemType="Knife", Rarity="Rare"},
+	["News"]={ItemName="News", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=238546032", ItemType="Gun", Rarity="Common"},
+	["Night"]={ItemName="Night", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=159971385", ItemType="Gun", Rarity="Uncommon"},
+	["Nightblade"]={ItemName="Nightblade", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=475478854", ItemType="Knife", Rarity="Godly"},
+	["Nightfire"]={ItemName="Nightfire", Image="http://www.roblox.com/asset/?id=5805950020", ItemType="Gun", Rarity="Rare"},
+	["NiksLaser"]={ItemName="Nik's Laser", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=8524417874", ItemType="Gun", Rarity="Ancient"},
+	["NiksScythe"]={ItemName="Nik's Scythe", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=2533350813", ItemType="Knife", Rarity="Ancient"},
+	["Nova"]={ItemName="Nova", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=235371686", ItemType="Knife", Rarity="Rare"},
+	["Nutcracker"]={ItemName="Nutcracker", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=332497657", ItemType="Gun", Rarity="Uncommon"},
+	["Oceanbringer"]={ItemName="Oceanbringer", Image="http://www.roblox.com/asset/?id=9989448048", ItemType="Gun", Rarity="Godly"},
+	["Oily"]={ItemName="Oily", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=315501170", ItemType="Knife", Rarity="Common"},
+	["Ollie"]={ItemName="Ollie", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=305504399", ItemType="Knife", Rarity="Common"},
+	["Omega"]={ItemName="Omega", Image="http://www.roblox.com/asset/?id=9987789633", ItemType="Knife", Rarity="Godly"},
+	["Orange Iceblaster"]={ItemName="Orange Iceblaster", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10530844362", ItemType="Gun", Rarity="Ancient"},
+	["Orange Icebreaker"]={ItemName="Orange Icebreaker", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10280395003", ItemType="Knife", Rarity="Ancient"},
+	["OrangeMarble"]={ItemName="Orange Marble", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=531873011", ItemType="Knife", Rarity="Rare"},
+	["OrangeSeer"]={ItemName="Orange Seer", Image="http://www.roblox.com/asset/?id=5809284896", ItemType="Knife", Rarity="Godly"},
+	["Ornament1"]={ItemName="Ornament", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=331745428", ItemType="Knife", Rarity="Common"},
+	["Ornament1Gun"]={ItemName="Ornament1", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=332497144", ItemType="Gun", Rarity="Common"},
+	["Ornament2"]={ItemName="Ornament2", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=331745341", ItemType="Knife", Rarity="Common"},
+	["Ornament2Gun"]={ItemName="Ornament2", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=332497550", ItemType="Gun", Rarity="Common"},
+	["Ornaments"]={ItemName="Ornaments", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=6121853160", ItemType="Knife", Rarity="Common"},
+	["Overseer"]={ItemName="Overseer", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=175668680", ItemType="Gun", Rarity="Legendary"},
+	["OverseerKnife"]={ItemName="Overseer", Image="http://www.roblox.com/asset/?id=198458910", ItemType="Knife", Rarity="Legendary"},
+	["Paper"]={ItemName="Paper", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=235366870", ItemType="Knife", Rarity="Uncommon"},
+	["Passion"]={ItemName="Passion", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=363150334", ItemType="Knife", Rarity="Common"},
+	["Patrick"]={ItemName="Patrick", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=383476085", ItemType="Knife", Rarity="Common"},
+	["Pea"]={ItemName="Pea", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=238545971", ItemType="Gun", Rarity="Common"},
+	["Pepper"]={ItemName="Brown", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=473625645", ItemType="Knife", Rarity="Common"},
+	["Peppermint"]={ItemName="Peppermint", Image="http://www.roblox.com/asset/?id=6106353862", ItemType="Knife", Rarity="Godly"},
+	["Phantom"]={ItemName="Phantom", Image="http://www.roblox.com/asset/?id=10909336975", ItemType="Knife", Rarity="Common"},
+	["Phaser"]={ItemName="Phaser", Image="http://www.roblox.com/asset/?id=144325423", ItemType="Gun", Rarity="Classic"},
+	["Pirate"]={ItemName="Pirate", Image="http://www.roblox.com/asset/?id=5805744004", ItemType="Gun", Rarity="Uncommon"},
+	["Pixel"]={ItemName="Pixel", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=365347166", ItemType="Knife", Rarity="Godly"},
+	["Pixel Gun"]={ItemName="Pixel", Image="http://www.roblox.com/asset/?id=10324763229", ItemType="Gun", Rarity="Godly"},
+	["Plasmabeam"]={ItemName="Plasmabeam", Image="http://www.roblox.com/asset/?id=10081702265", ItemType="Gun", Rarity="Godly"},
+	["Plasmablade"]={ItemName="Plasmablade", Image="http://www.roblox.com/asset/?id=10081700679", ItemType="Knife", Rarity="Godly"},
+	["Plasmite"]={ItemName="Plasmite", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=161369368", ItemType="Knife", Rarity="Legendary"},
+	["PoisonBeam"]={ItemName="Poisonbeam", Image="http://www.roblox.com/asset/?id=7676156595", ItemType="Gun", Rarity="Godly"},
+	["PoisonBlade"]={ItemName="Poisonblade", Image="http://www.roblox.com/asset/?id=7676155486", ItemType="Knife", Rarity="Godly"},
+	["Potion"]={ItemName="Potion", Image="http://www.roblox.com/asset/?id=10909346684", ItemType="Knife", Rarity="Uncommon"},
+	["Predator"]={ItemName="Predator", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=203810176", ItemType="Gun", Rarity="Legendary"},
+	["PredatorKnife"]={ItemName="Predator", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=235372015", ItemType="Knife", Rarity="Legendary"},
+	["Prism"]={ItemName="Prism", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=306046703", ItemType="Knife", Rarity="Common"},
+	["Prismatic"]={ItemName="Prismatic", Image="http://www.roblox.com/asset/?id=5645266804", ItemType="Knife", Rarity="Godly"},
+	["Pumpking"]={ItemName="Pumpking", Image="http://www.roblox.com/asset/?id=10909354337", ItemType="Knife", Rarity="Godly"},
+	["Purple Iceblaster"]={ItemName="Purple Iceblaster", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10530854068", ItemType="Gun", Rarity="Ancient"},
+	["Purple Icebreaker"]={ItemName="Purple Icebreaker", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10281930066", ItemType="Knife", Rarity="Ancient"},
+	["PurpleSeer"]={ItemName="Purple Seer", Image="http://www.roblox.com/asset/?id=5809284486", ItemType="Knife", Rarity="Godly"},
+	["Rainbow"]={ItemName="Rainbow", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=159747377", ItemType="Knife", Rarity="Rare"},
+	["RainbowGun"]={ItemName="Rainbow", Image="http://www.roblox.com/asset/?id=5805735262", ItemType="Gun", Rarity="Rare"},
+	["RandLuger"]={ItemName="?Luger?", Image="https://www.roblox.com/asset/?id=332362247", ItemType="Gun", Rarity="Godly"},
+	["Red Flower"]={ItemName="Red Flower", Image="http://www.roblox.com/asset/?id=10042423088", ItemType="Knife", Rarity="Common"},
+	["Red Iceblaster"]={ItemName="Red Iceblaster", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10530855956", ItemType="Gun", Rarity="Ancient"},
+	["Red Icebreaker"]={ItemName="Red Icebreaker", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10281934246", ItemType="Knife", Rarity="Ancient"},
+	["RedLuger"]={ItemName="Red Luger", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=332044583", ItemType="Gun", Rarity="Godly"},
+	["RedSeer"]={ItemName="Red Seer", Image="http://www.roblox.com/asset/?id=5809283834", ItemType="Knife", Rarity="Godly"},
+	["Reptile"]={ItemName="Reptile", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=162672131", ItemType="Knife", Rarity="Common"},
+	["Retro Sunset"]={ItemName="Retro Sunset", Image="http://www.roblox.com/asset/?id=10042436051", ItemType="Knife", Rarity="Legendary"},
+	["Roses"]={ItemName="Roses", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=363352002", ItemType="Knife", Rarity="Common"},
+	["Rune"]={ItemName="Rune", Image="http://www.roblox.com/asset/?id=5805732208", ItemType="Knife", Rarity="Legendary"},
+	["Sandy"]={ItemName="Sandy", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=365568056", ItemType="Knife", Rarity="Common"},
+	["Santa"]={ItemName="Santa", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=331746096", ItemType="Knife", Rarity="Common"},
+	["SantaGun"]={ItemName="Santa", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=332496861", ItemType="Gun", Rarity="Common"},
+	["Saw"]={ItemName="Saw", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=6017475768", ItemType="Knife", Rarity="Godly"},
+	["Scratch"]={ItemName="Scratch", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=531873371", ItemType="Knife", Rarity="Legendary"},
+	["Shaded"]={ItemName="Shaded", Image="http://www.roblox.com/asset/?id=5805968838", ItemType="Knife", Rarity="Common"},
+	["ShadowKnife"]={ItemName="Shadow", Image="http://www.roblox.com/asset/?id=144070096", ItemType="Knife", Rarity="Classic"},
+	["Shadowitempack"]={ItemName="Shadow Item pack", Image="http://www.roblox.com/asset/?id=5807078730", ItemType="Knife", Rarity="Godly"},
+	["Shark"]={ItemName="Shark", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=6017475362", ItemType="Gun", Rarity="Godly"},
+	["SharkSeeker"]={ItemName="SharkSeeker", Image="http://www.roblox.com/asset/?id=7171844373", ItemType="Gun", Rarity="Victim"},
+	["Sidewinder"]={ItemName="Sidewinder", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=305503783", ItemType="Knife", Rarity="Common"},
+	["SilentNight"]={ItemName="Silent Night", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=6121860619", ItemType="Gun", Rarity="Rare"},
+	["Sketch"]={ItemName="Sketch", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=203808108", ItemType="Gun", Rarity="Uncommon"},
+	["SketchYT"]={ItemName="Sketchy", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=546161470", ItemType="Knife", Rarity="Common"},
+	["Skool"]={ItemName="Skool", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=295269977", ItemType="Knife", Rarity="Common"},
+	["Skyfire"]={ItemName="Skyfire", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10144415540", ItemType="Knife", Rarity="Godly"},
+	["Slasher"]={ItemName="Slasher", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=6017473508", ItemType="Knife", Rarity="Godly"},
+	["Slate"]={ItemName="Slate", Image="http://www.roblox.com/asset/?id=198453556", ItemType="Knife", Rarity="Common"},
+	["Snoop"]={ItemName="Red", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=473626150", ItemType="Knife", Rarity="Uncommon"},
+	["Snowflakes"]={ItemName="Snowflakes", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=6123338102", ItemType="Knife", Rarity="Rare"},
+	["Snowman"]={ItemName="Snowman", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=331745799", ItemType="Knife", Rarity="Uncommon"},
+	["SnowmanGun"]={ItemName="Snowman", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=332497603", ItemType="Gun", Rarity="Uncommon"},
+	["Snowy"]={ItemName="Snowy", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=332011125", ItemType="Knife", Rarity="Uncommon"},
+	["Sorry"]={ItemName="Corrupt", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=197879343", ItemType="Knife", Rarity="Victim"},
+	["Space"]={ItemName="Space", Image="http://www.roblox.com/asset/?id=5805739006", ItemType="Knife", Rarity="Rare"},
+	["Sparkle"]={ItemName="Sparkle", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=203869110", ItemType="Gun", Rarity="Legendary"},
+	["Sparkle1"]={ItemName="Sparkle1", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=310709709", ItemType="Knife", Rarity="Common"},
+	["Sparkle10"]={ItemName="Sparkle10", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=310715768", ItemType="Knife", Rarity="Common"},
+	["Sparkle2"]={ItemName="Sparkle2", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=310710191", ItemType="Knife", Rarity="Common"},
+	["Sparkle3"]={ItemName="Sparkle3", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=310710694", ItemType="Knife", Rarity="Common"},
+	["Sparkle4"]={ItemName="Sparkle4", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=310712788", ItemType="Knife", Rarity="Common"},
+	["Sparkle5"]={ItemName="Sparkle5", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=310713235", ItemType="Knife", Rarity="Common"},
+	["Sparkle6"]={ItemName="Sparkle6", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=310713648", ItemType="Knife", Rarity="Common"},
+	["Sparkle7"]={ItemName="Sparkle7", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=310714089", ItemType="Knife", Rarity="Common"},
+	["Sparkle8"]={ItemName="Sparkle8", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=310714407", ItemType="Knife", Rarity="Common"},
+	["Sparkle9"]={ItemName="Sparkle9", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=310715104", ItemType="Knife", Rarity="Common"},
+	["Spectrum"]={ItemName="Spectrum", Image="http://www.roblox.com/asset/?id=198458862", ItemType="Knife", Rarity="Rare"},
+	["Spider"]={ItemName="Spider", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=315120760", ItemType="Knife", Rarity="Godly"},
+	["Spitfire"]={ItemName="Spitfire", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=159971321", ItemType="Gun", Rarity="Rare"},
+	["Splash"]={ItemName="Splash", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=235371439", ItemType="Knife", Rarity="Legendary"},
+	["Splash Luger"]={ItemName="Splash Luger", Image="http://www.roblox.com/asset/?id=9970372863", ItemType="Gun", Rarity="Godly"},
+	["SplashGun"]={ItemName="Splash", Image="http://www.roblox.com/asset/?id=5805943259", ItemType="Gun", Rarity="Legendary"},
+	["Splat"]={ItemName="Splat", Image="http://www.roblox.com/asset/?id=5805754745", ItemType="Gun", Rarity="Common"},
+	["Splatter"]={ItemName="Splatter", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=159432647", ItemType="Knife", Rarity="Common"},
+	["Squire"]={ItemName="Squire", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=315501560", ItemType="Knife", Rarity="Rare"},
+	["Stainless"]={ItemName="Stainless", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=235366771", ItemType="Knife", Rarity="Common"},
+	["Stalker"]={ItemName="Stalker", Image="http://www.roblox.com/asset/?id=198455980", ItemType="Knife", Rarity="Uncommon"},
+	["Star"]={ItemName="Star", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=203807904", ItemType="Gun", Rarity="Common"},
+	["Static"]={ItemName="Static", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=365568163", ItemType="Knife", Rarity="Common"},
+	["Stockings"]={ItemName="Stockings", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=6123335682", ItemType="Knife", Rarity="Common"},
+	["Sub"]={ItemName="Sub", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=546159250", ItemType="Knife", Rarity="Common"},
+	["Sugar"]={ItemName="Sugar", Image="http://www.roblox.com/asset/?id=10006845822", ItemType="Gun", Rarity="Godly"},
+	["Summer Rifle"]={ItemName="Summer Rifle", Image="http://www.roblox.com/asset/?id=10122690888", ItemType="Gun", Rarity="Godly"},
+	["Summer Tech"]={ItemName="Summer Tech", Image="http://www.roblox.com/asset/?id=10122687783", ItemType="Knife", Rarity="Godly"},
+	["Summer's Blade"]={ItemName="Summer's Blade", Image="http://www.roblox.com/asset/?id=9981543428", ItemType="Knife", Rarity="Ancient"},
+	["Summer's Scimitar"]={ItemName="Summer's Scimitar", Image="http://www.roblox.com/asset/?id=10042436887", ItemType="Knife", Rarity="Godly"},
+	["Summer's Sword"]={ItemName="Summer's Sword", Image="http://www.roblox.com/asset/?id=10042439807", ItemType="Knife", Rarity="Godly"},
+	["Summerween"]={ItemName="Summerween", Image="http://www.roblox.com/asset/?id=10042433636", ItemType="Knife", Rarity="Rare"},
+	["Sun"]={ItemName="Sun", Image="http://www.roblox.com/asset/?id=10042421790", ItemType="Knife", Rarity="Common"},
+	["Sweetheart"]={ItemName="Sweetheart", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=363150761", ItemType="Knife", Rarity="Common"},
+	["SwirlyAxe"]={ItemName="Swirly Axe", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=8304801000", ItemType="Knife", Rarity="Ancient"},
+	["SwirlyBlade"]={ItemName="Swirly Blade", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=8304805693", ItemType="Knife", Rarity="Godly"},
+	["SwirlyGun"]={ItemName="Swirly Gun", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=8305002569", ItemType="Gun", Rarity="Godly"},
+	["TNL"]={ItemName="TNL", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=201542790", ItemType="Knife", Rarity="Common"},
+	["Tailslide"]={ItemName="Tailslide", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=305506822", ItemType="Knife", Rarity="Common"},
+	["TheSeer"]={ItemName="Seer", Image="http://www.roblox.com/asset/?id=3184139765", ItemType="Knife", Rarity="Godly"},
+	["Tides"]={ItemName="Tides", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=6017476161", ItemType="Knife", Rarity="Godly"},
+	["Tiger"]={ItemName="Tiger", Image="http://www.roblox.com/asset/?id=5805747427", ItemType="Knife", Rarity="Uncommon"},
+	["TimeKnife"]={ItemName="Prince", Image="http://www.roblox.com/asset/?id=143917700", ItemType="Knife", Rarity="Classic"},
+	["Toxic's Edge"]={ItemName="Toxic's Edge", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10692534741", ItemType="Knife", Rarity="Godly"},
+	["ToyBasketball"]={ItemName="Basketball", Image="rbxassetid://583505141", ItemType="Misc", Rarity="Christmas"},
+	["ToyGameSystem"]={ItemName="Game System", Image="rbxassetid://583509564", ItemType="Misc", Rarity="Christmas"},
+	["ToyRobot"]={ItemName="Toy Robot", Image="rbxassetid://583508162", ItemType="Misc", Rarity="Christmas"},
+	["ToySkateboard"]={ItemName="Skateboard", Image="rbxassetid://583508609", ItemType="Misc", Rarity="Christmas"},
+	["Tree"]={ItemName="Tree", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=331745577", ItemType="Knife", Rarity="Legendary"},
+	["TreeGun"]={ItemName="Tree", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=332497688", ItemType="Gun", Rarity="Legendary"},
+	["Trees"]={ItemName="Trees", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=6123336879", ItemType="Knife", Rarity="Common"},
+	["Tulip"]={ItemName="Tulip", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=387874661", ItemType="Knife", Rarity="Common"},
+	["Universe"]={ItemName="Universe", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=238546660", ItemType="Gun", Rarity="Legendary"},
+	["Valentine"]={ItemName="Valentine", Image="https://www.roblox.com/asset/?id=363362726", ItemType="Knife", Rarity="Common"},
+	["Vampire"]={ItemName="Vampire", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=531873248", ItemType="Knife", Rarity="Uncommon"},
+	["Viper"]={ItemName="Viper", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=160299600", ItemType="Gun", Rarity="Legendary"},
+	["Virtual"]={ItemName="Virtual", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=386276987", ItemType="Knife", Rarity="Godly"},
+	["Vortex"]={ItemName="Vortex", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=235371508", ItemType="Knife", Rarity="Rare"},
+	["Vortex2"]={ItemName="Vortex", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=8084065311", ItemType="Knife", Rarity="Godly"},
+	["Wanwood"]={ItemName="Wanwood", Image="http://www.roblox.com/asset/?id=192132094", ItemType="Knife", Rarity="Uncommon"},
+	["Web"]={ItemName="Web", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=315104004", ItemType="Knife", Rarity="Legendary"},
+	["Webs"]={ItemName="Webs", Image="http://www.roblox.com/asset/?id=10909347694", ItemType="Knife", Rarity="Uncommon"},
+	["Whiteout"]={ItemName="Whiteout", Image="http://www.roblox.com/asset/?id=191788694", ItemType="Knife", Rarity="Common"},
+	["Witch"]={ItemName="Witch", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=531873553", ItemType="Knife", Rarity="Common"},
+	["Wolf"]={ItemName="Wolf", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=531873487", ItemType="Knife", Rarity="Uncommon"},
+	["Wooden"]={ItemName="Wooden", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=238546356", ItemType="Gun", Rarity="Uncommon"},
+	["WrapGun"]={ItemName="Wrap", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=6121867603", ItemType="Gun", Rarity="Uncommon"},
+	["WrapKnife"]={ItemName="Wrap", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=6121854816", ItemType="Knife", Rarity="Uncommon"},
+	["WrapPaperBoxGold"]={ItemName="Box of Gold Wrapping Paper", Image="rbxassetid://586083489", ItemType="Misc", Rarity="Christmas"},
+	["WrapPaperBoxPurple"]={ItemName="Box of Purple Wrapping Paper", Image="rbxassetid://586083461", ItemType="Misc", Rarity="Christmas"},
+	["WrapPaperBoxRed"]={ItemName="Box of Red Wrapping Paper", Image="rbxassetid://586083433", ItemType="Misc", Rarity="Christmas"},
+	["Wrapped"]={ItemName="Wrapped", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=331745500", ItemType="Knife", Rarity="Uncommon"},
+	["WrappedGun"]={ItemName="Wrapped", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=332497103", ItemType="Gun", Rarity="Uncommon"},
+	["Xbox"]={ItemName="Xbox", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=439325100", ItemType="Knife", Rarity="Common"},
+	["Xmas"]={ItemName="Xmas", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=332077449", ItemType="Knife", Rarity="Godly"},
+	["Yellow Iceblaster"]={ItemName="Yellow Iceblaster", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10530850715", ItemType="Gun", Rarity="Ancient"},
+	["Yellow Icebreaker"]={ItemName="Yellow Icebreaker", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=10281925856", ItemType="Knife", Rarity="Ancient"},
+	["YellowSeer"]={ItemName="Yellow Seer", Image="http://www.roblox.com/asset/?id=5809285257", ItemType="Knife", Rarity="Godly"},
+	["Zombie"]={ItemName="Zombie", Image="http://www.roblox.com/asset/?id=10909339376", ItemType="Knife", Rarity="Common"},
+	["iRevolver"]={ItemName="iRevolver", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=203809168", ItemType="Gun", Rarity="Rare"},
 }
 
-local PetDB = {
-	Corgi   = { Name="Corgi",   Image=AssetURL.."1329450961", Rarity="Common" },
-	Bunny   = { Name="Bunny",   Image=AssetURL.."1329450961", Rarity="Uncommon" },
-	Dragon  = { Name="Dragon",  Image=AssetURL.."1329450961", Rarity="Legendary" },
-	Dogey   = { Name="Dogey",   Image=AssetURL.."1329450961", Rarity="Godly", Chroma=true },
-}
+-- Pets aren't in the uploaded Sync.Item; left empty (spawner shows weapons only).
+local PetDB = {}
 
 local Database = { Weapons = ItemDB, Pets = PetDB }
 
@@ -255,14 +682,14 @@ local function tryGetSync(name)
 	return nil
 end
 
--- Set by the panel; called once real data loads. Also reports the catalog state.
-local onCatalogLoaded
-local CatalogStatus = "loading real catalog…"
-local RealCatalog = false  -- true once GetSyncData returns the real catalog
-
 local function countKeys(t)
 	local n = 0; if type(t) == "table" then for _ in pairs(t) do n = n + 1 end end; return n
 end
+
+-- Set by the panel; called once real data loads. Also reports the catalog state.
+local onCatalogLoaded
+local CatalogStatus = "catalog: embedded (" .. countKeys(ItemDB) .. " items) — spawn to add"
+local RealCatalog = false  -- true once GetSyncData returns the real catalog
 
 -- Fetch the real catalog + inventory. This may YIELD on InvokeServer, so it MUST
 -- run in a background thread (never at load time) or it will freeze the script
@@ -930,15 +1357,68 @@ if ItemsPicker then
 	end))
 end
 
-local function renderInventory()
-	if RealCatalog then
-		-- We have the real catalog: render our own controlled inventory.
-		renderInventoryPane(InventoryFrame, OwnedWeapons, ItemDB, "Weapons")
-		renderInventoryPane(PetsFrame, OwnedPets, PetDB, "Pets")
-	else
-		-- No catalog: leave the game's real inventory in place and just hook it.
-		hookAllInventorySlots()
+-- Find the inventory container for a category + a real slot to clone (correct
+-- size/style for the platform). Name-agnostic: uses any real slot in the picker.
+local function findInventoryContainer(category)
+	if not ItemsPicker then return nil, nil end
+	for _, slot in ipairs(ItemsPicker:GetDescendants()) do
+		local icon = slot:FindFirstChild("Icon") or resolve(slot, "Container.Icon")
+		local btn = resolve(slot, "Container.Button") or resolve(slot, "Container.ActionButton") or slot:FindFirstChild("Button")
+		if icon and icon:IsA("ImageLabel") and btn and btn:IsA("GuiButton") then
+			local isPet = (slot:FindFirstAncestor("Pets") or slot:FindFirstAncestor("PetsFrame")) ~= nil
+			if (category == "Pets") == isPet then
+				return slot.Parent, slot
+			end
+		end
 	end
+	-- fall back to any slot (weapons) regardless of category
+	for _, slot in ipairs(ItemsPicker:GetDescendants()) do
+		local icon = slot:FindFirstChild("Icon") or resolve(slot, "Container.Icon")
+		local btn = resolve(slot, "Container.Button") or resolve(slot, "Container.ActionButton") or slot:FindFirstChild("Button")
+		if icon and icon:IsA("ImageLabel") and btn and btn:IsA("GuiButton") then
+			return slot.Parent, slot
+		end
+	end
+	return nil, nil
+end
+
+-- Spawn a real catalog item into the inventory by cloning a real game slot and
+-- stamping the item's image/name/rarity onto it (then hooking it to offer).
+local function spawnItemSlot(key, category)
+	local data = ((category == "Pets") and PetDB or ItemDB)[key]
+	if not data then return false end
+	local container, template = findInventoryContainer(category)
+	if not container or not template then return false end
+	local slot = template:Clone()
+	slot.Name = data.ItemName or data.Name or key
+	local icon = slot:FindFirstChild("Icon") or resolve(slot, "Container.Icon")
+	if icon then pcall(function() icon.Image = getImage(data.Image) end) end
+	local nameLabel = resolve(slot, "ItemName.Label") or resolve(slot, "Container.ItemName")
+		or (slot:FindFirstChild("ItemName") and slot.ItemName:FindFirstChildWhichIsA("TextLabel"))
+		or slot:FindFirstChild("Label", true)
+	if nameLabel and nameLabel:IsA("TextLabel") then
+		pcall(function() nameLabel.Text = data.ItemName or data.Name or key end)
+		pcall(function() nameLabel.TextColor3 = Rarity[data.Rarity] or Color3.new(1,1,1) end)
+		if nameLabel.Parent and nameLabel.Parent:IsA("GuiObject") then
+			pcall(function() nameLabel.Parent.BackgroundColor3 = Rarity[data.Rarity] or nameLabel.Parent.BackgroundColor3 end)
+		end
+	end
+	setProp(slot, "Tags.Chroma", "Visible", data.Chroma == true)
+	slot.Visible = true
+	slot:SetAttribute("__MHHooked", true)
+	slot.Parent = container
+	local btn = resolve(slot, "Container.Button") or resolve(slot, "Container.ActionButton") or slot:FindFirstChild("Button")
+	if btn and btn:IsA("GuiButton") then
+		trackRender(btn.MouseButton1Click:Connect(function()
+			offerItemLocal(slot.Name, category, readSlotVisual(slot))
+		end))
+	end
+	return true
+end
+
+-- Inventory = the game's real slots + anything we spawned; always just hook.
+local function renderInventory()
+	hookAllInventorySlots()
 end
 
 --==============================================================================
@@ -1583,10 +2063,8 @@ local function refreshSpawn(query)
 			b.Font = Enum.Font.Gotham; b.TextSize = 12; b.BorderSizePixel = 0
 			b.ZIndex = 3; b.LayoutOrder = shown; b.Parent = SpawnList; corner(b, 6)
 			track(b.MouseButton1Click:Connect(function()
-				local owned = (it.cat == "Pets") and OwnedPets or OwnedWeapons
-				owned[it.key] = (owned[it.key] or 0) + 1
-				renderInventory()  -- refresh the trade inventory immediately
-				b.Text = "  " .. it.name .. "   ✓ x" .. owned[it.key]
+				local ok = spawnItemSlot(it.key, it.cat)
+				b.Text = "  " .. it.name .. (ok and "   ✓ added" or "   ! open picker first")
 			end))
 		end
 	end
