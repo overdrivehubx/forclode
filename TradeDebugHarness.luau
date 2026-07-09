@@ -1625,24 +1625,56 @@ local function paintSlotVisual(slot, visual, amount)
 	setProp(slot, "Tags.Chroma", "Visible", visual.Chroma == true)
 end
 
--- Render one inventory pane (Weapons/Pets): spawned catalog items first, then
--- items mirrored from the REAL game inventory. Each is a clone of a real slot so
--- the size/style matches the game.
+-- Resolve a slot's clickable button (or the slot itself).
+local function slotButton(slot)
+	return resolve(slot, "Container.Button") or resolve(slot, "Container.ActionButton")
+		or slot:FindFirstChild("Button") or (slot:IsA("GuiButton") and slot) or nil
+end
+
+-- Render one inventory pane (Weapons/Pets). The game already renders the
+-- player's REAL inventory here, so we DON'T clear or rebuild it — that broke the
+-- layout/scrolling and showed wrong items. Instead we HOOK each real slot in
+-- place (tap = add to the offer, locally) and only APPEND spawned catalog items.
+local HookedCount = 0
 local function renderPane(category, list, db)
 	local cache = InvCache[category]
 	if not (cache and cache.container and cache.template) then
 		local container, sample = findInventoryContainer(category)
-		if not container then return end            -- no real slot to template from yet
+		if not container then return end            -- nothing rendered yet to work with
 		cache = { container = container, template = sample:Clone() }
 		InvCache[category] = cache
 	end
 	local container, template = cache.container, cache.template
 	if category == "Weapons" then InvContainer = container end
 
+	-- Remove ONLY our previously-injected spawn clones — never the real slots.
 	for _, c in ipairs(container:GetChildren()) do
-		if c:IsA("GuiObject") then c:Destroy() end
+		if c:GetAttribute("__MHSpawn") then c:Destroy() end
 	end
 
+	-- Hook the REAL game slots in place: leave their icon/name/rarity/layout
+	-- untouched, just make a tap add that item to the current offer side.
+	for _, slot in ipairs(container:GetChildren()) do
+		if slot:IsA("GuiObject") and not slot:GetAttribute("__MHSpawn") then
+			local vis = readSlotVisual(slot)
+			if vis.Image ~= "" and vis.Image ~= "rbxassetid://0" then
+				HookedCount = HookedCount + 1              -- count every real slot
+				if not slot:GetAttribute("__MHHooked") then  -- connect once per slot
+					slot:SetAttribute("__MHHooked", true)
+					local key = slot.Name
+					local btn = slotButton(slot)
+					if btn then
+						-- persistent (not render-scoped) so the hook survives re-renders
+						track(btn.MouseButton1Click:Connect(function()
+							offerItemLocal(key, category, readSlotVisual(slot))
+						end))
+					end
+				end
+			end
+		end
+	end
+
+	-- Append spawned catalog items (the container's own layout positions them).
 	local arr = {}
 	for key, amount in pairs(list) do table.insert(arr, { key = key, amount = amount }) end
 	table.sort(arr, function(a, b)
@@ -1651,53 +1683,28 @@ local function renderPane(category, list, db)
 		if ra ~= rb then return ra > rb end
 		return a.key < b.key
 	end)
-
-	local function wireOffer(slot, key, cat, visual)
-		local btn = resolve(slot, "Container.Button") or resolve(slot, "Container.ActionButton") or slot:FindFirstChild("Button")
-		if btn and btn:IsA("GuiButton") then
-			trackRender(btn.MouseButton1Click:Connect(function()
-				offerItemLocal(key, cat, visual)
-			end))
-		else
-			-- No button in this template: make the slot itself clickable.
-			if slot:IsA("GuiButton") then
-				trackRender(slot.MouseButton1Click:Connect(function()
-					offerItemLocal(key, cat, visual)
-				end))
-			end
-		end
-	end
-
-	-- 1) Spawned catalog items.
 	for _, e in ipairs(arr) do
 		local data = db[e.key]
 		if data then
 			local slot = template:Clone()
 			paintSlot(slot, data, e.amount)
 			slot.Parent = container
-			wireOffer(slot, e.key, category, catalogVisual(e.key, category))
-		end
-	end
-
-	-- 2) Items mirrored from the REAL game inventory.
-	local realArr = {}
-	for key, rec in pairs(RealInv[category] or {}) do
-		table.insert(realArr, { key = key, rec = rec })
-	end
-	table.sort(realArr, function(a, b) return tostring(a.rec.visual.Name) < tostring(b.rec.visual.Name) end)
-	for _, e in ipairs(realArr) do
-		if not list[e.key] then  -- don't duplicate an item that was also spawned
-			local slot = template:Clone()
-			paintSlotVisual(slot, e.rec.visual, e.rec.amount)
-			slot.Parent = container
-			wireOffer(slot, e.key, category, e.rec.visual)
+			local visual = catalogVisual(e.key, category)
+			local btn = slotButton(slot)
+			if btn then
+				trackRender(btn.MouseButton1Click:Connect(function()
+					offerItemLocal(e.key, category, visual)
+				end))
+			end
 		end
 	end
 end
 
 local function renderInventory()
+	HookedCount = 0
 	pcall(renderPane, "Weapons", SpawnedWeapons, ItemDB)
 	pcall(renderPane, "Pets", SpawnedPets, PetDB)
+	return HookedCount
 end
 
 --==============================================================================
@@ -1878,11 +1885,8 @@ local function startTrade(player2Name)
 	setOfferUsername("their", "(" .. player2Name .. ")")
 	setOfferUsername("your", "(" .. LocalPlayer.Name .. ")")
 
-	-- Mirror the real game inventory in automatically. Guarded so a scrape hiccup
-	-- on some game object can never stop the trade window from opening.
-	pcall(function() RealInv = scrapeRealInventory() end)
 	RenderTrade()
-	pcall(renderInventory)  -- fill the inventory panels with your real + spawned items
+	pcall(renderInventory)  -- hook the real inventory slots + append spawned items
 end
 
 -- Light the remote client's green acceptance flag (Player2 accepted), and
@@ -2326,16 +2330,14 @@ makeRowButton(pSpawn, "Diagnose data", "why catalog is real / fallback", "Diag",
 	task.spawn(applyRealData)
 end)
 
--- Mirror the player's REAL in-game inventory into the trade. Open your
--- inventory/backpack so the game has rendered the slots, then tap Link.
-makeRowButton(pSpawn, "Link real inventory", "show your real items — tap to add", "Link", C_GREEN, function()
-	local inv, n = scrapeRealInventory()
-	RealInv = inv
-	renderInventory()
-	CatLabel.Text = (n > 0)
-		and ("real inventory linked: " .. n .. " item(s) — tap them in the trade")
-		or "no real item slots found — open your inventory in-game, then Link again"
-	CatLabel.TextColor3 = (n > 0) and C_GREEN or C_RED
+-- Hook the player's REAL in-game inventory slots so tapping one adds it to the
+-- offer. Leaves the game's own inventory (items, layout, scrolling) untouched.
+makeRowButton(pSpawn, "Link real inventory", "tap your real items to add them", "Link", C_GREEN, function()
+	local n = renderInventory()
+	CatLabel.Text = (n and n > 0)
+		and ("real inventory linked: " .. n .. " slot(s) — tap them in the trade")
+		or "no real item slots found — open the trade first, then Link again"
+	CatLabel.TextColor3 = (n and n > 0) and C_GREEN or C_RED
 end)
 
 -- Add `amount` copies of a resolved catalog entry into the right inventory pane.
