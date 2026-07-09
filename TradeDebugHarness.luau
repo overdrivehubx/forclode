@@ -55,6 +55,34 @@ if not PlayerGui then
 end
 
 --==============================================================================
+-- SAFETY WRAPPER — guarantee a visible result on EVERY executor.
+-- Some mobile executors (e.g. Potassium) reject APIs others allow, which can
+-- make the whole script fail silently with no panel. If anything below throws
+-- at load, show the error ON SCREEN (no console needed) instead of nothing.
+--==============================================================================
+local function __showFatal(msg)
+	pcall(function()
+		local old = PlayerGui:FindFirstChild("TradeDebugError")
+		if old then old:Destroy() end
+		local g = Instance.new("ScreenGui")
+		g.Name = "TradeDebugError"; g.ResetOnSpawn = false; g.IgnoreGuiInset = true
+		g.DisplayOrder = 100000
+		local f = Instance.new("TextLabel")
+		f.Size = UDim2.new(0, 540, 0, 200); f.Position = UDim2.new(0.5, -270, 0, 60)
+		f.BackgroundColor3 = Color3.fromRGB(28, 18, 22); f.BorderSizePixel = 0
+		f.TextColor3 = Color3.fromRGB(255, 170, 170)
+		f.Font = Enum.Font.Code; f.TextSize = 14; f.TextWrapped = true
+		f.TextYAlignment = Enum.TextYAlignment.Top; f.TextXAlignment = Enum.TextXAlignment.Left
+		f.Text = "  [MollyHub] load error — send this to fix it:\n\n  " .. tostring(msg)
+		f.Parent = g
+		g.Parent = PlayerGui
+	end)
+	warn("[TradeDebug] fatal: " .. tostring(msg))
+end
+
+local __ok, __err = xpcall(function()
+
+--==============================================================================
 -- 1. IDEMPOTENCE — strict garbage collection of any previous cycle
 --==============================================================================
 -- Destroy a stale panel and tear down the previous runtime BEFORE building a
@@ -2660,3 +2688,10 @@ task.spawn(applyRealData)
 
 print("[TradeDebug] Harness loaded. Layout: " .. (TradeGUI and TradeGUI.Name or "NOT FOUND") ..
 	" | Use the TradeDebugPanel to drive the offline trade.")
+
+end, function(e)
+	local tb = ""
+	pcall(function() tb = debug.traceback() end)
+	return tostring(e) .. "\n\n" .. tostring(tb)
+end)
+if not __ok then __showFatal(__err) end
