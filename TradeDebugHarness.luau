@@ -1030,6 +1030,11 @@ local PendingP2Name = "Player2"
 local onNewTrade = {}
 -- Token that invalidates a pending "trade complete" close if a new trade starts.
 local completeToken = 0
+-- Forward decls so the request modal can (re)hook the native Accept button —
+-- the game may rebuild that button between trades, so a one-time hook goes stale
+-- (this is the "can't start a second trade" bug). We re-hook on every show.
+local startTrade
+local hookRequestAccept = function() end
 
 -- 6-second accept cooldown that starts whenever an offer changes (native MM2).
 local CooldownRunning = false
@@ -1919,6 +1924,7 @@ local function showRequestModal(player2Name, isIncoming)
 	-- FIRST, then configureRequest sets Visible + shows exactly one variant.
 	revealAncestors(RequestFrame)
 	configureRequest(player2Name, isIncoming)
+	hookRequestAccept()  -- (re)bind the CURRENT native Accept button each show
 	-- On phone additionally light the "+" notification badge.
 	if IsPhone then
 		local badge = findPlusBadge()
@@ -1993,7 +1999,7 @@ end
 -- Begin the offline trade: hide the request, reset offers, open the Trade panel.
 -- Invoked by the native MM2 Accept button, mirroring the real
 -- AcceptRequest -> StartTrade -> UpdateTrade lifecycle.
-local function startTrade(player2Name)
+function startTrade(player2Name)
 	completeToken = completeToken + 1  -- cancel any pending "trade complete" close
 	DebugTradeTable.Player2.Player = { Name = player2Name, __fake = true }
 	DebugTradeTable.Player1.Offer = {}
@@ -2475,32 +2481,49 @@ end)
 -- Dump the STRUCTURE of the first few detected WEAPON slots so the real slot
 -- layout is visible (screenshot it). This is how we stop guessing the tree.
 makeRowButton(pSpawn, "Dump slots", "show real inventory slot structure", "Dump", C_ACCENT, function()
-	local lines, shown = {}, 0
-	for _, d in ipairs(PlayerGui:GetDescendants()) do
-		if shown >= 4 then break end
-		if d:IsA("GuiObject") and not d:GetAttribute("__MHSpawn")
-			and not d:FindFirstAncestor("TradeDebugPanel") then
-			local img = slotIconImage(d)
-			local isPet = d:FindFirstAncestor("Pets") ~= nil or d:FindFirstAncestor("PetsFrame") ~= nil
-			if img and not isPet then
-				local nl = slotNameLabel(d)
-				shown = shown + 1
-				table.insert(lines, "== SLOT " .. shown .. " ==")
-				table.insert(lines, "path:" .. (d:GetFullName():gsub("Players%.[^.]+%.PlayerGui%.", "")))
-				table.insert(lines, ".Name=" .. d.Name .. " <" .. d.ClassName .. ">")
-				table.insert(lines, "nameLbl=" .. (nl and (nl.Name .. "='" .. tostring(nl.Text) .. "'") or "NIL"))
-				table.insert(lines, "img.." .. tostring(img):sub(-20))
-				table.insert(lines, "shop=" .. tostring(looksLikeShop(d)) .. " amt=" .. slotAmount(d))
-				local ch = {}
-				for _, c in ipairs(d:GetChildren()) do
-					local t = (c:IsA("TextLabel") or c:IsA("TextButton")) and ("'" .. tostring(c.Text):sub(1, 12) .. "'") or ""
-					table.insert(ch, c.Name .. "(" .. c.ClassName .. ")" .. t)
+	local lines = {}
+	local function kidsOf(node)
+		local ch = {}
+		for _, c in ipairs(node:GetChildren()) do
+			local t = (c:IsA("TextLabel") or c:IsA("TextButton") or c:IsA("TextBox"))
+				and ("'" .. tostring(c.Text):sub(1, 12) .. "'") or ""
+			table.insert(ch, c.Name .. "(" .. c.ClassName .. ")" .. t)
+		end
+		return table.concat(ch, ", ")
+	end
+	-- Walk the trade GUI's own inventory tabs (Container.Items.Tabs.*).
+	local items = TradeGUI and (resolve(TradeGUI, "Container.Items") or ffc(TradeGUI, "Items"))
+	local tabs = items and (items:FindFirstChild("Tabs") or items)
+	if not tabs then
+		Diag.Text = "no Container.Items(.Tabs) under " .. (TradeGUI and TradeGUI.Name or "nil")
+		Diag.Visible = true; return
+	end
+	local tn = {}
+	for _, c in ipairs(tabs:GetChildren()) do tn[#tn + 1] = c.Name end
+	table.insert(lines, "Tabs: " .. table.concat(tn, ", "))
+	for _, tab in ipairs(tabs:GetChildren()) do
+		if tab:IsA("GuiObject") and tab.Name ~= "Search" then
+			table.insert(lines, "── TAB " .. tab.Name .. " ──")
+			local cnt = 0
+			for _, s in ipairs(tab:GetDescendants()) do
+				if cnt >= 2 then break end
+				local img = slotIconImage(s)
+				local nm = slotNameLabel(s)
+				if img and nm then
+					cnt = cnt + 1
+					table.insert(lines, " slot=" .. s.Name .. "<" .. s.ClassName .. ">"
+						.. " parent=" .. s.Parent.Name)
+					table.insert(lines, "  nameLbl=" .. nm.Name .. "='" .. tostring(nm.Text) .. "'")
+					table.insert(lines, "  kids:" .. kidsOf(s))
+					local cont = s:FindFirstChild("Container")
+					if cont then table.insert(lines, "  Container:" .. kidsOf(cont)) end
+					local inm = s:FindFirstChild("ItemName")
+					if inm then table.insert(lines, "  ItemName:" .. kidsOf(inm)) end
 				end
-				table.insert(lines, "kids:" .. table.concat(ch, ", "))
 			end
+			if cnt == 0 then table.insert(lines, " (no icon+name slots)") end
 		end
 	end
-	if shown == 0 then table.insert(lines, "no weapon slots detected — open your inventory in-game first") end
 	Diag.Text = table.concat(lines, "\n")
 	Diag.Visible = true
 end)
@@ -2772,21 +2795,28 @@ if RequestFrame then
 		return firstButtonIn(scope:FindFirstChild("Accept", true))
 	end
 
-	local acceptBtn = findRequestAccept()
-	if acceptBtn then
-		-- Fire on both signals so the hook triggers regardless of button class,
-		-- guarding against a double-open with a short debounce.
-		local lastOpen = 0
-		local function onAccept()
-			if os.clock() - lastOpen < 0.3 then return end
-			lastOpen = os.clock()
-			startTrade(PendingP2Name or currentName())
+	-- Fire on both signals so the hook triggers regardless of button class,
+	-- guarding against a double-open with a short debounce.
+	local lastOpen = 0
+	local function onAccept()
+		if os.clock() - lastOpen < 0.3 then return end
+		lastOpen = os.clock()
+		startTrade(PendingP2Name or currentName())
+	end
+	-- (Re)bind the CURRENT native Accept button, skipping one already hooked.
+	-- The game can rebuild this button between trades, so binding once left the
+	-- second trade dead — showRequestModal now calls this on every show.
+	hookRequestAccept = function()
+		local btn = findRequestAccept()
+		if btn and not btn:GetAttribute("__MHacc") then
+			btn:SetAttribute("__MHacc", true)
+			track(btn.MouseButton1Click:Connect(onAccept))
+			track(btn.Activated:Connect(onAccept))
 		end
-		track(acceptBtn.MouseButton1Click:Connect(onAccept))
-		track(acceptBtn.Activated:Connect(onAccept))
-	else
-		warn("[TradeDebug] Native request Accept button not found; " ..
-			"could not wire the trade-open hook.")
+	end
+	hookRequestAccept()  -- initial bind
+	if not findRequestAccept() then
+		warn("[TradeDebug] Native request Accept button not found at load.")
 	end
 
 	-- Wire the native Decline button to simply hide the modal (native behaviour).
