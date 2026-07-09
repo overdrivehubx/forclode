@@ -1987,6 +1987,15 @@ end
 
 local UIS = game:GetService("UserInputService")
 local IsTouch = UIS.TouchEnabled and not UIS.MouseEnabled
+-- Phone vs "table" (tablet/desktop): a phone is a touch device with a SMALL
+-- screen. Tablets & PC get the desktop trade layout; only true phones get the
+-- phone layout — exactly the distribution the user asked for.
+local IsPhoneDevice = (function()
+	if not IsTouch then return false end
+	local ok, vp = pcall(function() return workspace.CurrentCamera.ViewportSize end)
+	if ok and vp then return math.min(vp.X, vp.Y) < 620 end
+	return true
+end)()
 
 -- A ScreenGui "looks like" a trade GUI if it owns Container.Trade, or is named
 -- Trade/…Phone with a Container. NOTE: we deliberately do NOT require Offer1 —
@@ -2019,7 +2028,7 @@ local function findTradeGui()
 	-- desktop (mouse) use the NON-phone GUI, on touch use the phone one. Driving the
 	-- wrong one shows the phone layout on PC (what the user was seeing). Score each:
 	-- platform match >> Enabled >> owns Container.Trade.
-	local preferPhone = IsTouch
+	local preferPhone = IsPhoneDevice
 	local best, bestScore
 	for _, gui in ipairs(candidates) do
 		local s = 0
@@ -2106,7 +2115,7 @@ local RequestFrame = findRequestFrame()
 -- Phone layout? (TradeGUI_Phone, touch device, or the request lives under the
 -- Lobby "Waiting" screen). On phone the native flow is: a "!" badge appears on
 -- the leaderboard "+" button, and the request shows once the tab is opened.
-local IsPhone = IsTouch
+local IsPhone = IsPhoneDevice
 	or (TradeGUI ~= nil and string.find(string.lower(TradeGUI.Name), "phone") ~= nil)
 	or (RequestFrame ~= nil and RequestFrame:FindFirstAncestor("Waiting") ~= nil)
 
@@ -2953,20 +2962,21 @@ local function ensureLayout(container, cell)
 	grid.Parent = container
 end
 
--- The "Add Items" panel shows the FULL embedded catalog (no real-inventory
--- copying), filtered by the search box, sorted by rarity. Tap = add to offer.
+-- The "Add Items" panel is YOUR INVENTORY: it shows the items you spawned (and
+-- your real owned items), filtered by the search box, sorted by rarity. You tap
+-- an item HERE to place it into the trade offer.
 local CurrentQuery = ""
-local ADD_CAP = 90            -- max slots per pane (search narrows it down)
+local ADD_CAP = 200
 
-local function catalogArr(db, query)
+-- Build a sorted array of OWNED items (spawned + real), joined to catalog data.
+local function invArr(owned, db, query)
 	local q = tostring(query or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
 	local arr = {}
-	for key, v in pairs(db) do
-		if type(v) == "table" then
-			local nm = tostring(v.ItemName or v.Name or key)
-			if q == "" or nm:lower():find(q, 1, true) or tostring(key):lower():find(q, 1, true) then
-				arr[#arr + 1] = { key = key, name = nm, rarity = v.Rarity }
-			end
+	for key, amount in pairs(owned) do
+		local v = db[key]
+		local nm = tostring((v and (v.ItemName or v.Name)) or key)
+		if q == "" or nm:lower():find(q, 1, true) or tostring(key):lower():find(q, 1, true) then
+			arr[#arr + 1] = { key = key, name = nm, rarity = v and v.Rarity, amount = amount }
 		end
 	end
 	table.sort(arr, function(a, b)
@@ -2978,7 +2988,7 @@ local function catalogArr(db, query)
 	return arr
 end
 
-local function renderPaneCatalog(category, db, query)
+local function renderPaneInventory(category, owned, db, query)
 	local cache = getInvCache(category)
 	if not cache then return 0 end
 	local container, template = cache.container, cache.template
@@ -2993,33 +3003,32 @@ local function renderPaneCatalog(category, db, query)
 		pcall(function() container.ScrollingEnabled = true end)
 	end
 
-	local arr = catalogArr(db, query)
+	local arr = invArr(owned, db, query)
 	local shown = 0
 	for _, e in ipairs(arr) do
 		if shown >= ADD_CAP then break end
-		local data = db[e.key]
-		if data then
-			local slot = template:Clone()
-			paintSlot(slot, data, 1)
-			slot.LayoutOrder = shown + 1
-			slot.Parent = container
-			local key = e.key
-			local vis = catalogVisual(key, category)
-			local btn = slotButton(slot)
-			if btn then
-				track(btn.MouseButton1Click:Connect(function()
-					offerItemLocal(key, category, vis)
-				end))
-			end
-			shown = shown + 1
+		local data = db[e.key] or { ItemName = e.name, Rarity = e.rarity or "Common", Image = "" }
+		local slot = template:Clone()
+		paintSlot(slot, data, e.amount)
+		slot.LayoutOrder = shown + 1
+		slot.Parent = container
+		local key = e.key
+		local vis = catalogVisual(key, category) or { Image = getImage(data.Image), Name = e.name,
+			Color = Rarity[e.rarity or "Common"] or RARITY_GREY, Chroma = false }
+		local btn = slotButton(slot)
+		if btn then
+			track(btn.MouseButton1Click:Connect(function()
+				offerItemLocal(key, category, vis)
+			end))
 		end
+		shown = shown + 1
 	end
 	return #arr
 end
 
 local function renderInventory()
-	pcall(renderPaneCatalog, "Weapons", ItemDB, CurrentQuery)
-	pcall(renderPaneCatalog, "Pets", PetDB, CurrentQuery)
+	pcall(renderPaneInventory, "Weapons", SpawnedWeapons, ItemDB, CurrentQuery)
+	pcall(renderPaneInventory, "Pets", SpawnedPets, PetDB, CurrentQuery)
 end
 
 -- Wire the trade's native search box (once) so typing filters the Add Items grid.
@@ -3716,45 +3725,79 @@ makeRowButton(pSpawn, "Dump slots", "show real inventory slot structure", "Dump"
 	Diag.Visible = true
 end)
 
--- Read the LIVE catalog. The game caches GetSyncData results in a SyncedData
--- table (the server pushes it, the remote is only hit once), so the full item
--- database is already in memory — we grab it with getgc, no slow remote.
+-- Look like an item DB? (a table whose values carry ItemType / Rarity).
+local function looksLikeItemDB(t)
+	if type(t) ~= "table" then return false end
+	local n = 0
+	for _, v in pairs(t) do
+		n = n + 1
+		if type(v) == "table" and (rawget(v, "ItemType") or rawget(v, "Rarity") or rawget(v, "Image")) then return true end
+		if n > 4 then break end
+	end
+	return false
+end
+
+-- Try to require the game's item-database ModuleScript directly (client-side,
+-- no remote) — the cleanest source, exactly like the reference spawner:
+--   require(ReplicatedStorage.Database.Sync.Item)
+local function requireItemDB()
+	local rs = game:GetService("ReplicatedStorage")
+	local paths = {
+		{ "Database", "Sync", "Item" }, { "Sync", "Item" }, { "Database", "Item" },
+		{ "Modules", "Sync", "Item" }, { "Item" },
+	}
+	for _, p in ipairs(paths) do
+		local node = rs
+		for _, seg in ipairs(p) do node = node and node:FindFirstChild(seg) end
+		if node and node:IsA("ModuleScript") then
+			local ok, mod = pcall(require, node)
+			if ok and looksLikeItemDB(mod) then return mod, node:GetFullName() end
+		end
+	end
+	-- last resort: scan for any ModuleScript named Item that requires to an item DB
+	for _, m in ipairs(rs:GetDescendants()) do
+		if m:IsA("ModuleScript") and (m.Name == "Item" or m.Name == "Items") then
+			local ok, mod = pcall(require, m)
+			if ok and looksLikeItemDB(mod) then return mod, m:GetFullName() end
+		end
+	end
+	return nil
+end
+
+-- Read the LIVE catalog. First try require() on the item ModuleScript; if that
+-- fails, scan memory (getgc) for the SyncedData table the game already cached.
 local function loadLiveCatalog()
-	local getgcf = (type(getgc) == "function" and getgc)
-		or (rawget(_G, "getgc")) or (getgenv and type(getgenv().getgc) == "function" and getgenv().getgc) or nil
-	if not getgcf then return nil, "no getgc in this executor" end
-	local live
-	pcall(function()
-		for _, o in pairs(getgcf(true)) do
-			if type(o) == "table" then
-				local it = rawget(o, "Item")
-				if type(it) == "table" then
-					local looksItem = false
-					for _, v in pairs(it) do
-						if type(v) == "table" and (rawget(v, "ItemType") or rawget(v, "Rarity")) then looksItem = true end
-						break
-					end
-					if looksItem then
-						live = { Item = it, Pets = rawget(o, "Pets"), Rarity = rawget(o, "Rarity") }
+	local src
+	local reqItem = requireItemDB()
+	if reqItem then
+		src = { Item = reqItem }
+	else
+		local getgcf = (type(getgc) == "function" and getgc)
+			or (rawget(_G, "getgc")) or (getgenv and type(getgenv().getgc) == "function" and getgenv().getgc) or nil
+		if getgcf then
+			pcall(function()
+				for _, o in pairs(getgcf(true)) do
+					if type(o) == "table" and looksLikeItemDB(rawget(o, "Item")) then
+						src = { Item = rawget(o, "Item"), Pets = rawget(o, "Pets"), Rarity = rawget(o, "Rarity") }
 						break
 					end
 				end
-			end
+			end)
 		end
-	end)
-	if live and type(live.Item) == "table" then
-		ItemDB = live.Item
+	end
+	if src and looksLikeItemDB(src.Item) then
+		ItemDB = src.Item
 		Database.Weapons = ItemDB
-		if type(live.Pets) == "table" then PetDB = live.Pets; Database.Pets = PetDB end
-		if type(live.Rarity) == "table" then Rarity = live.Rarity end
+		if type(src.Pets) == "table" then PetDB = src.Pets; Database.Pets = PetDB end
+		if type(src.Rarity) == "table" then Rarity = src.Rarity end
 		RealCatalog = true
-		CatalogStatus = "LIVE catalog from memory: " .. countKeys(ItemDB) .. " items"
+		CatalogStatus = "LIVE catalog: " .. countKeys(ItemDB) .. " items"
 		buildSpawnIndex()
 		renderInventory()
 		if onCatalogLoaded then pcall(onCatalogLoaded) end
-		return live
+		return src
 	end
-	return nil, "SyncedData.Item not in memory yet"
+	return nil, "item DB not found (require + getgc both failed) — open inventory once, retry"
 end
 
 makeRowButton(pSpawn, "Load LIVE items", "read the real catalog from memory", "Live", C_GREEN, function()
@@ -3782,12 +3825,16 @@ makeRowButton(pSpawn, "Open Add Items", "browse & tap the whole catalog", "Open"
 	CatLabel.TextColor3 = C_GREEN
 end)
 
--- Quick-add: put `amount` copies of the resolved item straight into the offer.
+-- Spawn `amount` copies into the trade's OWN inventory (the "Add Items" panel).
+-- Exactly like the game: the item appears in the trade inventory, and you tap it
+-- there to place it into the offer. No separate menu, no going out of the trade.
 local function spawnEntry(it, amount)
 	amount = math.max(1, math.floor(tonumber(amount) or 1))
-	local vis = catalogVisual(it.key, it.cat)
-	for _ = 1, amount do offerItemLocal(it.key, it.cat, vis) end
-	return amount
+	local list = (it.cat == "Pets") and SpawnedPets or SpawnedWeapons
+	list[it.key] = (list[it.key] or 0) + amount
+	openItemsPicker()     -- make sure the trade's Add Items panel is open + rendered
+	renderInventory()     -- re-render so the new item shows in it
+	return list[it.key]
 end
 
 -- Rank catalog matches for a typed name: exact key/name > prefix > contains.
@@ -3864,7 +3911,7 @@ sll.Padding = UDim.new(0, 4); sll.SortOrder = Enum.SortOrder.LayoutOrder; sll.Pa
 pad(SpawnList, 6)
 
 local function announceSpawn(it, total)
-	SpawnMsg.Text = ("✓ %s  [%s]  → added to offer  (x%d)"):format(it.name, tostring(it.rarity or "?"), total)
+	SpawnMsg.Text = ("✓ %s  [%s]  → in trade inventory (x%d) — tap it in Add Items"):format(it.name, tostring(it.rarity or "?"), total)
 	SpawnMsg.TextColor3 = (it.rarity == "Common") and C_TXT or (Rarity[it.rarity] or C_TXT)
 end
 
