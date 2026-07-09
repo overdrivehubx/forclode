@@ -233,7 +233,14 @@ local function tryGetSync(name)
 	if ok and type(data) == "table" then return data end
 	return nil
 end
-do
+
+-- Set by the panel; called (on the main thread scheduler) once real data loads.
+local onCatalogLoaded
+
+-- Fetch the real catalog + inventory. This may YIELD on InvokeServer, so it MUST
+-- run in a background thread (never at load time) or it will freeze the script
+-- before the menu is drawn.
+local function applyRealData()
 	local realItems = tryGetSync("Item")
 	local realPets  = tryGetSync("Pets")
 	local realRar   = tryGetSync("Rarity")
@@ -242,7 +249,6 @@ do
 	if realRar   then Rarity = realRar   end
 	Database = { Weapons = ItemDB, Pets = PetDB }
 
-	-- Use your actual owned inventory if the client exposes _G.PlayerData.
 	local pd = rawget(_G, "PlayerData")
 	local function copyOwned(t)
 		local c = {}; if type(t) == "table" then for k, v in pairs(t) do c[k] = v end end; return c
@@ -251,6 +257,8 @@ do
 		if pd.Weapons and pd.Weapons.Owned then OwnedWeapons = copyOwned(pd.Weapons.Owned) end
 		if pd.Pets and pd.Pets.Owned then OwnedPets = copyOwned(pd.Pets.Owned) end
 	end
+
+	if onCatalogLoaded then pcall(onCatalogLoaded) end
 end
 
 -- Resolve an item image; wrap a bare asset id in the thumbnail URL (per source).
@@ -1362,19 +1370,24 @@ end)
 --------------------------------------------------------------------------------
 local pSpawn = makeTab("Spawn")
 
--- Flat, name-sorted index of the whole catalog (weapons + pets).
+-- Flat, name-sorted index of the whole catalog (weapons + pets), rebuildable
+-- when the real catalog finishes loading in the background.
 local spawnIndex = {}
-for k, v in pairs(ItemDB) do
-	if type(v) == "table" then
-		table.insert(spawnIndex, { key = k, name = tostring(v.ItemName or v.Name or k), cat = "Weapons", rarity = v.Rarity })
+local function buildSpawnIndex()
+	spawnIndex = {}
+	for k, v in pairs(ItemDB) do
+		if type(v) == "table" then
+			table.insert(spawnIndex, { key = k, name = tostring(v.ItemName or v.Name or k), cat = "Weapons", rarity = v.Rarity })
+		end
 	end
-end
-for k, v in pairs(PetDB) do
-	if type(v) == "table" then
-		table.insert(spawnIndex, { key = k, name = tostring(v.Name or v.ItemName or k), cat = "Pets", rarity = v.Rarity })
+	for k, v in pairs(PetDB) do
+		if type(v) == "table" then
+			table.insert(spawnIndex, { key = k, name = tostring(v.Name or v.ItemName or k), cat = "Pets", rarity = v.Rarity })
+		end
 	end
+	table.sort(spawnIndex, function(a, b) return a.name:lower() < b.name:lower() end)
 end
-table.sort(spawnIndex, function(a, b) return a.name:lower() < b.name:lower() end)
+buildSpawnIndex()
 
 local spawnRow = makeRow(pSpawn, "Spawn item", "search the game catalog, tap +")
 local SearchBox = Instance.new("TextBox")
@@ -1431,6 +1444,13 @@ track(SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
 	refreshSpawn(SearchBox.Text)
 end))
 refreshSpawn("")
+
+-- When the real catalog/inventory finishes loading in the background, rebuild.
+onCatalogLoaded = function()
+	buildSpawnIndex()
+	refreshSpawn(SearchBox.Text)
+	renderInventory()
+end
 
 --------------------------------------------------------------------------------
 -- PAGE 3 — Accept
@@ -1635,6 +1655,10 @@ do
 		end))
 	end
 end
+
+-- Load the real catalog/inventory in the BACKGROUND (InvokeServer may yield) so
+-- the menu is already on screen; the spawn list + inventory refresh when it lands.
+task.spawn(applyRealData)
 
 print("[TradeDebug] Harness loaded. Layout: " .. (TradeGUI and TradeGUI.Name or "NOT FOUND") ..
 	" | Use the TradeDebugPanel to drive the offline trade.")
