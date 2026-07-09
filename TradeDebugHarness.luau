@@ -1631,9 +1631,26 @@ local function slotButton(slot)
 		or slot:FindFirstChild("Button") or (slot:IsA("GuiButton") and slot) or nil
 end
 
+-- Find the slot's item-NAME label. The instance name (d.Name) is unreliable in
+-- some builds (all slots keep the template's name, e.g. "Battleaxe"), so we look
+-- for the real label: explicit ItemName paths first, then any TextLabel whose
+-- text is NOT the amount ("x67" / a bare number).
+local function slotNameLabel(d)
+	local n = resolve(d, "ItemName.Label")
+		or (d:FindFirstChild("ItemName") and d.ItemName:IsA("TextLabel") and d.ItemName)
+		or (d:FindFirstChild("ItemName") and d.ItemName:FindFirstChildWhichIsA("TextLabel"))
+	if n and n:IsA("TextLabel") and tostring(n.Text) ~= "" then return n end
+	for _, t in ipairs(d:GetDescendants()) do
+		if t:IsA("TextLabel") then
+			local s = tostring(t.Text)
+			if s ~= "" and not s:match("^x?%s*%d+$") then return t end
+		end
+	end
+	return n and n:IsA("TextLabel") and n or nil
+end
+
 -- Build an offer visual (image / name / rarity colour) from a real game slot.
-local function slotVisual(d, img, nameLabel)
-	local name = (nameLabel and tostring(nameLabel.Text) ~= "" and nameLabel.Text) or d.Name
+local function slotVisual(d, img, nameLabel, dispName)
 	local color = Color3.fromRGB(200, 200, 200)
 	if nameLabel and nameLabel:IsA("TextLabel") then
 		color = nameLabel.TextColor3
@@ -1642,11 +1659,11 @@ local function slotVisual(d, img, nameLabel)
 			color = holder.BackgroundColor3  -- trade/inventory plate = rarity colour
 		end
 	end
-	local db = ItemDB[d.Name] or PetDB[d.Name]
+	local db = ItemDB[dispName] or PetDB[dispName] or ItemDB[d.Name] or PetDB[d.Name]
 	if db and db.Rarity then
 		color = (db.Rarity == "Common") and RARITY_GREY or (Rarity[db.Rarity] or color)
 	end
-	return { Image = img, Name = name, Color = color, Chroma = d:FindFirstChild("Chroma", true) ~= nil }
+	return { Image = img, Name = dispName, Color = color, Chroma = d:FindFirstChild("Chroma", true) ~= nil }
 end
 
 -- Hook the player's REAL inventory slots WHEREVER the game rendered them in
@@ -1664,19 +1681,21 @@ local function hookAllRealSlots()
 			end
 			local img = (not inOffer) and slotIconImage(d) or nil
 			if img then
-				local nameLabel = resolve(d, "ItemName.Label")
-					or (d:FindFirstChild("ItemName") and d.ItemName:FindFirstChildWhichIsA("TextLabel"))
-					or (d:FindFirstChild("ItemName") and d.ItemName:IsA("TextLabel") and d.ItemName)
+				local nameLabel = slotNameLabel(d)
 				local known = ItemDB[d.Name] or PetDB[d.Name]
-				if known or (nameLabel and nameLabel:IsA("TextLabel")) then
+				-- The item's identity = its display name (unique per item), NOT the
+				-- instance name (which may be a shared template name).
+				local dispName = (nameLabel and tostring(nameLabel.Text) ~= "" and nameLabel.Text)
+					or (known and d.Name) or nil
+				if dispName then
 					n = n + 1
 					if not d:GetAttribute("__MHHooked") then
 						d:SetAttribute("__MHHooked", true)
 						local isPet = (d:FindFirstAncestor("Pets") or d:FindFirstAncestor("PetsFrame")) ~= nil
 							or PetDB[d.Name] ~= nil
 						local cat = isPet and "Pets" or "Weapons"
-						local key = d.Name
-						local visual = slotVisual(d, img, nameLabel)
+						local key = dispName                     -- stack by display name
+						local visual = slotVisual(d, img, nameLabel, dispName)
 						local btn = slotButton(d)
 						if btn then
 							track(btn.MouseButton1Click:Connect(function()
