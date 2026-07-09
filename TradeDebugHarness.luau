@@ -990,6 +990,10 @@ local OfferMode = "Player1"
 local SpawnedWeapons = {}
 local SpawnedPets = {}
 
+-- Items scraped from the REAL game inventory rendered in PlayerGui
+-- (category -> { key = { visual = {Image,Name,Color,Chroma}, amount } }).
+local RealInv = { Weapons = {}, Pets = {} }
+
 -- Name captured when the request modal is shown; consumed when the native
 -- green Accept button is clicked (mirrors AcceptRequest -> StartTrade).
 local PendingP2Name = "Player2"
@@ -1421,6 +1425,78 @@ local function readSlotVisual(slot)
 	}
 end
 
+-- ===== Real-inventory link ====================================================
+-- The game renders the player's owned items as slots in PlayerGui (each slot's
+-- .Name is the item key, with a real Icon image + rarity + amount). We scrape
+-- those to mirror the REAL inventory into the trade — no server calls, no
+-- catalog dependency. Open your inventory/trade so the slots exist, then Link.
+local function slotIconImage(d)
+	local icon
+	if d:IsA("ImageLabel") or d:IsA("ImageButton") then icon = d
+	else icon = d:FindFirstChild("Icon") or resolve(d, "Container.Icon") end
+	if icon and (icon:IsA("ImageLabel") or icon:IsA("ImageButton")) then
+		local img = icon.Image
+		if type(img) == "string" and img ~= "" and img ~= "rbxassetid://0" then return img end
+	end
+	return nil
+end
+
+local function scrapeRealInventory()
+	local result = { Weapons = {}, Pets = {} }
+	local total = 0
+	for _, d in ipairs(PlayerGui:GetDescendants()) do
+		if d:IsA("GuiObject")
+			and not d:GetAttribute("__MHSpawn")               -- skip slots we rendered
+			and not d:FindFirstAncestor("TradeDebugPanel") then -- skip our own panel
+			-- skip anything inside a trade OFFER frame (those are offered items)
+			local inOffer = false
+			for _, nm in ipairs({ "Offer1", "Offer2", "YourOffer", "TheirOffer" }) do
+				if d:FindFirstAncestor(nm) then inOffer = true; break end
+			end
+			local img = (not inOffer) and slotIconImage(d) or nil
+			if img then
+				local key = d.Name
+				local known = ItemDB[key] or PetDB[key]
+				local nameLabel = resolve(d, "ItemName.Label")
+					or (d:FindFirstChild("ItemName") and d.ItemName:FindFirstChildWhichIsA("TextLabel"))
+					or (d:FindFirstChild("ItemName") and d.ItemName:IsA("TextLabel") and d.ItemName)
+				-- only treat as an item slot if it has a name label or a known key
+				if known or (nameLabel and nameLabel:IsA("TextLabel")) then
+					local isPet = (d:FindFirstAncestor("Pets") or d:FindFirstAncestor("PetsFrame")) ~= nil
+						or PetDB[key] ~= nil
+					local cat = isPet and "Pets" or "Weapons"
+					local visual = readSlotVisual(d)
+					visual.Image = img
+					if nameLabel and nameLabel:IsA("TextLabel") and tostring(nameLabel.Text) ~= "" then
+						visual.Name = nameLabel.Text
+					end
+					-- Prefer clean catalog name/rarity when the key is known.
+					local db = known and (isPet and PetDB or ItemDB)[key]
+					if db then
+						visual.Name = db.ItemName or db.Name or visual.Name
+						visual.Color = (db.Rarity == "Common") and RARITY_GREY
+							or (Rarity[db.Rarity] or visual.Color)
+						visual.Chroma = db.Chroma == true
+					end
+					-- Amount from the slot ("x67" -> 67).
+					local amtLabel = resolve(d, "Container.Amount") or d:FindFirstChild("Amount", true)
+					local amount = 1
+					if amtLabel and amtLabel:IsA("TextLabel") then
+						local n = tonumber((tostring(amtLabel.Text):gsub("%D", "")))
+						if n and n > 0 then amount = n end
+					end
+					if not result[cat][key] then
+						result[cat][key] = { visual = visual, amount = amount }
+						total = total + 1
+					end
+				end
+			end
+		end
+	end
+	return result, total
+end
+-- ============================================================================
+
 -- Find the inventory container for a category + a real slot to clone (correct
 -- size/style for the platform). Name-agnostic: uses any real slot in the picker.
 -- Find ANY slot we can clone as a template. The inventory, the picker and the
@@ -1502,8 +1578,28 @@ local function paintSlot(slot, data, amount)
 	setProp(slot, "Tags.Chroma", "Visible", data.Chroma == true)
 end
 
--- Render one inventory pane (Weapons/Pets) with ONLY spawned items (real items
--- cleared), each a clone of a real slot so the size/style matches the game.
+-- Paint a slot straight from a scraped real-inventory visual (no catalog needed).
+local function paintSlotVisual(slot, visual, amount)
+	slot.Name = visual.Name or "Item"
+	slot.Visible = true
+	slot:SetAttribute("__MHSpawn", true)
+	local icon = slot:FindFirstChild("Icon") or resolve(slot, "Container.Icon")
+	if icon then pcall(function() icon.Image = visual.Image end) end
+	local nameFrame = slot:FindFirstChild("ItemName")
+	local label = (nameFrame and nameFrame:FindFirstChild("Label")) or resolve(slot, "ItemName.Label")
+		or slot:FindFirstChild("Label", true)
+	if label and label:IsA("TextLabel") then pcall(function() label.Text = visual.Name end) end
+	if nameFrame and nameFrame:IsA("GuiObject") then
+		pcall(function() nameFrame.BackgroundColor3 = visual.Color end)
+	end
+	local amt = resolve(slot, "Container.Amount") or slot:FindFirstChild("Amount", true)
+	if amt and amt:IsA("TextLabel") then amt.Text = (amount and amount > 1) and ("x" .. amount) or "" end
+	setProp(slot, "Tags.Chroma", "Visible", visual.Chroma == true)
+end
+
+-- Render one inventory pane (Weapons/Pets): spawned catalog items first, then
+-- items mirrored from the REAL game inventory. Each is a clone of a real slot so
+-- the size/style matches the game.
 local function renderPane(category, list, db)
 	local cache = InvCache[category]
 	if not (cache and cache.container and cache.template) then
@@ -1528,19 +1624,45 @@ local function renderPane(category, list, db)
 		return a.key < b.key
 	end)
 
+	local function wireOffer(slot, key, cat, visual)
+		local btn = resolve(slot, "Container.Button") or resolve(slot, "Container.ActionButton") or slot:FindFirstChild("Button")
+		if btn and btn:IsA("GuiButton") then
+			trackRender(btn.MouseButton1Click:Connect(function()
+				offerItemLocal(key, cat, visual)
+			end))
+		else
+			-- No button in this template: make the slot itself clickable.
+			if slot:IsA("GuiButton") then
+				trackRender(slot.MouseButton1Click:Connect(function()
+					offerItemLocal(key, cat, visual)
+				end))
+			end
+		end
+	end
+
+	-- 1) Spawned catalog items.
 	for _, e in ipairs(arr) do
 		local data = db[e.key]
 		if data then
 			local slot = template:Clone()
 			paintSlot(slot, data, e.amount)
 			slot.Parent = container
-			local btn = resolve(slot, "Container.Button") or resolve(slot, "Container.ActionButton") or slot:FindFirstChild("Button")
-			if btn and btn:IsA("GuiButton") then
-				local key, cat = e.key, category
-				trackRender(btn.MouseButton1Click:Connect(function()
-					offerItemLocal(key, cat, catalogVisual(key, cat))
-				end))
-			end
+			wireOffer(slot, e.key, category, catalogVisual(e.key, category))
+		end
+	end
+
+	-- 2) Items mirrored from the REAL game inventory.
+	local realArr = {}
+	for key, rec in pairs(RealInv[category] or {}) do
+		table.insert(realArr, { key = key, rec = rec })
+	end
+	table.sort(realArr, function(a, b) return tostring(a.rec.visual.Name) < tostring(b.rec.visual.Name) end)
+	for _, e in ipairs(realArr) do
+		if not list[e.key] then  -- don't duplicate an item that was also spawned
+			local slot = template:Clone()
+			paintSlotVisual(slot, e.rec.visual, e.rec.amount)
+			slot.Parent = container
+			wireOffer(slot, e.key, category, e.rec.visual)
 		end
 	end
 end
@@ -1728,8 +1850,9 @@ local function startTrade(player2Name)
 	setOfferUsername("their", "(" .. player2Name .. ")")
 	setOfferUsername("your", "(" .. LocalPlayer.Name .. ")")
 
+	RealInv = scrapeRealInventory()   -- mirror the real game inventory in automatically
 	RenderTrade()
-	renderInventory()  -- fill the inventory panels with your spawned items
+	renderInventory()  -- fill the inventory panels with your real + spawned items
 end
 
 -- Light the remote client's green acceptance flag (Player2 accepted), and
@@ -2165,10 +2288,24 @@ makeRowButton(pSpawn, "Diagnose data", "why catalog is real / fallback", "Diag",
 		end
 	end
 	table.insert(lines, "ItemsPicker: " .. (ItemsPicker and ItemsPicker:GetFullName() or "nil") .. " | slots=" .. nslots)
+	local _, rc = scrapeRealInventory()
+	table.insert(lines, "real inventory slots found: " .. rc)
 	Diag.Text = table.concat(lines, "\n")
 	Diag.Visible = true
 	-- also re-attempt the real fetch in the background
 	task.spawn(applyRealData)
+end)
+
+-- Mirror the player's REAL in-game inventory into the trade. Open your
+-- inventory/backpack so the game has rendered the slots, then tap Link.
+makeRowButton(pSpawn, "Link real inventory", "show your real items — tap to add", "Link", C_GREEN, function()
+	local inv, n = scrapeRealInventory()
+	RealInv = inv
+	renderInventory()
+	CatLabel.Text = (n > 0)
+		and ("real inventory linked: " .. n .. " item(s) — tap them in the trade")
+		or "no real item slots found — open your inventory in-game, then Link again"
+	CatLabel.TextColor3 = (n > 0) and C_GREEN or C_RED
 end)
 
 -- Add `amount` copies of a resolved catalog entry into the right inventory pane.

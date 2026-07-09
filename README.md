@@ -46,6 +46,8 @@ table, `_G.DebugTradeTable`, that mirrors the real MM2 trade structure.
 | **Prompt Trade Request** | Shows *only* the native trade-request modal (`TradeRequest`, Accepting variant) with the target name. The main trade panels stay hidden. |
 | *(native green Accept button)* | Clicking the game's own Accept button inside the modal hides the request, enables the Trade GUI, opens `Container.Trade` + `Container.Items`, and renders — mirroring `AcceptRequest → StartTrade`. |
 | **Mode: Player 1 / Player 2** | Redirects inventory-slot clicks to the **left** or **right** side of the offer table. |
+| **Link real inventory** | Scrapes the player's real item slots from `PlayerGui` (each slot's `.Name` is the item key, with its real icon / rarity / amount) and mirrors them into the trade inventory — tap one to add it to the offer. No server calls. Open your in-game inventory first so the slots exist, then Link. Auto-runs on trade start too. |
+| **Spawn item** | Type a name + amount and add a catalog item to the inventory (offline fallback when the real inventory isn't rendered). |
 | **Force P2 Accept (green)** | Lights the remote client's green acceptance flag (`Player2.Accepted = true`). |
 | **Terminate + Wipe** | Plays the close animation, wipes the state tables, and removes the panel. |
 
