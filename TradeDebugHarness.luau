@@ -1666,11 +1666,24 @@ local function slotVisual(d, img, nameLabel, dispName)
 	return { Image = img, Name = dispName, Color = color, Chroma = d:FindFirstChild("Chroma", true) ~= nil }
 end
 
--- Hook the player's REAL inventory slots WHEREVER the game rendered them in
--- PlayerGui (the big Weapons/Pets menu holds ~200 slots; the trade GUI's own
--- inventory may only hold a couple). We never modify them — a tap just adds
--- that item to the current offer side, locally. Returns the slot count.
-local function hookAllRealSlots()
+-- Read a slot's amount ("x67" / "67" -> 67).
+local function slotAmount(d)
+	local amt = resolve(d, "Container.Amount") or d:FindFirstChild("Amount", true)
+	if amt and amt:IsA("TextLabel") then
+		local n = tonumber((tostring(amt.Text):gsub("%D", "")))
+		if n and n > 0 then return n end
+	end
+	return 1
+end
+
+-- Scan PlayerGui for the player's REAL inventory slots WHEREVER the game
+-- rendered them (the big Weapons/Pets menu holds ~200 slots; the trade GUI's
+-- own inventory may hold only a couple). We (a) hook each real slot in place so
+-- a tap adds it to the offer, and (b) collect its {name, visual, amount} so we
+-- can also mirror it into the trade's own "Add Items" panel. Returns the
+-- collected table + slot count. Our own clones (__MHSpawn) are skipped.
+local function collectRealSlots()
+	local collected = { Weapons = {}, Pets = {} }
 	local n = 0
 	for _, d in ipairs(PlayerGui:GetDescendants()) do
 		if d:IsA("GuiObject") and not d:GetAttribute("__MHSpawn")
@@ -1689,17 +1702,21 @@ local function hookAllRealSlots()
 					or (known and d.Name) or nil
 				if dispName then
 					n = n + 1
+					local isPet = (d:FindFirstAncestor("Pets") or d:FindFirstAncestor("PetsFrame")) ~= nil
+						or PetDB[d.Name] ~= nil
+					local cat = isPet and "Pets" or "Weapons"
+					local visual = slotVisual(d, img, nameLabel, dispName)
+					local amount = slotAmount(d)
+					if not collected[cat][dispName] then
+						collected[cat][dispName] = { key = dispName, visual = visual, amount = amount }
+					end
 					if not d:GetAttribute("__MHHooked") then
 						d:SetAttribute("__MHHooked", true)
-						local isPet = (d:FindFirstAncestor("Pets") or d:FindFirstAncestor("PetsFrame")) ~= nil
-							or PetDB[d.Name] ~= nil
-						local cat = isPet and "Pets" or "Weapons"
-						local key = dispName                     -- stack by display name
-						local visual = slotVisual(d, img, nameLabel, dispName)
+						local key, cx, vis = dispName, cat, visual
 						local btn = slotButton(d)
 						if btn then
 							track(btn.MouseButton1Click:Connect(function()
-								offerItemLocal(key, cat, visual)
+								offerItemLocal(key, cx, vis)
 							end))
 						end
 					end
@@ -1707,53 +1724,104 @@ local function hookAllRealSlots()
 			end
 		end
 	end
-	return n
+	return collected, n
 end
 
--- Append spawned catalog items into the trade GUI's own inventory container
--- (leaves the real slots there untouched; removes only our prior clones).
-local function appendSpawned(category, list, db)
+-- Per-category { container, template, cell } captured from a real slot.
+local function getInvCache(category)
 	local cache = InvCache[category]
 	if not (cache and cache.container and cache.template) then
 		local container, sample = findInventoryContainer(category)
-		if not container then return end
-		cache = { container = container, template = sample:Clone() }
+		if not container then return nil end
+		cache = { container = container, template = sample:Clone(), cell = sample.AbsoluteSize }
 		InvCache[category] = cache
 	end
+	return cache
+end
+
+-- Make sure the container arranges children in a grid (some builds position
+-- slots absolutely; if there is no layout we add one so clones don't overlap).
+local function ensureLayout(container, cell)
+	for _, c in ipairs(container:GetChildren()) do
+		if c:IsA("UIGridLayout") or c:IsA("UIListLayout") then return end
+	end
+	local grid = Instance.new("UIGridLayout")
+	local cx = (cell and cell.X > 4) and cell.X or 70
+	local cy = (cell and cell.Y > 4) and cell.Y or 70
+	grid.CellSize = UDim2.new(0, cx, 0, cy)
+	grid.CellPadding = UDim2.new(0, 4, 0, 4)
+	grid.SortOrder = Enum.SortOrder.LayoutOrder
+	grid.Parent = container
+end
+
+-- Fill the trade GUI's own "Add Items" grid with the real inventory (mirrored
+-- clones) plus any spawned catalog items, so items show inside the trade panel
+-- itself. Only touches the trade container — never the real inventory menu.
+-- `pass` guards against wiping a container twice when Weapons/Pets share one.
+local function renderAddItems(category, collected, spawnedList, db, pass)
+	local cache = getInvCache(category)
+	if not cache then return end
 	local container, template = cache.container, cache.template
 	if category == "Weapons" then InvContainer = container end
-	for _, c in ipairs(container:GetChildren()) do
-		if c:GetAttribute("__MHSpawn") then c:Destroy() end
+
+	if container:GetAttribute("__MHPass") ~= pass then
+		for _, c in ipairs(container:GetChildren()) do
+			if c:IsA("GuiObject") then c:Destroy() end
+		end
+		container:SetAttribute("__MHPass", pass)
+		container:SetAttribute("__MHOrder", 0)
+		ensureLayout(container, cache.cell)
+		if container:IsA("ScrollingFrame") then
+			pcall(function() container.AutomaticCanvasSize = Enum.AutomaticSize.Y end)
+		end
 	end
+
+	local function add(paint, key, visual)
+		local slot = template:Clone()
+		paint(slot)
+		local order = (container:GetAttribute("__MHOrder") or 0) + 1
+		container:SetAttribute("__MHOrder", order)
+		slot.LayoutOrder = order
+		slot.Parent = container
+		local btn = slotButton(slot)
+		if btn then
+			track(btn.MouseButton1Click:Connect(function()
+				offerItemLocal(key, category, visual)
+			end))
+		end
+	end
+
+	-- Real items (mirrored), sorted by name.
 	local arr = {}
-	for key, amount in pairs(list) do table.insert(arr, { key = key, amount = amount }) end
-	table.sort(arr, function(a, b)
+	for _, rec in pairs(collected[category] or {}) do table.insert(arr, rec) end
+	table.sort(arr, function(a, b) return tostring(a.visual.Name) < tostring(b.visual.Name) end)
+	for _, rec in ipairs(arr) do
+		add(function(slot) paintSlotVisual(slot, rec.visual, rec.amount) end, rec.key, rec.visual)
+	end
+
+	-- Spawned catalog items, sorted by rarity.
+	local sarr = {}
+	for key, amount in pairs(spawnedList) do table.insert(sarr, { key = key, amount = amount }) end
+	table.sort(sarr, function(a, b)
 		local ra = RarityValue[(db[a.key] or {}).Rarity or "Common"] or 0
 		local rb = RarityValue[(db[b.key] or {}).Rarity or "Common"] or 0
 		if ra ~= rb then return ra > rb end
 		return a.key < b.key
 	end)
-	for _, e in ipairs(arr) do
+	for _, e in ipairs(sarr) do
 		local data = db[e.key]
 		if data then
-			local slot = template:Clone()
-			paintSlot(slot, data, e.amount)
-			slot.Parent = container
-			local visual = catalogVisual(e.key, category)
-			local btn = slotButton(slot)
-			if btn then
-				trackRender(btn.MouseButton1Click:Connect(function()
-					offerItemLocal(e.key, category, visual)
-				end))
-			end
+			add(function(slot) paintSlot(slot, data, e.amount) end, e.key, catalogVisual(e.key, category))
 		end
 	end
 end
 
+local RenderPass = 0
 local function renderInventory()
-	local n = hookAllRealSlots()   -- hook the real inventory anywhere in PlayerGui
-	pcall(appendSpawned, "Weapons", SpawnedWeapons, ItemDB)
-	pcall(appendSpawned, "Pets", SpawnedPets, PetDB)
+	local collected, n = collectRealSlots()  -- hook real slots + gather their data
+	RenderPass = RenderPass + 1
+	pcall(renderAddItems, "Weapons", collected, SpawnedWeapons, ItemDB, RenderPass)
+	pcall(renderAddItems, "Pets", collected, SpawnedPets, PetDB, RenderPass)
 	return n
 end
 
@@ -2385,7 +2453,7 @@ end)
 makeRowButton(pSpawn, "Link real inventory", "tap your real items to add them", "Link", C_GREEN, function()
 	local n = renderInventory()
 	CatLabel.Text = (n and n > 0)
-		and ("real inventory linked: " .. n .. " slot(s) — now tap your items to add them")
+		and ("real inventory linked: " .. n .. " item(s) — shown in Add Items; tap to add")
 		or "no real item slots found — open your inventory/backpack in-game, then Link again"
 	CatLabel.TextColor3 = (n and n > 0) and C_GREEN or C_RED
 end)
