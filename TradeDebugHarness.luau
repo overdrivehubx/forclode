@@ -3716,43 +3716,62 @@ makeRowButton(pSpawn, "Dump slots", "show real inventory slot structure", "Dump"
 	Diag.Visible = true
 end)
 
--- Definitive GetSyncData probe: call it for real (no short race) and stream the
--- outcome. If we see "'Item' OK: N keys", the live catalog IS reachable and we
--- can build the whole thing from it. If it just hangs, the server ignores us.
-makeRowButton(pSpawn, "Test live data", "probe GetSyncData for real", "Test", C_ACCENT, function()
-	local rs = game:GetService("ReplicatedStorage")
+-- Read the LIVE catalog. The game caches GetSyncData results in a SyncedData
+-- table (the server pushes it, the remote is only hit once), so the full item
+-- database is already in memory — we grab it with getgc, no slow remote.
+local function loadLiveCatalog()
+	local getgcf = (type(getgc) == "function" and getgc)
+		or (rawget(_G, "getgc")) or (getgenv and type(getgenv().getgc) == "function" and getgenv().getgc) or nil
+	if not getgcf then return nil, "no getgc in this executor" end
+	local live
+	pcall(function()
+		for _, o in pairs(getgcf(true)) do
+			if type(o) == "table" then
+				local it = rawget(o, "Item")
+				if type(it) == "table" then
+					local looksItem = false
+					for _, v in pairs(it) do
+						if type(v) == "table" and (rawget(v, "ItemType") or rawget(v, "Rarity")) then looksItem = true end
+						break
+					end
+					if looksItem then
+						live = { Item = it, Pets = rawget(o, "Pets"), Rarity = rawget(o, "Rarity") }
+						break
+					end
+				end
+			end
+		end
+	end)
+	if live and type(live.Item) == "table" then
+		ItemDB = live.Item
+		Database.Weapons = ItemDB
+		if type(live.Pets) == "table" then PetDB = live.Pets; Database.Pets = PetDB end
+		if type(live.Rarity) == "table" then Rarity = live.Rarity end
+		RealCatalog = true
+		CatalogStatus = "LIVE catalog from memory: " .. countKeys(ItemDB) .. " items"
+		buildSpawnIndex()
+		renderInventory()
+		if onCatalogLoaded then pcall(onCatalogLoaded) end
+		return live
+	end
+	return nil, "SyncedData.Item not in memory yet"
+end
+
+makeRowButton(pSpawn, "Load LIVE items", "read the real catalog from memory", "Live", C_GREEN, function()
 	local lines = {}
 	local function show() Diag.Text = table.concat(lines, "\n"); Diag.Visible = true end
-	local rfs = {}
-	for _, c in ipairs(rs:GetDescendants()) do
-		if c:IsA("RemoteFunction") then rfs[#rfs + 1] = c.Name; if #rfs >= 25 then break end end
+	local live, why = loadLiveCatalog()
+	if live then
+		lines[#lines + 1] = "✓ LIVE catalog loaded from memory!"
+		lines[#lines + 1] = countKeys(ItemDB) .. " items, " .. countKeys(PetDB) .. " pets"
+		lines[#lines + 1] = "Add Items now uses REAL game data — search any item."
+	else
+		lines[#lines + 1] = "live load failed: " .. tostring(why)
+		lines[#lines + 1] = "tip: open your inventory in-game once, then tap Live again."
+		local gsd = findGetSync()
+		lines[#lines + 1] = "GetSyncData remote: " .. (gsd and "found" or "not found")
 	end
-	lines[#lines + 1] = "RemoteFunctions: " .. table.concat(rfs, ", ")
-	local gsd = findGetSync()
-	lines[#lines + 1] = "GetSyncData: " .. (gsd and gsd:GetFullName() or "NOT FOUND")
 	show()
-	if not gsd then return end
-	_G.__MHlive = {}
-	for _, arg in ipairs({ "Item", "Rarity", "Pets" }) do
-		lines[#lines + 1] = "calling GetSyncData('" .. arg .. "') ..."
-		show()
-		task.spawn(function()
-			local t0 = os.clock()
-			local ok, data = pcall(function() return gsd:InvokeServer(arg) end)
-			local dt = string.format("%.1fs", os.clock() - t0)
-			local m
-			if not ok then m = "  '" .. arg .. "' ERR (" .. dt .. "): " .. tostring(data)
-			elseif type(data) == "table" then m = "  '" .. arg .. "' OK: " .. countKeys(data) .. " keys (" .. dt .. ")"
-			else m = "  '" .. arg .. "' -> " .. typeof(data) .. " (" .. dt .. ")" end
-			lines[#lines + 1] = m
-			_G.__MHlive[arg] = data
-			show()
-		end)
-	end
-	task.delay(20, function()
-		lines[#lines + 1] = "(no OK/ERR after 20s = server is ignoring the call)"
-		show()
-	end)
 end)
 
 -- Open the "Add Items" panel — the full catalog, searchable, tap to add.
@@ -4116,6 +4135,19 @@ end
 -- Load the real catalog/inventory in the BACKGROUND (InvokeServer may yield) so
 -- the menu is already on screen; the spawn list + inventory refresh when it lands.
 task.spawn(applyRealData)
+
+-- Auto-load the LIVE catalog from memory (getgc). Retries a few times in case
+-- the game hasn't cached it yet; falls back silently to the embedded catalog.
+task.spawn(function()
+	for _ = 1, 8 do
+		local ok, live = pcall(loadLiveCatalog)
+		if ok and live then
+			print("[TradeDebug] LIVE catalog loaded from memory (" .. countKeys(ItemDB) .. " items).")
+			break
+		end
+		task.wait(3)
+	end
+end)
 
 print("[TradeDebug] Harness loaded. Layout: " .. (TradeGUI and TradeGUI.Name or "NOT FOUND") ..
 	" | Use the TradeDebugPanel to drive the offline trade.")
