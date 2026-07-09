@@ -1668,8 +1668,8 @@ local function renderPane(category, list, db)
 end
 
 local function renderInventory()
-	renderPane("Weapons", SpawnedWeapons, ItemDB)
-	renderPane("Pets", SpawnedPets, PetDB)
+	pcall(renderPane, "Weapons", SpawnedWeapons, ItemDB)
+	pcall(renderPane, "Pets", SpawnedPets, PetDB)
 end
 
 --==============================================================================
@@ -1850,9 +1850,11 @@ local function startTrade(player2Name)
 	setOfferUsername("their", "(" .. player2Name .. ")")
 	setOfferUsername("your", "(" .. LocalPlayer.Name .. ")")
 
-	RealInv = scrapeRealInventory()   -- mirror the real game inventory in automatically
+	-- Mirror the real game inventory in automatically. Guarded so a scrape hiccup
+	-- on some game object can never stop the trade window from opening.
+	pcall(function() RealInv = scrapeRealInventory() end)
 	RenderTrade()
-	renderInventory()  -- fill the inventory panels with your real + spawned items
+	pcall(renderInventory)  -- fill the inventory panels with your real + spawned items
 end
 
 -- Light the remote client's green acceptance flag (Player2 accepted), and
