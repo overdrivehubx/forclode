@@ -914,6 +914,9 @@ _G.DebugTradeTable = DebugTradeTable
 -- Which side receives the next inventory click. "Player1" = left, "Player2" = right.
 local OfferMode = "Player1"
 
+-- Items the user spawned into the inventory (key -> amount).
+local SpawnedWeapons = {}
+
 -- Name captured when the request modal is shown; consumed when the native
 -- green Accept button is clicked (mirrors AcceptRequest -> StartTrade).
 local PendingP2Name = "Player2"
@@ -1343,35 +1346,6 @@ local function readSlotVisual(slot)
 	}
 end
 
--- Hook the game's OWN inventory slots so a tap offers that item by copying its
--- visuals. Name-agnostic: scans the whole item picker for any frame that has
--- BOTH an icon and a button (a real slot), so it works on renamed builds.
-local function hookAllInventorySlots()
-	local scope = ItemsPicker or TradeGUI
-	if not scope then return end
-	for _, slot in ipairs(scope:GetDescendants()) do
-		if slot:IsA("GuiObject") and not slot:GetAttribute("__MHHooked") then
-			local icon = slot:FindFirstChild("Icon") or resolve(slot, "Container.Icon")
-			local btn = resolve(slot, "Container.Button") or resolve(slot, "Container.ActionButton")
-				or slot:FindFirstChild("Button")
-			if icon and icon:IsA("ImageLabel") and btn and btn:IsA("GuiButton") then
-				slot:SetAttribute("__MHHooked", true)
-				local category = (slot:FindFirstAncestor("Pets") or slot:FindFirstAncestor("PetsFrame")) and "Pets" or "Weapons"
-				trackRender(btn.MouseButton1Click:Connect(function()
-					offerItemLocal(slot.Name, category, readSlotVisual(slot))
-				end))
-			end
-		end
-	end
-end
-
--- Re-hook whenever the game adds new inventory slots.
-if ItemsPicker then
-	track(ItemsPicker.DescendantAdded:Connect(function()
-		task.defer(hookAllInventorySlots)
-	end))
-end
-
 -- Find the inventory container for a category + a real slot to clone (correct
 -- size/style for the platform). Name-agnostic: uses any real slot in the picker.
 local function findInventoryContainer(category)
@@ -1397,43 +1371,70 @@ local function findInventoryContainer(category)
 	return nil, nil
 end
 
--- Spawn a real catalog item into the inventory by cloning a real game slot and
--- stamping the item's image/name/rarity onto it (then hooking it to offer).
-local function spawnItemSlot(key, category)
-	local data = ((category == "Pets") and PetDB or ItemDB)[key]
-	if not data then return false end
-	local container, template = findInventoryContainer(category)
-	if not container or not template then return false end
-	local slot = template:Clone()
-	slot.Name = data.ItemName or data.Name or key
-	local icon = slot:FindFirstChild("Icon") or resolve(slot, "Container.Icon")
-	if icon then pcall(function() icon.Image = getImage(data.Image) end) end
-	local nameLabel = resolve(slot, "ItemName.Label") or resolve(slot, "Container.ItemName")
-		or (slot:FindFirstChild("ItemName") and slot.ItemName:FindFirstChildWhichIsA("TextLabel"))
-		or slot:FindFirstChild("Label", true)
-	if nameLabel and nameLabel:IsA("TextLabel") then
-		pcall(function() nameLabel.Text = data.ItemName or data.Name or key end)
-		pcall(function() nameLabel.TextColor3 = Rarity[data.Rarity] or Color3.new(1,1,1) end)
-		if nameLabel.Parent and nameLabel.Parent:IsA("GuiObject") then
-			pcall(function() nameLabel.Parent.BackgroundColor3 = Rarity[data.Rarity] or nameLabel.Parent.BackgroundColor3 end)
+-- Cached inventory container + slot template (captured from a real game slot so
+-- the size/style matches the platform — fixes the tiny-icon problem on phone).
+local InvContainer, InvTemplate
+
+-- Managed inventory: shows ONLY the items you spawned (the game's real items are
+-- cleared/hidden), each a clone of a real slot. Tap a slot to add it to the
+-- current offer. Called on picker open and after every spawn.
+local function renderInventory()
+	if not (InvContainer and InvTemplate) then
+		local container, sample = findInventoryContainer("Weapons")
+		if container then InvContainer = container end
+		if sample then InvTemplate = sample:Clone() end
+	end
+	local container = InvContainer or InventoryFrame
+	local template  = InvTemplate or (SlotTemplate and SlotTemplate:Clone())
+	if not container or not template then return end
+
+	-- Clear whatever is present (game's real items + our previous slots).
+	for _, c in ipairs(container:GetChildren()) do
+		if c:IsA("GuiObject") then c:Destroy() end
+	end
+
+	-- Sort spawned items by rarity (like the game).
+	local list = {}
+	for key, amount in pairs(SpawnedWeapons) do table.insert(list, { key = key, amount = amount }) end
+	table.sort(list, function(a, b)
+		local ra = RarityValue[(ItemDB[a.key] or {}).Rarity or "Common"] or 0
+		local rb = RarityValue[(ItemDB[b.key] or {}).Rarity or "Common"] or 0
+		if ra ~= rb then return ra > rb end
+		return a.key < b.key
+	end)
+
+	for _, e in ipairs(list) do
+		local key, amount = e.key, e.amount
+		local data = ItemDB[key]
+		if data then
+			local slot = template:Clone()
+			slot.Name = data.ItemName or key
+			slot.Visible = true
+			slot:SetAttribute("__MHSpawn", true)
+			local icon = slot:FindFirstChild("Icon") or resolve(slot, "Container.Icon")
+			if icon then pcall(function() icon.Image = getImage(data.Image) end) end
+			local nameLabel = resolve(slot, "ItemName.Label") or resolve(slot, "Container.ItemName")
+				or (slot:FindFirstChild("ItemName") and slot.ItemName:FindFirstChildWhichIsA("TextLabel"))
+				or slot:FindFirstChild("Label", true)
+			if nameLabel and nameLabel:IsA("TextLabel") then
+				pcall(function() nameLabel.Text = data.ItemName or key end)
+				pcall(function() nameLabel.TextColor3 = Rarity[data.Rarity] or Color3.fromRGB(220,220,225) end)
+				if nameLabel.Parent and nameLabel.Parent:IsA("GuiObject") then
+					pcall(function() nameLabel.Parent.BackgroundColor3 = Color3.fromRGB(64, 64, 64) end)
+				end
+			end
+			local amt = resolve(slot, "Container.Amount") or slot:FindFirstChild("Amount", true)
+			if amt and amt:IsA("TextLabel") then amt.Text = (amount > 1) and ("x" .. amount) or "" end
+			setProp(slot, "Tags.Chroma", "Visible", data.Chroma == true)
+			slot.Parent = container
+			local btn = resolve(slot, "Container.Button") or resolve(slot, "Container.ActionButton") or slot:FindFirstChild("Button")
+			if btn and btn:IsA("GuiButton") then
+				trackRender(btn.MouseButton1Click:Connect(function()
+					offerItemLocal(key, "Weapons", catalogVisual(key, "Weapons"))
+				end))
+			end
 		end
 	end
-	setProp(slot, "Tags.Chroma", "Visible", data.Chroma == true)
-	slot.Visible = true
-	slot:SetAttribute("__MHHooked", true)
-	slot.Parent = container
-	local btn = resolve(slot, "Container.Button") or resolve(slot, "Container.ActionButton") or slot:FindFirstChild("Button")
-	if btn and btn:IsA("GuiButton") then
-		trackRender(btn.MouseButton1Click:Connect(function()
-			offerItemLocal(slot.Name, category, readSlotVisual(slot))
-		end))
-	end
-	return true
-end
-
--- Inventory = the game's real slots + anything we spawned; always just hook.
-local function renderInventory()
-	hookAllInventorySlots()
 end
 
 --==============================================================================
@@ -1519,12 +1520,12 @@ end
 local function openItemsPicker()
 	if ItemsPicker then
 		revealAncestors(ItemsPicker)
-		revealSubtree(ItemsPicker)  -- show the real inventory regardless of renamed frames
 		ItemsPicker.Visible = true
 	end
 	if TradeRoot then TradeRoot.Visible = false end
+	renderInventory()  -- captures + reveals the inventory container, renders spawned
+	if InvContainer then revealAncestors(InvContainer) end
 	if InventoryFrame then revealAncestors(InventoryFrame) end
-	renderInventory()
 end
 
 -- Close the picker and return to the Trade panel.
@@ -2041,7 +2042,7 @@ makeRowButton(pSpawn, "Diagnose data", "why catalog is real / fallback", "Diag",
 	task.spawn(applyRealData)
 end)
 
-local spawnRow = makeRow(pSpawn, "Spawn item", "tap to add it to the current offer")
+local spawnRow = makeRow(pSpawn, "Spawn item", "tap to add it to your inventory")
 local SearchBox = Instance.new("TextBox")
 SearchBox.Size = UDim2.new(0, 118, 0, 30); SearchBox.Position = UDim2.new(1, -130, 0.5, -15)
 SearchBox.BackgroundColor3 = C_BG; SearchBox.Text = ""
@@ -2078,9 +2079,11 @@ local function refreshSpawn(query)
 			b.Font = Enum.Font.Gotham; b.TextSize = 12; b.BorderSizePixel = 0
 			b.ZIndex = 3; b.LayoutOrder = shown; b.Parent = SpawnList; corner(b, 6)
 			track(b.MouseButton1Click:Connect(function()
-				-- Add straight into the current offer side with real visuals.
-				offerItemLocal(it.key, it.cat, catalogVisual(it.key, it.cat))
-				b.Text = "  " .. it.name .. "   ✓ → " .. OfferMode:gsub("Player", "P")
+				-- Add the item to YOUR inventory (real items are hidden). Open the
+				-- Item picker to see it; tap it there to add to the offer.
+				SpawnedWeapons[it.key] = (SpawnedWeapons[it.key] or 0) + 1
+				renderInventory()
+				b.Text = "  " .. it.name .. "   ✓ x" .. SpawnedWeapons[it.key]
 			end))
 		end
 	end
