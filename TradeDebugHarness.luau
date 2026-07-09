@@ -637,8 +637,57 @@ local ItemDB = {
 	["iRevolver"]={ItemName="iRevolver", Image="http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId=203809168", ItemType="Gun", Rarity="Rare"},
 }
 
--- Pets aren't in the uploaded Sync.Item; left empty (spawner shows weapons only).
-local PetDB = {}
+-- Real MM2 pets extracted from the place file (48).
+local PetDB = {
+	["<3"]={Name="<3", Image="363155463", ItemType="Knife", Rarity="Common"},
+	["AmericanEagle"]={Name="Sammy", Image="446052376", ItemType="Knife", Rarity="Godly"},
+	["Badger"]={Name="Badger", Image="357817300", ItemType="Knife", Rarity="Common"},
+	["Bat"]={Name="Bat", Image="4989103049", ItemType="Knife", Rarity="Legendary"},
+	["Bear"]={Name="Bear", Image="4989101654", ItemType="Knife", Rarity="Rare"},
+	["Bunny"]={Name="Bunny", Image="4989098177", ItemType="Knife", Rarity="Common"},
+	["Cat"]={Name="Cat", Image="4989095647", ItemType="Knife", Rarity="Common"},
+	["Chilly"]={Name="Chilly", Image="357821774", ItemType="Knife", Rarity="Uncommon"},
+	["ChromaFireBat"]={Name="Fire Bat", Image="3215184228", ItemType="Knife", Rarity="Godly", Chroma=true},
+	["ChromaFireBear"]={Name="Fire Bear", Image="3215184104", ItemType="Knife", Rarity="Godly", Chroma=true},
+	["ChromaFireBunny"]={Name="Fire Bunny", Image="3215183621", ItemType="Knife", Rarity="Godly", Chroma=true},
+	["ChromaFireCat"]={Name="Fire Cat", Image="3215183286", ItemType="Knife", Rarity="Godly", Chroma=true},
+	["ChromaFireDog"]={Name="Fire Dog", Image="3215183415", ItemType="Knife", Rarity="Godly", Chroma=true},
+	["ChromaFireFox"]={Name="Fire Fox", Image="3215183922", ItemType="Knife", Rarity="Godly", Chroma=true},
+	["ChromaFirePig"]={Name="Fire Pig", Image="3215183776", ItemType="Knife", Rarity="Godly", Chroma=true},
+	["Deathspeaker"]={Name="Deathspeaker", Image="357651865", ItemType="Knife", Rarity="Godly"},
+	["Dog"]={Name="Dog", Image="4989094404", ItemType="Knife", Rarity="Common"},
+	["Doge"]={Name="Doge", Image="357823389", ItemType="Knife", Rarity="Uncommon"},
+	["Dogey"]={Name="Dogey", Image="357823389", ItemType="Knife", Rarity="Uncommon"},
+	["Electro"]={Name="Electro", Image="386277688", ItemType="Knife", Rarity="Godly"},
+	["Elfy"]={Name="Elf", Image="585798235", ItemType="Knife", Rarity="Common"},
+	["Elitey"]={Name="Elitey", Image="357525407", ItemType="Knife", Rarity="Legendary"},
+	["Eye"]={Name="Eyeball", Image="358134944", ItemType="Knife", Rarity="Rare"},
+	["Fairy"]={Name="Fairy", Image="358125321", ItemType="Knife", Rarity="Uncommon"},
+	["FireBat"]={Name="Fire Bat", Image="4989110877", ItemType="Knife", Rarity="Godly"},
+	["FireBear"]={Name="Fire Bear", Image="4989109913", ItemType="Knife", Rarity="Godly"},
+	["FireBunny"]={Name="Fire Bunny", Image="4989105489", ItemType="Knife", Rarity="Godly"},
+	["FireCat"]={Name="Fire Cat", Image="4989104744", ItemType="Knife", Rarity="Godly"},
+	["FireDog"]={Name="Fire Dog", Image="4964183897", ItemType="Knife", Rarity="Godly"},
+	["FireFox"]={Name="Fire Fox", Image="4989107429", ItemType="Knife", Rarity="Godly"},
+	["FirePig"]={Name="Fire Pig", Image="4989106599", ItemType="Knife", Rarity="Godly"},
+	["Fox"]={Name="Fox", Image="4989100515", ItemType="Knife", Rarity="Uncommon"},
+	["HeartBalloon"]={Name="<3", Image="363155463", ItemType="Knife", Rarity="Common"},
+	["IcePhoenix"]={Name="Ice Phoenix", Image="6134733219", ItemType="Knife", Rarity="Godly"},
+	["Jetstream"]={Name="Jetstream", Image="358126292", ItemType="Knife", Rarity="Rare"},
+	["Mechbug"]={Name="Mechbug", Image="357789913", ItemType="Knife", Rarity="Rare"},
+	["Nobledragon"]={Name="Nobledragon", Image="357813086", ItemType="Knife", Rarity="Legendary"},
+	["Overseer Eye"]={Name="Overseer Eye", Image="358135658", ItemType="Knife", Rarity="Legendary"},
+	["Pengy"]={Name="Pengy", Image="357655751", ItemType="Knife", Rarity="Common"},
+	["Phoenix"]={Name="Phoenix", Image="365355267", ItemType="Knife", Rarity="Godly"},
+	["Pig"]={Name="Pig", Image="4989099890", ItemType="Knife", Rarity="Uncommon"},
+	["Piggy"]={Name="Piggy", Image="357816542", ItemType="Knife", Rarity="Common"},
+	["Reindeer"]={Name="Reindeer", Image="585789096", ItemType="Knife", Rarity="Common"},
+	["Seahorsey"]={Name="Seahorsey", Image="357818987", ItemType="Knife", Rarity="Uncommon"},
+	["Skelly"]={Name="Skelly", Image="475477388", ItemType="Knife", Rarity="Godly"},
+	["Steambird"]={Name="Steambird", Image="360615840", ItemType="Knife", Rarity="Godly"},
+	["Tankie"]={Name="Tankie", Image="357793334", ItemType="Knife", Rarity="Rare"},
+	["UFO"]={Name="UFO", Image="357654905", ItemType="Knife", Rarity="Common"},
+}
 
 local Database = { Weapons = ItemDB, Pets = PetDB }
 
@@ -916,6 +965,7 @@ local OfferMode = "Player1"
 
 -- Items the user spawned into the inventory (key -> amount).
 local SpawnedWeapons = {}
+local SpawnedPets = {}
 
 -- Name captured when the request modal is shown; consumed when the native
 -- green Accept button is clicked (mirrors AcceptRequest -> StartTrade).
@@ -1360,81 +1410,85 @@ local function findInventoryContainer(category)
 			end
 		end
 	end
-	-- fall back to any slot (weapons) regardless of category
-	for _, slot in ipairs(ItemsPicker:GetDescendants()) do
-		local icon = slot:FindFirstChild("Icon") or resolve(slot, "Container.Icon")
-		local btn = resolve(slot, "Container.Button") or resolve(slot, "Container.ActionButton") or slot:FindFirstChild("Button")
-		if icon and icon:IsA("ImageLabel") and btn and btn:IsA("GuiButton") then
-			return slot.Parent, slot
-		end
-	end
 	return nil, nil
 end
 
--- Cached inventory container + slot template (captured from a real game slot so
--- the size/style matches the platform — fixes the tiny-icon problem on phone).
-local InvContainer, InvTemplate
+-- Per-category cache of { container, template } captured from a real game slot
+-- (correct size/style on phone). InvContainer kept for openItemsPicker reveal.
+local InvCache = {}
+local InvContainer
 
--- Managed inventory: shows ONLY the items you spawned (the game's real items are
--- cleared/hidden), each a clone of a real slot. Tap a slot to add it to the
--- current offer. Called on picker open and after every spawn.
-local function renderInventory()
-	if not (InvContainer and InvTemplate) then
-		local container, sample = findInventoryContainer("Weapons")
-		if container then InvContainer = container end
-		if sample then InvTemplate = sample:Clone() end
+-- Stamp a catalog item onto a cloned slot. Matches the game's INVENTORY style:
+-- the ItemName PLATE is coloured by rarity (grey for Common); the label text
+-- keeps the template's own colour — this fixes the "wrong/too bright" colours.
+local function paintSlot(slot, data, amount)
+	slot.Name = data.ItemName or data.Name or "Item"
+	slot.Visible = true
+	slot:SetAttribute("__MHSpawn", true)
+	local icon = slot:FindFirstChild("Icon") or resolve(slot, "Container.Icon")
+	if icon then pcall(function() icon.Image = getImage(data.Image) end) end
+	local nameFrame = slot:FindFirstChild("ItemName")
+	local label = (nameFrame and nameFrame:FindFirstChild("Label")) or resolve(slot, "ItemName.Label")
+		or slot:FindFirstChild("Label", true)
+	if label and label:IsA("TextLabel") then
+		pcall(function() label.Text = data.ItemName or data.Name or slot.Name end)
 	end
-	local container = InvContainer or InventoryFrame
-	local template  = InvTemplate or (SlotTemplate and SlotTemplate:Clone())
-	if not container or not template then return end
+	if nameFrame and nameFrame:IsA("GuiObject") then
+		local col = (data.Rarity == "Common") and Color3.fromRGB(106, 106, 106)
+			or (Rarity[data.Rarity] or Color3.fromRGB(140, 140, 145))
+		pcall(function() nameFrame.BackgroundColor3 = col end)
+	end
+	local amt = resolve(slot, "Container.Amount") or slot:FindFirstChild("Amount", true)
+	if amt and amt:IsA("TextLabel") then amt.Text = (amount and amount > 1) and ("x" .. amount) or "" end
+	setProp(slot, "Tags.Chroma", "Visible", data.Chroma == true)
+end
 
-	-- Clear whatever is present (game's real items + our previous slots).
+-- Render one inventory pane (Weapons/Pets) with ONLY spawned items (real items
+-- cleared), each a clone of a real slot so the size/style matches the game.
+local function renderPane(category, list, db)
+	local cache = InvCache[category]
+	if not (cache and cache.container and cache.template) then
+		local container, sample = findInventoryContainer(category)
+		if not container then return end            -- no real slot to template from yet
+		cache = { container = container, template = sample:Clone() }
+		InvCache[category] = cache
+	end
+	local container, template = cache.container, cache.template
+	if category == "Weapons" then InvContainer = container end
+
 	for _, c in ipairs(container:GetChildren()) do
 		if c:IsA("GuiObject") then c:Destroy() end
 	end
 
-	-- Sort spawned items by rarity (like the game).
-	local list = {}
-	for key, amount in pairs(SpawnedWeapons) do table.insert(list, { key = key, amount = amount }) end
-	table.sort(list, function(a, b)
-		local ra = RarityValue[(ItemDB[a.key] or {}).Rarity or "Common"] or 0
-		local rb = RarityValue[(ItemDB[b.key] or {}).Rarity or "Common"] or 0
+	local arr = {}
+	for key, amount in pairs(list) do table.insert(arr, { key = key, amount = amount }) end
+	table.sort(arr, function(a, b)
+		local ra = RarityValue[(db[a.key] or {}).Rarity or "Common"] or 0
+		local rb = RarityValue[(db[b.key] or {}).Rarity or "Common"] or 0
 		if ra ~= rb then return ra > rb end
 		return a.key < b.key
 	end)
 
-	for _, e in ipairs(list) do
-		local key, amount = e.key, e.amount
-		local data = ItemDB[key]
+	for _, e in ipairs(arr) do
+		local data = db[e.key]
 		if data then
 			local slot = template:Clone()
-			slot.Name = data.ItemName or key
-			slot.Visible = true
-			slot:SetAttribute("__MHSpawn", true)
-			local icon = slot:FindFirstChild("Icon") or resolve(slot, "Container.Icon")
-			if icon then pcall(function() icon.Image = getImage(data.Image) end) end
-			local nameLabel = resolve(slot, "ItemName.Label") or resolve(slot, "Container.ItemName")
-				or (slot:FindFirstChild("ItemName") and slot.ItemName:FindFirstChildWhichIsA("TextLabel"))
-				or slot:FindFirstChild("Label", true)
-			if nameLabel and nameLabel:IsA("TextLabel") then
-				pcall(function() nameLabel.Text = data.ItemName or key end)
-				pcall(function() nameLabel.TextColor3 = Rarity[data.Rarity] or Color3.fromRGB(220,220,225) end)
-				if nameLabel.Parent and nameLabel.Parent:IsA("GuiObject") then
-					pcall(function() nameLabel.Parent.BackgroundColor3 = Color3.fromRGB(64, 64, 64) end)
-				end
-			end
-			local amt = resolve(slot, "Container.Amount") or slot:FindFirstChild("Amount", true)
-			if amt and amt:IsA("TextLabel") then amt.Text = (amount > 1) and ("x" .. amount) or "" end
-			setProp(slot, "Tags.Chroma", "Visible", data.Chroma == true)
+			paintSlot(slot, data, e.amount)
 			slot.Parent = container
 			local btn = resolve(slot, "Container.Button") or resolve(slot, "Container.ActionButton") or slot:FindFirstChild("Button")
 			if btn and btn:IsA("GuiButton") then
+				local key, cat = e.key, category
 				trackRender(btn.MouseButton1Click:Connect(function()
-					offerItemLocal(key, "Weapons", catalogVisual(key, "Weapons"))
+					offerItemLocal(key, cat, catalogVisual(key, cat))
 				end))
 			end
 		end
 	end
+end
+
+local function renderInventory()
+	renderPane("Weapons", SpawnedWeapons, ItemDB)
+	renderPane("Pets", SpawnedPets, PetDB)
 end
 
 --==============================================================================
@@ -2081,9 +2135,10 @@ local function refreshSpawn(query)
 			track(b.MouseButton1Click:Connect(function()
 				-- Add the item to YOUR inventory (real items are hidden). Open the
 				-- Item picker to see it; tap it there to add to the offer.
-				SpawnedWeapons[it.key] = (SpawnedWeapons[it.key] or 0) + 1
+				local list = (it.cat == "Pets") and SpawnedPets or SpawnedWeapons
+				list[it.key] = (list[it.key] or 0) + 1
 				renderInventory()
-				b.Text = "  " .. it.name .. "   ✓ x" .. SpawnedWeapons[it.key]
+				b.Text = "  " .. it.name .. "   ✓ x" .. list[it.key]
 			end))
 		end
 	end
