@@ -749,13 +749,28 @@ local RealCatalog = false  -- true once GetSyncData returns the real catalog
 -- Fetch the real catalog + inventory. This may YIELD on InvokeServer, so it MUST
 -- run in a background thread (never at load time) or it will freeze the script
 -- before the menu is drawn.
+-- Pull the LIVE catalog from the running game and MERGE it over the embedded
+-- one, so the spawner offers every current item/skin the game has (the embedded
+-- data is only an old Halloween snapshot). Retries a few times because the
+-- RemoteFunction can be slow to answer right after injection.
+local function mergeInto(dst, src)
+	if type(src) ~= "table" then return 0 end
+	local n = 0
+	for k, v in pairs(src) do if type(v) == "table" then dst[k] = v; n = n + 1 end end
+	return n
+end
 local function applyRealData()
-	local realItems = tryGetSync("Item")
-	local realPets  = tryGetSync("Pets")
-	local realRar   = tryGetSync("Rarity")
-	if realItems then ItemDB = realItems end
-	if realPets  then PetDB  = realPets  end
-	if realRar   then Rarity = realRar   end
+	local realItems, realPets, realRar
+	for attempt = 1, 6 do
+		realItems = realItems or tryGetSync("Item")
+		realPets  = realPets  or tryGetSync("Pets")
+		realRar   = realRar   or tryGetSync("Rarity")
+		if realItems then break end
+		task.wait(2)  -- give the server a moment, then retry
+	end
+	-- Merge (not replace): keep embedded items, add every live one on top.
+	local added = mergeInto(ItemDB, realItems) + mergeInto(PetDB, realPets)
+	if realRar then Rarity = realRar end
 	Database = { Weapons = ItemDB, Pets = PetDB }
 
 	local pd = rawget(_G, "PlayerData")
@@ -775,11 +790,12 @@ local function applyRealData()
 
 	if realItems then
 		RealCatalog = true
-		CatalogStatus = ("real catalog: %d items, %d pets%s"):format(
-			countKeys(ItemDB), countKeys(PetDB), havePD and " · your inventory" or " · spawn to fill")
+		CatalogStatus = ("live catalog merged: %d items, %d pets (+%d live)"):format(
+			countKeys(ItemDB), countKeys(PetDB), added)
 	else
 		RealCatalog = false
-		CatalogStatus = "catalog: FALLBACK — using the game's own inventory"
+		CatalogStatus = ("catalog: embedded only, %d items (live fetch: %s)"):format(
+			countKeys(ItemDB), tostring(lastSyncError))
 	end
 	if onCatalogLoaded then pcall(onCatalogLoaded) end
 end
@@ -829,23 +845,21 @@ local function findTradeGui()
 
 	local function isPhone(g) return string.find(string.lower(g.Name), "phone") ~= nil end
 
-	-- Deterministic: the game only clones the platform's GUI, so if a *_Phone
-	-- trade GUI exists at all we are on mobile — use it. Touch is a tiebreaker.
+	-- Platform-correct pick. Both the PC ("Trade") and the phone ("TradeGUI_Phone")
+	-- layouts can coexist in PlayerGui, so we must match the current device: on a
+	-- desktop (mouse) use the NON-phone GUI, on touch use the phone one. Driving the
+	-- wrong one shows the phone layout on PC (what the user was seeing). Score each:
+	-- platform match >> Enabled >> owns Container.Trade.
+	local preferPhone = IsTouch
+	local best, bestScore
 	for _, gui in ipairs(candidates) do
-		if isPhone(gui) then return gui end
+		local s = 0
+		if isPhone(gui) == preferPhone then s = s + 100 end
+		if gui.Enabled then s = s + 10 end
+		if resolve(gui, "Container.Trade") then s = s + 1 end
+		if not bestScore or s > bestScore then best, bestScore = gui, s end
 	end
-	if IsTouch then
-		-- touch but no phone-named GUI: still prefer an Enabled candidate.
-		for _, gui in ipairs(candidates) do if gui.Enabled then return gui end end
-	end
-	-- Desktop / fallback: first non-phone, then Enabled, then first.
-	for _, gui in ipairs(candidates) do
-		if not isPhone(gui) then return gui end
-	end
-	for _, gui in ipairs(candidates) do
-		if gui.Enabled then return gui end
-	end
-	if candidates[1] then return candidates[1] end
+	if best then return best end
 
 	-- Last resort: find an "Offer1" frame anywhere and climb to its ScreenGui.
 	local anyOffer = PlayerGui:FindFirstChild("Offer1", true)
@@ -1405,15 +1419,49 @@ end
 
 -- Find the inventory container for a category + a real slot to clone (correct
 -- size/style for the platform). Name-agnostic: uses any real slot in the picker.
+-- Find ANY slot we can clone as a template. The inventory, the picker and the
+-- offer NewItem frames all share the Container.Icon / ItemName.Label shape, so if
+-- the inventory grid is empty (offline: the game never ran UpdateInventory) we can
+-- still template off an offer slot and render correctly.
+local function anyTemplateSlot()
+	for _, root in ipairs({ InventoryFrame, PetsFrame, ItemsPicker, Offer1, Offer2 }) do
+		if root then
+			for _, slot in ipairs(root:GetDescendants()) do
+				if slot:IsA("GuiObject")
+					and (slot:FindFirstChild("Icon") or resolve(slot, "Container.Icon"))
+					and (slot:FindFirstChild("ItemName") or resolve(slot, "ItemName.Label")) then
+					return slot
+				end
+			end
+		end
+	end
+	return nil
+end
+
 local function findInventoryContainer(category)
-	if not ItemsPicker then return nil, nil end
-	for _, slot in ipairs(ItemsPicker:GetDescendants()) do
-		local icon = slot:FindFirstChild("Icon") or resolve(slot, "Container.Icon")
-		local btn = resolve(slot, "Container.Button") or resolve(slot, "Container.ActionButton") or slot:FindFirstChild("Button")
-		if icon and icon:IsA("ImageLabel") and btn and btn:IsA("GuiButton") then
-			local isPet = (slot:FindFirstAncestor("Pets") or slot:FindFirstAncestor("PetsFrame")) ~= nil
-			if (category == "Pets") == isPet then
-				return slot.Parent, slot
+	-- Desktop (GUI2 Menu_Trade): the exact tabbed grids. Prefer these so spawned
+	-- items land in the real Weapons/Pets inventory panels shown in the trade UI.
+	local direct = (category == "Pets") and PetsFrame or InventoryFrame
+	if direct then
+		local tmpl
+		for _, slot in ipairs(direct:GetChildren()) do
+			if slot:IsA("GuiObject") and (slot:FindFirstChild("ItemName") or resolve(slot, "Container.Icon")) then
+				tmpl = slot; break
+			end
+		end
+		tmpl = tmpl or anyTemplateSlot()
+		if tmpl then return direct, tmpl end
+	end
+	-- Fallback: scan the picker for a category-matching real slot + its parent.
+	if ItemsPicker then
+		for _, slot in ipairs(ItemsPicker:GetDescendants()) do
+			local icon = slot:FindFirstChild("Icon") or resolve(slot, "Container.Icon")
+			local btn = resolve(slot, "Container.Button") or resolve(slot, "Container.ActionButton") or slot:FindFirstChild("Button")
+			if icon and icon:IsA("ImageLabel") and btn and btn:IsA("GuiButton") then
+				local isPet = (slot:FindFirstAncestor("Pets") or slot:FindFirstAncestor("PetsFrame")) ~= nil
+				if (category == "Pets") == isPet then
+					return slot.Parent, slot
+				end
 			end
 		end
 	end
@@ -1583,7 +1631,9 @@ local function openItemsPicker()
 		revealAncestors(ItemsPicker)
 		ItemsPicker.Visible = true
 	end
-	if TradeRoot then TradeRoot.Visible = false end
+	-- Phone: the picker replaces the offers (they'd overlap on the small screen).
+	-- Desktop: the inventory sits beside the offers, so keep BOTH visible.
+	if IsPhone and TradeRoot then TradeRoot.Visible = false end
 	renderInventory()  -- captures + reveals the inventory container, renders spawned
 	if InvContainer then revealAncestors(InvContainer) end
 	if InventoryFrame then revealAncestors(InventoryFrame) end
@@ -1591,7 +1641,7 @@ end
 
 -- Close the picker and return to the Trade panel.
 local function closeItemsPicker()
-	if ItemsPicker then ItemsPicker.Visible = false end
+	if IsPhone and ItemsPicker then ItemsPicker.Visible = false end
 	if TradeRoot then
 		revealAncestors(TradeRoot)
 		TradeRoot.Visible = true
@@ -1654,20 +1704,28 @@ local function startTrade(player2Name)
 	stopAcceptCooldown()
 	for _, f in ipairs(onNewTrade) do pcall(f) end
 
-	-- Open the Trade panel (Items hidden — native default). Bring the trade
-	-- ScreenGui + ancestor chain on-screen so the layout pops on.
+	-- Open the Trade panel. Bring the trade ScreenGui + ancestor chain on-screen.
 	if TradeGUI and TradeGUI:IsA("ScreenGui") then TradeGUI.Enabled = true end
 	revealAncestors(Offer1 or TradeRoot or Container)
 	if Container then Container.Visible = true end
 	if TradeRoot then TradeRoot.Visible = true end
-	if ItemsPicker then ItemsPicker.Visible = false end
+	-- Desktop shows the inventory beside the offers (screenshot layout); phone
+	-- keeps it hidden behind the native "Add Items" button until tapped.
+	if ItemsPicker then
+		ItemsPicker.Visible = not IsPhone
+		if not IsPhone then revealAncestors(ItemsPicker) end
+	end
+	if not IsPhone then
+		if InventoryFrame then revealAncestors(InventoryFrame) end
+		if PetsFrame then revealAncestors(PetsFrame) end
+	end
 
 	-- Stamp usernames onto every offer frame (overrides "OnlyTwoChracter").
 	setOfferUsername("their", "(" .. player2Name .. ")")
 	setOfferUsername("your", "(" .. LocalPlayer.Name .. ")")
 
 	RenderTrade()
-	renderInventory()  -- pre-populate so the picker is ready when opened
+	renderInventory()  -- fill the inventory panels with your spawned items
 end
 
 -- Light the remote client's green acceptance flag (Player2 accepted), and
