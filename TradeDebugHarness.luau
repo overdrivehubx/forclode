@@ -231,22 +231,26 @@ local function findGetSync()
 	return rs:FindFirstChild("GetSyncData") or rs:FindFirstChild("GetSyncData", true)
 end
 -- InvokeServer can yield forever if the server never answers, so race it against
--- a timeout; the leaked worker thread is harmless.
+-- a timeout; the leaked worker thread is harmless. Captures the failure reason.
+local lastSyncError = nil
 local function invokeWithTimeout(gsd, name, timeout)
-	local done, result = false, nil
+	local done, result, err = false, nil, nil
 	task.spawn(function()
 		local ok, data = pcall(function() return gsd:InvokeServer(name) end)
-		if ok then result = data end
+		if ok then result = data else err = "error: " .. tostring(data) end
 		done = true
 	end)
 	local t = 0
 	while not done and t < timeout do task.wait(0.1); t = t + 0.1 end
+	if not done then err = "timeout (>" .. timeout .. "s)" end
+	if err then lastSyncError = err end
+	if type(result) ~= "table" and not err then lastSyncError = "returned " .. typeof(result) end
 	return result
 end
 local function tryGetSync(name)
 	local gsd = findGetSync()
-	if not gsd then return nil end
-	local data = invokeWithTimeout(gsd, name, 5)
+	if not gsd then lastSyncError = "GetSyncData not found"; return nil end
+	local data = invokeWithTimeout(gsd, name, 10)
 	if type(data) == "table" then return data end
 	return nil
 end
@@ -254,6 +258,7 @@ end
 -- Set by the panel; called once real data loads. Also reports the catalog state.
 local onCatalogLoaded
 local CatalogStatus = "loading real catalog…"
+local RealCatalog = false  -- true once GetSyncData returns the real catalog
 
 local function countKeys(t)
 	local n = 0; if type(t) == "table" then for _ in pairs(t) do n = n + 1 end end; return n
@@ -287,10 +292,12 @@ local function applyRealData()
 	end
 
 	if realItems then
+		RealCatalog = true
 		CatalogStatus = ("real catalog: %d items, %d pets%s"):format(
 			countKeys(ItemDB), countKeys(PetDB), havePD and " · your inventory" or " · spawn to fill")
 	else
-		CatalogStatus = "catalog: FALLBACK (GetSyncData not reachable)"
+		RealCatalog = false
+		CatalogStatus = "catalog: FALLBACK — using the game's own inventory"
 	end
 	if onCatalogLoaded then pcall(onCatalogLoaded) end
 end
@@ -628,20 +635,24 @@ local function renderOffer(sideKey, offerFrame)
 
 	for i, entry in ipairs(offers) do
 		local itemKey, amount, category = entry[1], entry[2], entry[3]
+		local visual = entry.visual  -- copied straight from the clicked real slot
 		local db = Database[category] or ItemDB
 		local data = db[itemKey]
 		local slot = offerFrame.Container:FindFirstChild("NewItem" .. i)
-		if slot and data then
+		if slot and (data or visual) then
+			local img  = (visual and visual.Image) or getImage(data and data.Image)
+			local name = (visual and visual.Name) or (data and (data.ItemName or data.Name)) or itemKey
+			local col  = (visual and visual.Color) or (data and Rarity[data.Rarity]) or Color3.new(1,1,1)
+			local chroma = (visual and visual.Chroma) or (data and data.Chroma ~= nil) or false
 			slot.Visible = true
-			setProp(slot, "Container.Icon", "Image", getImage(data.Image))
-			local displayName = data.ItemName or data.Name
-			setProp(slot, "ItemName.Label", "Text", displayName)
-			setProp(slot, "ItemName.Label", "TextColor3", Rarity[data.Rarity] or Color3.new(1,1,1))
-			setProp(slot, "ItemName.RarityBar", "BackgroundColor3", Rarity[data.Rarity] or Color3.new(1,1,1))
-			setProp(slot, "ItemName", "BackgroundColor3", Rarity[data.Rarity] or Color3.new(1,1,1))
+			setProp(slot, "Container.Icon", "Image", img)
+			setProp(slot, "ItemName.Label", "Text", name)
+			setProp(slot, "ItemName.Label", "TextColor3", col)
+			setProp(slot, "ItemName.RarityBar", "BackgroundColor3", col)
+			setProp(slot, "ItemName", "BackgroundColor3", col)
 			setVisible(slot, "ItemName", true)
 			setProp(slot, "Container.Amount", "Text", (amount and amount > 1) and ("x" .. amount) or "")
-			setProp(slot, "Tags.Chroma", "Visible", data.Chroma ~= nil)
+			setProp(slot, "Tags.Chroma", "Visible", chroma and true or false)
 
 			-- Clicking a slot in your own offer removes it (local, no server).
 			local removeBtn = resolve(slot, "Container.ActionButton")
@@ -790,8 +801,9 @@ local function stopAcceptCooldown()
 	setVisible(TradeRoot, "Actions.Accept.Cooldown", false)
 end
 
--- Offer an item into whichever side OfferMode currently targets.
-local function offerItemLocal(itemKey, category)
+-- Offer an item into whichever side OfferMode currently targets. `visual` (from
+-- a clicked real inventory slot) lets offers show real items with no catalog.
+local function offerItemLocal(itemKey, category, visual)
 	if itemKey == "DefaultKnife" or itemKey == "DefaultGun" then return end
 	local side = DebugTradeTable[OfferMode]
 	if #side.Offer >= 4 then return end -- live cap: 4 stacks per side
@@ -804,7 +816,9 @@ local function offerItemLocal(itemKey, category)
 	if existing then
 		existing[2] = existing[2] + 1
 	else
-		table.insert(side.Offer, { itemKey, 1, category })
+		local e = { itemKey, 1, category }
+		e.visual = visual
+		table.insert(side.Offer, e)
 	end
 
 	-- Any change to the table resets both acceptance flags, like the server does.
@@ -866,9 +880,56 @@ local function renderInventoryPane(frame, owned, db, category)
 	end
 end
 
+-- Read an item slot's on-screen visuals (image / name / rarity colour) so an
+-- offer can display the real item without any catalog lookup.
+local function readSlotVisual(slot)
+	local icon = resolve(slot, "Container.Icon") or slot:FindFirstChild("Icon", true)
+	local nameLabel = resolve(slot, "ItemName.Label") or resolve(slot, "Container.ItemName")
+		or (slot:FindFirstChild("ItemName") and slot.ItemName:FindFirstChildWhichIsA("TextLabel"))
+		or slot:FindFirstChild("Label", true)
+	local col = Color3.new(1, 1, 1)
+	if nameLabel then
+		col = (nameLabel:IsA("TextLabel") and nameLabel.TextColor3) or col
+		local holder = nameLabel.Parent
+		if holder and holder:IsA("GuiObject") and holder.BackgroundTransparency < 1 then col = holder.BackgroundColor3 end
+	end
+	return {
+		Image = (icon and icon.Image) or "",
+		Name  = (nameLabel and nameLabel.Text) or slot.Name,
+		Color = col,
+		Chroma = slot:FindFirstChild("Chroma", true) ~= nil,
+	}
+end
+
+-- Hook the game's OWN inventory slots (already populated with real items) so a
+-- tap offers that item by copying its visuals. Used when there's no catalog.
+local function hookGameSlots(frame, category)
+	if not frame then return end
+	for _, slot in ipairs(frame:GetChildren()) do
+		if slot:IsA("GuiObject") and (resolve(slot, "Container.Icon") or slot:FindFirstChild("Icon", true))
+			and not slot:GetAttribute("__MHHooked") then
+			slot:SetAttribute("__MHHooked", true)
+			local button = resolve(slot, "Container.Button") or resolve(slot, "Container.ActionButton")
+				or slot:FindFirstChildWhichIsA("GuiButton") or slot:FindFirstChildWhichIsA("GuiButton", true)
+			if button and button:IsA("GuiButton") then
+				trackRender(button.MouseButton1Click:Connect(function()
+					offerItemLocal(slot.Name, category, readSlotVisual(slot))
+				end))
+			end
+		end
+	end
+end
+
 local function renderInventory()
-	renderInventoryPane(InventoryFrame, OwnedWeapons, ItemDB, "Weapons")
-	renderInventoryPane(PetsFrame, OwnedPets, PetDB, "Pets")
+	if RealCatalog then
+		-- We have the real catalog: render our own controlled inventory.
+		renderInventoryPane(InventoryFrame, OwnedWeapons, ItemDB, "Weapons")
+		renderInventoryPane(PetsFrame, OwnedPets, PetDB, "Pets")
+	else
+		-- No catalog: leave the game's real inventory in place and just hook it.
+		hookGameSlots(InventoryFrame, "Weapons")
+		hookGameSlots(PetsFrame, "Pets")
+	end
 end
 
 --==============================================================================
@@ -1452,6 +1513,7 @@ makeRowButton(pSpawn, "Diagnose data", "why catalog is real / fallback", "Diag",
 	table.insert(lines, "_G.PlayerData: " .. (type(pd) == "table" and "yes" or "no")
 		.. (type(pd) == "table" and pd.Weapons and pd.Weapons.Owned and (" (" .. countKeys(pd.Weapons.Owned) .. " weapons)") or ""))
 	table.insert(lines, "catalog: " .. CatalogStatus)
+	table.insert(lines, "lastError: " .. tostring(lastSyncError))
 	table.insert(lines, "ItemDB=" .. countKeys(ItemDB) .. " PetDB=" .. countKeys(PetDB))
 	local samp = {}
 	for _, e in ipairs(spawnIndex) do if #samp < 6 then table.insert(samp, e.name) end end
