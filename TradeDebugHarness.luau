@@ -167,20 +167,25 @@ end
 local AssetURL = "http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId="
 
 -- Muted, MM2-ish rarity colours (the source's live map isn't reachable offline).
+-- Real MM2 rarity colours (from the game's own rarity table / GiveWeapon GUI).
+-- The trade + inventory UIs paint the ItemName PLATE with these; Common is
+-- forced to the game's grey (0.415686 ≈ RGB 106) wherever it renders.
 local Rarity = {
-	["Classic"]   = Color3.fromRGB(220, 220, 225),
-	["Common"]    = Color3.fromRGB(140, 140, 145),
-	["Uncommon"]  = Color3.fromRGB(80, 175, 95),
-	["Rare"]      = Color3.fromRGB(72, 128, 208),
-	["Legendary"] = Color3.fromRGB(150, 90, 205),
-	["Godly"]     = Color3.fromRGB(222, 150, 45),
-	["Ancient"]   = Color3.fromRGB(205, 75, 80),
-	["Divine"]    = Color3.fromRGB(205, 95, 150),
-	["Victim"]    = Color3.fromRGB(80, 190, 190),
-	["Unique"]    = Color3.fromRGB(210, 195, 70),
-	["Christmas"] = Color3.fromRGB(200, 70, 70),
-	["Halloween"] = Color3.fromRGB(210, 120, 45),
+	["Classic"]   = Color3.fromRGB(255, 255, 0),
+	["Common"]    = Color3.fromRGB(255, 255, 255),
+	["Uncommon"]  = Color3.fromRGB(85, 193, 202),
+	["Rare"]      = Color3.fromRGB(0, 255, 0),
+	["Legendary"] = Color3.fromRGB(255, 0, 0),
+	["Godly"]     = Color3.fromRGB(255, 0, 255),
+	["Ancient"]   = Color3.fromRGB(170, 0, 0),
+	["Divine"]    = Color3.fromRGB(255, 90, 160),
+	["Vintage"]   = Color3.fromRGB(0, 200, 220),
+	["Victim"]    = Color3.fromRGB(255, 140, 0),
+	["Unique"]    = Color3.fromRGB(230, 200, 60),
+	["Christmas"] = Color3.fromRGB(255, 40, 40),
+	["Halloween"] = Color3.fromRGB(255, 120, 0),
 }
+local RARITY_GREY = Color3.fromRGB(106, 106, 106)  -- Common plate (0.415686)
 
 local RarityValue = {
 	Classic=1, Common=2, Uncommon=3, Rare=4, Legendary=5,
@@ -1123,16 +1128,18 @@ local function renderOffer(sideKey, offerFrame)
 		if slot and (data or visual) then
 			local img  = (visual and visual.Image) or getImage(data and data.Image)
 			local name = (visual and visual.Name) or (data and (data.ItemName or data.Name)) or itemKey
-			local col  = (visual and visual.Color) or (data and Rarity[data.Rarity]) or Color3.new(1,1,1)
+			local rarity = data and data.Rarity
+			-- Exactly like the live UpdateTrade: the ItemName PLATE is the rarity
+			-- colour, grey for Common. (No bright label text — that was wrong.)
+			local plate = (rarity == "Common") and RARITY_GREY
+				or (rarity and Rarity[rarity]) or (visual and visual.Color) or RARITY_GREY
 			local chroma = (visual and visual.Chroma) or (data and data.Chroma ~= nil) or false
 			slot.Visible = true
 			setProp(slot, "Container.Icon", "Image", img)
 			setProp(slot, "ItemName.Label", "Text", name)
-			setProp(slot, "ItemName.Label", "TextColor3", col)
-			setProp(slot, "ItemName.RarityBar", "BackgroundColor3", col)
-			-- keep the name plate a neutral dark grey (don't flood it with the
-			-- bright rarity colour) so the coloured text stays readable.
-			setProp(slot, "ItemName", "BackgroundColor3", Color3.fromRGB(64, 64, 64))
+			setProp(slot, "ItemName.Label", "TextColor3", Color3.fromRGB(255, 255, 255))
+			setProp(slot, "ItemName.RarityBar", "BackgroundColor3", plate)
+			setProp(slot, "ItemName", "BackgroundColor3", plate)
 			setVisible(slot, "ItemName", true)
 			setProp(slot, "Container.Amount", "Text", (amount and amount > 1) and ("x" .. amount) or "")
 			setProp(slot, "Tags.Chroma", "Visible", chroma and true or false)
@@ -1774,15 +1781,16 @@ WStroke.Color = C_ACCENT; WStroke.Thickness = 1.5; WStroke.Transparency = 0.25; 
 local Bg = Instance.new("ImageLabel")
 Bg.Name = "Bg"; Bg.Size = UDim2.new(1, 0, 1, 0); Bg.BackgroundTransparency = 1
 Bg.Image = BG_IMAGE; Bg.ScaleType = Enum.ScaleType.Crop
-Bg.ImageTransparency = 0.74; Bg.ZIndex = 0; Bg.Parent = Window
+Bg.ImageTransparency = 0.15; Bg.ZIndex = 0; Bg.Parent = Window
+-- Scrim over the image so text stays readable, but light enough to SEE the image.
 local Overlay = Instance.new("Frame")
 Overlay.Size = UDim2.new(1, 0, 1, 0); Overlay.BackgroundColor3 = C_BG
-Overlay.BackgroundTransparency = 0.22; Overlay.BorderSizePixel = 0; Overlay.ZIndex = 0; Overlay.Parent = Window
+Overlay.BackgroundTransparency = 0.5; Overlay.BorderSizePixel = 0; Overlay.ZIndex = 0; Overlay.Parent = Window
 
 -- Sidebar (left).
 local Side = Instance.new("Frame")
 Side.Name = "Sidebar"; Side.Size = UDim2.new(0, 122, 1, 0)
-Side.BackgroundColor3 = C_SIDE; Side.BackgroundTransparency = 0.1
+Side.BackgroundColor3 = C_SIDE; Side.BackgroundTransparency = 0.35
 Side.BorderSizePixel = 0; Side.ZIndex = 2; Side.Parent = Window
 local Brand = Instance.new("TextLabel")
 Brand.Size = UDim2.new(1, -16, 0, 26); Brand.Position = UDim2.new(0, 12, 0, 12)
@@ -2015,9 +2023,12 @@ local _, setItemsToggle = makeRowToggle(pTrade, "Item picker", "open inventory t
 end)
 table.insert(onNewTrade, function() ItemsOpen = false; setItemsToggle(false) end)
 
-makeRowToggle(pTrade, "Add to Player 2 side", "off = your side (left) / on = right", false, function(on)
+local _, setP2Side = makeRowToggle(pTrade, "Add to Player 2 side", "off = your side (left) / on = right", false, function(on)
 	OfferMode = on and "Player2" or "Player1"
 end)
+-- Every fresh trade starts on YOUR side again (fixes: a "fake" P2-side trade
+-- left the toggle on, so the next real trade still filled the P2 side).
+table.insert(onNewTrade, function() OfferMode = "Player1"; setP2Side(false) end)
 
 --------------------------------------------------------------------------------
 -- PAGE 2 — Spawn (add game items into your inventory)
@@ -2096,14 +2107,77 @@ makeRowButton(pSpawn, "Diagnose data", "why catalog is real / fallback", "Diag",
 	task.spawn(applyRealData)
 end)
 
-local spawnRow = makeRow(pSpawn, "Spawn item", "tap to add it to your inventory")
-local SearchBox = Instance.new("TextBox")
-SearchBox.Size = UDim2.new(0, 118, 0, 30); SearchBox.Position = UDim2.new(1, -130, 0.5, -15)
-SearchBox.BackgroundColor3 = C_BG; SearchBox.Text = ""
-SearchBox.PlaceholderText = "search…"; SearchBox.PlaceholderColor3 = C_DIM
-SearchBox.TextColor3 = C_TXT; SearchBox.Font = Enum.Font.Gotham; SearchBox.TextSize = 12
-SearchBox.ClearTextOnFocus = false; SearchBox.BorderSizePixel = 0; SearchBox.ClipsDescendants = true
-SearchBox.ZIndex = 4; SearchBox.Parent = spawnRow; corner(SearchBox, 8); pad(SearchBox, 6)
+-- Add `amount` copies of a resolved catalog entry into the right inventory pane.
+local function spawnEntry(it, amount)
+	amount = math.max(1, math.floor(tonumber(amount) or 1))
+	local list = (it.cat == "Pets") and SpawnedPets or SpawnedWeapons
+	list[it.key] = (list[it.key] or 0) + amount
+	renderInventory()
+	return list[it.key]
+end
+
+-- Rank catalog matches for a typed name: exact key/name > prefix > contains.
+-- This is the "scanner" — you type what you want, it figures out the item.
+local function rankMatches(query)
+	query = tostring(query or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+	local out = {}
+	if query == "" then
+		for _, it in ipairs(spawnIndex) do
+			out[#out + 1] = it
+			if #out >= 50 then break end
+		end
+		return out
+	end
+	local scored = {}
+	for _, it in ipairs(spawnIndex) do
+		local n, k = it.name:lower(), tostring(it.key):lower()
+		local s
+		if n == query or k == query then s = 0
+		elseif n:sub(1, #query) == query or k:sub(1, #query) == query then s = 1
+		elseif n:find(query, 1, true) or k:find(query, 1, true) then s = 2 end
+		if s then scored[#scored + 1] = { it = it, s = s } end
+	end
+	table.sort(scored, function(a, b)
+		if a.s ~= b.s then return a.s < b.s end
+		return a.it.name:lower() < b.it.name:lower()
+	end)
+	for i = 1, math.min(50, #scored) do out[i] = scored[i].it end
+	return out
+end
+
+-- Row: item-name box + amount box + Spawn button (spawns the top match).
+local spawnRow = makeRow(pSpawn, "Spawn item", "type a name · pick amount · Spawn")
+local SpawnNameBox = Instance.new("TextBox")
+SpawnNameBox.Size = UDim2.new(0, 132, 0, 30); SpawnNameBox.Position = UDim2.new(1, -222, 0.5, -15)
+SpawnNameBox.BackgroundColor3 = C_BG; SpawnNameBox.Text = ""
+SpawnNameBox.PlaceholderText = "item name…"; SpawnNameBox.PlaceholderColor3 = C_DIM
+SpawnNameBox.TextColor3 = C_TXT; SpawnNameBox.Font = Enum.Font.Gotham; SpawnNameBox.TextSize = 12
+SpawnNameBox.TextXAlignment = Enum.TextXAlignment.Left
+SpawnNameBox.ClearTextOnFocus = false; SpawnNameBox.BorderSizePixel = 0; SpawnNameBox.ClipsDescendants = true
+SpawnNameBox.ZIndex = 4; SpawnNameBox.Parent = spawnRow; corner(SpawnNameBox, 8); pad(SpawnNameBox, 6)
+
+local AmountBox = Instance.new("TextBox")
+AmountBox.Size = UDim2.new(0, 40, 0, 30); AmountBox.Position = UDim2.new(1, -84, 0.5, -15)
+AmountBox.BackgroundColor3 = C_BG; AmountBox.Text = "1"
+AmountBox.PlaceholderText = "x1"; AmountBox.PlaceholderColor3 = C_DIM
+AmountBox.TextColor3 = C_TXT; AmountBox.Font = Enum.Font.GothamMedium; AmountBox.TextSize = 12
+AmountBox.TextXAlignment = Enum.TextXAlignment.Center
+AmountBox.ClearTextOnFocus = false; AmountBox.BorderSizePixel = 0
+AmountBox.ZIndex = 4; AmountBox.Parent = spawnRow; corner(AmountBox, 8)
+
+local SpawnBtn = Instance.new("TextButton")
+SpawnBtn.Size = UDim2.new(0, 36, 0, 30); SpawnBtn.Position = UDim2.new(1, -42, 0.5, -15)
+SpawnBtn.BackgroundColor3 = C_GREEN; SpawnBtn.Text = "＋"; SpawnBtn.TextColor3 = C_TXT
+SpawnBtn.Font = Enum.Font.GothamBold; SpawnBtn.TextSize = 16; SpawnBtn.BorderSizePixel = 0
+SpawnBtn.ZIndex = 4; SpawnBtn.Parent = spawnRow; corner(SpawnBtn, 8)
+
+-- Feedback line (what got spawned / not found), coloured by rarity.
+rowOrder = rowOrder + 1
+local SpawnMsg = Instance.new("TextLabel")
+SpawnMsg.Size = UDim2.new(1, 0, 0, 16); SpawnMsg.BackgroundTransparency = 1
+SpawnMsg.Text = ""; SpawnMsg.TextColor3 = C_DIM; SpawnMsg.Font = Enum.Font.GothamMedium
+SpawnMsg.TextSize = 12; SpawnMsg.TextXAlignment = Enum.TextXAlignment.Left
+SpawnMsg.ZIndex = 2; SpawnMsg.LayoutOrder = rowOrder; SpawnMsg.Parent = pSpawn
 
 rowOrder = rowOrder + 1
 local SpawnList = Instance.new("Frame")
@@ -2115,49 +2189,60 @@ local sll = Instance.new("UIListLayout")
 sll.Padding = UDim.new(0, 4); sll.SortOrder = Enum.SortOrder.LayoutOrder; sll.Parent = SpawnList
 pad(SpawnList, 6)
 
+local function announceSpawn(it, total)
+	SpawnMsg.Text = ("✓ %s  [%s]  → inventory  (x%d)"):format(it.name, tostring(it.rarity or "?"), total)
+	SpawnMsg.TextColor3 = (it.rarity == "Common") and C_TXT or (Rarity[it.rarity] or C_TXT)
+end
+
+-- Live results list: each match is a rarity-coloured button; tap = spawn `amount`.
 local function refreshSpawn(query)
 	for _, c in ipairs(SpawnList:GetChildren()) do
 		if c:IsA("TextButton") or c:IsA("TextLabel") then c:Destroy() end
 	end
-	query = tostring(query or ""):lower()
-	local shown = 0
-	for _, it in ipairs(spawnIndex) do
-		if shown >= 60 then break end
-		if query == "" or it.name:lower():find(query, 1, true) or tostring(it.key):lower():find(query, 1, true) then
-			shown = shown + 1
-			local b = Instance.new("TextButton")
-			b.Size = UDim2.new(1, 0, 0, 28); b.BackgroundColor3 = C_BTN
-			b.Text = "  " .. it.name .. "   +"
-			b.TextXAlignment = Enum.TextXAlignment.Left
-			b.TextColor3 = Rarity[it.rarity] or C_TXT
-			b.Font = Enum.Font.Gotham; b.TextSize = 12; b.BorderSizePixel = 0
-			b.ZIndex = 3; b.LayoutOrder = shown; b.Parent = SpawnList; corner(b, 6)
-			track(b.MouseButton1Click:Connect(function()
-				-- Add the item to YOUR inventory (real items are hidden). Open the
-				-- Item picker to see it; tap it there to add to the offer.
-				local list = (it.cat == "Pets") and SpawnedPets or SpawnedWeapons
-				list[it.key] = (list[it.key] or 0) + 1
-				renderInventory()
-				b.Text = "  " .. it.name .. "   ✓ x" .. list[it.key]
-			end))
-		end
+	local matches = rankMatches(query)
+	for i, it in ipairs(matches) do
+		local b = Instance.new("TextButton")
+		b.Size = UDim2.new(1, 0, 0, 28); b.BackgroundColor3 = C_BTN
+		b.Text = "  " .. it.name .. "   " .. tostring(it.rarity or "") .. "   ＋"
+		b.TextXAlignment = Enum.TextXAlignment.Left
+		b.TextColor3 = (it.rarity == "Common") and C_TXT or (Rarity[it.rarity] or C_TXT)
+		b.Font = Enum.Font.Gotham; b.TextSize = 12; b.BorderSizePixel = 0
+		b.ZIndex = 3; b.LayoutOrder = i; b.Parent = SpawnList; corner(b, 6)
+		track(b.MouseButton1Click:Connect(function()
+			local total = spawnEntry(it, AmountBox.Text)
+			announceSpawn(it, total)
+		end))
 	end
-	if shown == 0 then
+	if #matches == 0 then
 		local e = Instance.new("TextLabel")
 		e.Size = UDim2.new(1, 0, 0, 24); e.BackgroundTransparency = 1
 		e.Text = "no matches"; e.TextColor3 = C_DIM; e.Font = Enum.Font.Gotham
 		e.TextSize = 12; e.ZIndex = 3; e.Parent = SpawnList
 	end
 end
-track(SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
-	refreshSpawn(SearchBox.Text)
+
+-- Spawn button: resolve the typed name to its best match and spawn `amount`.
+track(SpawnBtn.MouseButton1Click:Connect(function()
+	local matches = rankMatches(SpawnNameBox.Text)
+	local it = matches[1]
+	if not it then
+		SpawnMsg.Text = "✗ no item matches \"" .. tostring(SpawnNameBox.Text) .. "\""
+		SpawnMsg.TextColor3 = C_RED
+		return
+	end
+	local total = spawnEntry(it, AmountBox.Text)
+	announceSpawn(it, total)
+end))
+
+track(SpawnNameBox:GetPropertyChangedSignal("Text"):Connect(function()
+	refreshSpawn(SpawnNameBox.Text)
 end))
 refreshSpawn("")
 
 -- When the real catalog/inventory finishes loading in the background, rebuild.
 onCatalogLoaded = function()
 	buildSpawnIndex()
-	refreshSpawn(SearchBox.Text)
+	refreshSpawn(SpawnNameBox.Text)
 	renderInventory()
 	CatLabel.Text = CatalogStatus
 end
