@@ -732,7 +732,7 @@ end
 local function tryGetSync(name)
 	local gsd = findGetSync()
 	if not gsd then lastSyncError = "GetSyncData not found"; return nil end
-	local data = invokeWithTimeout(gsd, name, 10)
+	local data = invokeWithTimeout(gsd, name, 6)
 	if type(data) == "table" then return data end
 	return nil
 end
@@ -760,13 +760,17 @@ local function mergeInto(dst, src)
 	return n
 end
 local function applyRealData()
+	-- Probe the live catalog first (short timeout). If the server never answers
+	-- this thread, fail fast and keep the embedded catalog — don't churn.
 	local realItems, realPets, realRar
-	for attempt = 1, 6 do
+	for attempt = 1, 3 do
 		realItems = realItems or tryGetSync("Item")
-		realPets  = realPets  or tryGetSync("Pets")
-		realRar   = realRar   or tryGetSync("Rarity")
 		if realItems then break end
-		task.wait(2)  -- give the server a moment, then retry
+		task.wait(1.5)  -- brief backoff, then retry the Item fetch
+	end
+	if realItems then
+		realPets = tryGetSync("Pets")
+		realRar  = tryGetSync("Rarity")
 	end
 	-- Merge (not replace): keep embedded items, add every live one on top.
 	local added = mergeInto(ItemDB, realItems) + mergeInto(PetDB, realPets)
@@ -2099,7 +2103,9 @@ local spawnIndex = {}
 local function buildSpawnIndex()
 	spawnIndex = {}
 	for k, v in pairs(ItemDB) do
-		if type(v) == "table" then
+		-- Only real, individually-tradeable weapons (Knife / Gun). This drops the
+		-- non-tradeable "Item Pack" / Misc bundles that showed as fake entries.
+		if type(v) == "table" and (v.ItemType == "Knife" or v.ItemType == "Gun") then
 			table.insert(spawnIndex, { key = k, name = tostring(v.ItemName or v.Name or k), cat = "Weapons", rarity = v.Rarity })
 		end
 	end
