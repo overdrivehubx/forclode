@@ -2295,15 +2295,28 @@ end
 --==============================================================================
 
 -- Render one side's offer (Player1 -> Offer1 frame, Player2 -> Offer2 frame).
+-- Robustly find + set a slot's item-name TextLabel, whatever the structure
+-- (ItemName.Label, or ItemName being the label itself, or a nested Label). This
+-- is what kills the leftover template text ("Battleaxe") in filled offer slots.
+local function setSlotLabelText(slot, text)
+	local nameFrame = slot:FindFirstChild("ItemName")
+	local label = (nameFrame and nameFrame:FindFirstChild("Label"))
+		or resolve(slot, "ItemName.Label")
+		or (nameFrame and nameFrame:IsA("TextLabel") and nameFrame)
+		or slot:FindFirstChild("Label", true)
+	if label and label:IsA("TextLabel") then pcall(function() label.Text = text end) end
+	return nameFrame, label
+end
+
 local function renderOffer(sideKey, offerFrame)
 	if not offerFrame then return end
 	local offers = DebugTradeTable[sideKey].Offer
 
-	-- Wipe the existing NewItem slots (exactly like the live UpdateTrade).
+	-- Wipe EVERY slot (any class), clearing name/icon so no template text lingers.
 	for _, frame in ipairs(offerFrame.Container:GetChildren()) do
-		if frame:IsA("Frame") then
+		if frame:IsA("GuiObject") then
 			setProp(frame, "Container.Icon", "Image", "")
-			setProp(frame, "ItemName.Label", "Text", "")
+			setSlotLabelText(frame, "")
 			setProp(frame, "Container.Amount", "Text", "")
 			setVisible(frame, "ItemName", false)
 			setProp(frame, "Tags.Chroma", "Visible", false)
@@ -2311,27 +2324,35 @@ local function renderOffer(sideKey, offerFrame)
 		end
 	end
 
+	-- Collect the slot frames in order (named NewItem1.. or otherwise), so we can
+	-- fill them by index without depending on the exact naming.
+	local slots = {}
+	for _, s in ipairs(offerFrame.Container:GetChildren()) do
+		if s:IsA("GuiObject") and (s:FindFirstChild("Container") or s:FindFirstChild("ItemName")) then
+			slots[#slots + 1] = s
+		end
+	end
+	table.sort(slots, function(a, b) return a.Name < b.Name end)
+
 	for i, entry in ipairs(offers) do
 		local itemKey, amount, category = entry[1], entry[2], entry[3]
-		local visual = entry.visual  -- copied straight from the clicked real slot
+		local visual = entry.visual
 		local db = Database[category] or ItemDB
 		local data = db[itemKey]
-		local slot = offerFrame.Container:FindFirstChild("NewItem" .. i)
+		local slot = slots[i]
 		if slot and (data or visual) then
 			local img  = (visual and visual.Image) or getImage(data and data.Image)
 			local name = (visual and visual.Name) or (data and (data.ItemName or data.Name)) or itemKey
 			local rarity = data and data.Rarity
-			-- Exactly like the live UpdateTrade: the ItemName PLATE is the rarity
-			-- colour, grey for Common. (No bright label text — that was wrong.)
 			local plate = (rarity == "Common") and RARITY_GREY
 				or (rarity and Rarity[rarity]) or (visual and visual.Color) or RARITY_GREY
 			local chroma = (visual and visual.Chroma) or (data and data.Chroma ~= nil) or false
 			slot.Visible = true
 			setProp(slot, "Container.Icon", "Image", img)
-			setProp(slot, "ItemName.Label", "Text", name)
+			local nameFrame = setSlotLabelText(slot, name)
 			setProp(slot, "ItemName.Label", "TextColor3", Color3.fromRGB(255, 255, 255))
 			setProp(slot, "ItemName.RarityBar", "BackgroundColor3", plate)
-			setProp(slot, "ItemName", "BackgroundColor3", plate)
+			if nameFrame and nameFrame:IsA("GuiObject") then pcall(function() nameFrame.BackgroundColor3 = plate end) end
 			setVisible(slot, "ItemName", true)
 			setProp(slot, "Container.Amount", "Text", (amount and amount > 1) and ("x" .. amount) or "")
 			setProp(slot, "Tags.Chroma", "Visible", chroma and true or false)
@@ -2345,8 +2366,8 @@ local function renderOffer(sideKey, offerFrame)
 					DebugTradeTable.Player2.Accepted = false
 					setVisible(TradeRoot, "Actions.Accept.Confirm", false)
 					setVisible(TradeRoot, "Actions.Accept.Cancel", false)
-					RenderTrade()  -- forward-declared below
-					if startAcceptCooldown then startAcceptCooldown() end  -- 6s cd on offer change
+					RenderTrade()
+					if startAcceptCooldown then startAcceptCooldown() end
 				end))
 			end
 		end
@@ -2913,13 +2934,21 @@ end
 -- slots absolutely; if there is no layout we add one so clones don't overlap).
 local function ensureLayout(container, cell)
 	for _, c in ipairs(container:GetChildren()) do
-		if c:IsA("UIGridLayout") or c:IsA("UIListLayout") then return end
+		if c:IsA("UIGridLayout") then
+			-- keep the game's grid but clamp huge cells so it doesn't look broken
+			local cs = c.CellSize
+			if cs.X.Offset > 130 or cs.Y.Offset > 130 or cs.X.Offset < 8 then
+				c.CellSize = UDim2.new(0, 84, 0, 96)
+			end
+			return
+		end
+		if c:IsA("UIListLayout") then return end
 	end
 	local grid = Instance.new("UIGridLayout")
-	local cx = (cell and cell.X > 4) and cell.X or 70
-	local cy = (cell and cell.Y > 4) and cell.Y or 70
+	local cx = (cell and cell.X > 8 and cell.X <= 130) and cell.X or 84
+	local cy = (cell and cell.Y > 8 and cell.Y <= 130) and cell.Y or 96
 	grid.CellSize = UDim2.new(0, cx, 0, cy)
-	grid.CellPadding = UDim2.new(0, 4, 0, 4)
+	grid.CellPadding = UDim2.new(0, 6, 0, 6)
 	grid.SortOrder = Enum.SortOrder.LayoutOrder
 	grid.Parent = container
 end
