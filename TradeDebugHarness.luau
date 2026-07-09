@@ -2688,33 +2688,36 @@ local function anyTemplateSlot()
 	return nil
 end
 
-local function findInventoryContainer(category)
-	-- Desktop (GUI2 Menu_Trade): the exact tabbed grids. Prefer these so spawned
-	-- items land in the real Weapons/Pets inventory panels shown in the trade UI.
+-- Resolve the trade GUI's own Weapons/Pets tab container (the "Add Items" grid),
+-- even when it is EMPTY offline. We fill it ourselves from the catalog.
+local function findTabContainer(category)
+	local items = ItemsPicker or (TradeGUI and resolve(TradeGUI, "Container.Items")) or nil
+	if items then
+		local tabs = items:FindFirstChild("Tabs") or items
+		local tab = tabs:FindFirstChild(category)  -- "Weapons" / "Pets"
+		if tab then
+			if tab:IsA("ScrollingFrame") then return tab end
+			return tab:FindFirstChildWhichIsA("ScrollingFrame") or tab
+		end
+	end
+	-- Desktop deep-path fallback.
 	local direct = (category == "Pets") and PetsFrame or InventoryFrame
-	if direct then
-		local tmpl
-		for _, slot in ipairs(direct:GetChildren()) do
-			if slot:IsA("GuiObject") and (slot:FindFirstChild("ItemName") or resolve(slot, "Container.Icon")) then
-				tmpl = slot; break
-			end
-		end
-		tmpl = tmpl or anyTemplateSlot()
-		if tmpl then return direct, tmpl end
-	end
-	-- Fallback: scan the picker for a category-matching real slot + its parent.
-	if ItemsPicker then
-		for _, slot in ipairs(ItemsPicker:GetDescendants()) do
-			local icon = slot:FindFirstChild("Icon") or resolve(slot, "Container.Icon")
-			local btn = resolve(slot, "Container.Button") or resolve(slot, "Container.ActionButton") or slot:FindFirstChild("Button")
-			if icon and icon:IsA("ImageLabel") and btn and btn:IsA("GuiButton") then
-				local isPet = (slot:FindFirstAncestor("Pets") or slot:FindFirstAncestor("PetsFrame")) ~= nil
-				if (category == "Pets") == isPet then
-					return slot.Parent, slot
-				end
-			end
+	return direct
+end
+
+local function findInventoryContainer(category)
+	local cont = findTabContainer(category)
+	if not cont then return nil, nil end
+	-- Template: an existing slot in the container, else any slot in the tree
+	-- (offer NewItem frames share the same shape and always exist).
+	local tmpl
+	for _, s in ipairs(cont:GetChildren()) do
+		if s:IsA("GuiObject") and (s:FindFirstChild("ItemName") or resolve(s, "Container.Icon")) then
+			tmpl = s; break
 		end
 	end
+	tmpl = tmpl or anyTemplateSlot()
+	if tmpl then return cont, tmpl end
 	return nil, nil
 end
 
@@ -2921,74 +2924,92 @@ local function ensureLayout(container, cell)
 	grid.Parent = container
 end
 
--- Fill the trade GUI's own "Add Items" grid with the real inventory (mirrored
--- clones) plus any spawned catalog items, so items show inside the trade panel
--- itself. Only touches the trade container — never the real inventory menu.
--- `pass` guards against wiping a container twice when Weapons/Pets share one.
-local function renderAddItems(category, collected, spawnedList, db, pass)
+-- The "Add Items" panel shows the FULL embedded catalog (no real-inventory
+-- copying), filtered by the search box, sorted by rarity. Tap = add to offer.
+local CurrentQuery = ""
+local ADD_CAP = 90            -- max slots per pane (search narrows it down)
+
+local function catalogArr(db, query)
+	local q = tostring(query or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+	local arr = {}
+	for key, v in pairs(db) do
+		if type(v) == "table" then
+			local nm = tostring(v.ItemName or v.Name or key)
+			if q == "" or nm:lower():find(q, 1, true) or tostring(key):lower():find(q, 1, true) then
+				arr[#arr + 1] = { key = key, name = nm, rarity = v.Rarity }
+			end
+		end
+	end
+	table.sort(arr, function(a, b)
+		local ra = RarityValue[a.rarity or "Common"] or 0
+		local rb = RarityValue[b.rarity or "Common"] or 0
+		if ra ~= rb then return ra > rb end
+		return a.name:lower() < b.name:lower()
+	end)
+	return arr
+end
+
+local function renderPaneCatalog(category, db, query)
 	local cache = getInvCache(category)
-	if not cache then return end
+	if not cache then return 0 end
 	local container, template = cache.container, cache.template
 	if category == "Weapons" then InvContainer = container end
 
-	if container:GetAttribute("__MHPass") ~= pass then
-		for _, c in ipairs(container:GetChildren()) do
-			if c:IsA("GuiObject") then c:Destroy() end
-		end
-		container:SetAttribute("__MHPass", pass)
-		container:SetAttribute("__MHOrder", 0)
-		ensureLayout(container, cache.cell)
-		-- NOTE: we deliberately do NOT touch CanvasSize/AutomaticCanvasSize here —
-		-- doing so shifted the phone trade layout. The game's own grid handles it.
+	for _, c in ipairs(container:GetChildren()) do
+		if c:IsA("GuiObject") then c:Destroy() end
+	end
+	ensureLayout(container, cache.cell)
+	if container:IsA("ScrollingFrame") then
+		pcall(function() container.AutomaticCanvasSize = Enum.AutomaticSize.Y end)
+		pcall(function() container.ScrollingEnabled = true end)
 	end
 
-	local function add(paint, key, visual)
-		local slot = template:Clone()
-		paint(slot)
-		local order = (container:GetAttribute("__MHOrder") or 0) + 1
-		container:SetAttribute("__MHOrder", order)
-		slot.LayoutOrder = order
-		slot.Parent = container
-		local btn = slotButton(slot)
-		if btn then
-			track(btn.MouseButton1Click:Connect(function()
-				offerItemLocal(key, category, visual)
-			end))
-		end
-	end
-
-	-- Real items (mirrored), sorted by name.
-	local arr = {}
-	for _, rec in pairs(collected[category] or {}) do table.insert(arr, rec) end
-	table.sort(arr, function(a, b) return tostring(a.visual.Name) < tostring(b.visual.Name) end)
-	for _, rec in ipairs(arr) do
-		add(function(slot) paintSlotVisual(slot, rec.visual, rec.amount) end, rec.key, rec.visual)
-	end
-
-	-- Spawned catalog items, sorted by rarity.
-	local sarr = {}
-	for key, amount in pairs(spawnedList) do table.insert(sarr, { key = key, amount = amount }) end
-	table.sort(sarr, function(a, b)
-		local ra = RarityValue[(db[a.key] or {}).Rarity or "Common"] or 0
-		local rb = RarityValue[(db[b.key] or {}).Rarity or "Common"] or 0
-		if ra ~= rb then return ra > rb end
-		return a.key < b.key
-	end)
-	for _, e in ipairs(sarr) do
+	local arr = catalogArr(db, query)
+	local shown = 0
+	for _, e in ipairs(arr) do
+		if shown >= ADD_CAP then break end
 		local data = db[e.key]
 		if data then
-			add(function(slot) paintSlot(slot, data, e.amount) end, e.key, catalogVisual(e.key, category))
+			local slot = template:Clone()
+			paintSlot(slot, data, 1)
+			slot.LayoutOrder = shown + 1
+			slot.Parent = container
+			local key = e.key
+			local vis = catalogVisual(key, category)
+			local btn = slotButton(slot)
+			if btn then
+				track(btn.MouseButton1Click:Connect(function()
+					offerItemLocal(key, category, vis)
+				end))
+			end
+			shown = shown + 1
 		end
 	end
+	return #arr
 end
 
-local RenderPass = 0
 local function renderInventory()
-	local collected, n = collectRealSlots()  -- hook real slots + gather their data
-	RenderPass = RenderPass + 1
-	pcall(renderAddItems, "Weapons", collected, SpawnedWeapons, ItemDB, RenderPass)
-	pcall(renderAddItems, "Pets", collected, SpawnedPets, PetDB, RenderPass)
-	return n
+	pcall(renderPaneCatalog, "Weapons", ItemDB, CurrentQuery)
+	pcall(renderPaneCatalog, "Pets", PetDB, CurrentQuery)
+end
+
+-- Wire the trade's native search box (once) so typing filters the Add Items grid.
+local function wireSearchBox()
+	local root = ItemsPicker or (TradeGUI and resolve(TradeGUI, "Container.Items"))
+	if not root or root:GetAttribute("__MHSearchWired") then return end
+	local box = root:FindFirstChild("SearchText", true)
+	if not (box and box:IsA("TextBox")) then
+		for _, d in ipairs(root:GetDescendants()) do
+			if d:IsA("TextBox") then box = d; break end
+		end
+	end
+	if box and box:IsA("TextBox") then
+		root:SetAttribute("__MHSearchWired", true)
+		track(box:GetPropertyChangedSignal("Text"):Connect(function()
+			CurrentQuery = tostring(box.Text)
+			renderInventory()
+		end))
+	end
 end
 
 --==============================================================================
@@ -3080,7 +3101,8 @@ local function openItemsPicker()
 	-- Phone: the picker replaces the offers (they'd overlap on the small screen).
 	-- Desktop: the inventory sits beside the offers, so keep BOTH visible.
 	if IsPhone and TradeRoot then TradeRoot.Visible = false end
-	renderInventory()  -- captures + reveals the inventory container, renders spawned
+	wireSearchBox()
+	renderInventory()  -- fill the Add Items grid from the full catalog
 	if InvContainer then revealAncestors(InvContainer) end
 	if InventoryFrame then revealAncestors(InventoryFrame) end
 end
@@ -3665,23 +3687,20 @@ makeRowButton(pSpawn, "Dump slots", "show real inventory slot structure", "Dump"
 	Diag.Visible = true
 end)
 
--- Hook the player's REAL in-game inventory slots so tapping one adds it to the
--- offer. Leaves the game's own inventory (items, layout, scrolling) untouched.
-makeRowButton(pSpawn, "Link real inventory", "tap your real items to add them", "Link", C_GREEN, function()
-	local n = renderInventory()
-	CatLabel.Text = (n and n > 0)
-		and ("real inventory linked: " .. n .. " item(s) — shown in Add Items; tap to add")
-		or "no real item slots found — open your inventory/backpack in-game, then Link again"
-	CatLabel.TextColor3 = (n and n > 0) and C_GREEN or C_RED
+-- Open the "Add Items" panel — the full catalog, searchable, tap to add.
+makeRowButton(pSpawn, "Open Add Items", "browse & tap the whole catalog", "Open", C_GREEN, function()
+	openItemsPicker()
+	CatLabel.Text = ("Add Items: %d weapons + %d pets — search & tap to add"):format(
+		countKeys(ItemDB), countKeys(PetDB))
+	CatLabel.TextColor3 = C_GREEN
 end)
 
--- Add `amount` copies of a resolved catalog entry into the right inventory pane.
+-- Quick-add: put `amount` copies of the resolved item straight into the offer.
 local function spawnEntry(it, amount)
 	amount = math.max(1, math.floor(tonumber(amount) or 1))
-	local list = (it.cat == "Pets") and SpawnedPets or SpawnedWeapons
-	list[it.key] = (list[it.key] or 0) + amount
-	renderInventory()
-	return list[it.key]
+	local vis = catalogVisual(it.key, it.cat)
+	for _ = 1, amount do offerItemLocal(it.key, it.cat, vis) end
+	return amount
 end
 
 -- Rank catalog matches for a typed name: exact key/name > prefix > contains.
@@ -3758,7 +3777,7 @@ sll.Padding = UDim.new(0, 4); sll.SortOrder = Enum.SortOrder.LayoutOrder; sll.Pa
 pad(SpawnList, 6)
 
 local function announceSpawn(it, total)
-	SpawnMsg.Text = ("✓ %s  [%s]  → inventory  (x%d)"):format(it.name, tostring(it.rarity or "?"), total)
+	SpawnMsg.Text = ("✓ %s  [%s]  → added to offer  (x%d)"):format(it.name, tostring(it.rarity or "?"), total)
 	SpawnMsg.TextColor3 = (it.rarity == "Common") and C_TXT or (Rarity[it.rarity] or C_TXT)
 end
 
