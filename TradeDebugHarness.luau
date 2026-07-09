@@ -166,19 +166,20 @@ end
 -- offers render with authentic art, names and rarity colours while offline.
 local AssetURL = "http://www.roblox.com/Thumbs/Asset.ashx?format=png&width=250&height=250&assetId="
 
+-- Muted, MM2-ish rarity colours (the source's live map isn't reachable offline).
 local Rarity = {
-	["Classic"]   = Color3.fromRGB(255, 255, 255),
-	["Common"]    = Color3.fromRGB(106, 106, 106),
-	["Uncommon"]  = Color3.fromRGB(0, 170, 0),
-	["Rare"]      = Color3.fromRGB(0, 112, 221),
-	["Legendary"] = Color3.fromRGB(163, 53, 238),
-	["Godly"]     = Color3.fromRGB(255, 128, 0),
-	["Ancient"]   = Color3.fromRGB(255, 0, 76),
-	["Divine"]    = Color3.fromRGB(255, 0, 128),
-	["Victim"]    = Color3.fromRGB(0, 255, 255),
-	["Unique"]    = Color3.fromRGB(255, 255, 0),
-	["Christmas"] = Color3.fromRGB(255, 0, 0),
-	["Halloween"] = Color3.fromRGB(255, 128, 0),
+	["Classic"]   = Color3.fromRGB(220, 220, 225),
+	["Common"]    = Color3.fromRGB(140, 140, 145),
+	["Uncommon"]  = Color3.fromRGB(80, 175, 95),
+	["Rare"]      = Color3.fromRGB(72, 128, 208),
+	["Legendary"] = Color3.fromRGB(150, 90, 205),
+	["Godly"]     = Color3.fromRGB(222, 150, 45),
+	["Ancient"]   = Color3.fromRGB(205, 75, 80),
+	["Divine"]    = Color3.fromRGB(205, 95, 150),
+	["Victim"]    = Color3.fromRGB(80, 190, 190),
+	["Unique"]    = Color3.fromRGB(210, 195, 70),
+	["Christmas"] = Color3.fromRGB(200, 70, 70),
+	["Halloween"] = Color3.fromRGB(210, 120, 45),
 }
 
 local RarityValue = {
@@ -1076,7 +1077,9 @@ local function renderOffer(sideKey, offerFrame)
 			setProp(slot, "ItemName.Label", "Text", name)
 			setProp(slot, "ItemName.Label", "TextColor3", col)
 			setProp(slot, "ItemName.RarityBar", "BackgroundColor3", col)
-			setProp(slot, "ItemName", "BackgroundColor3", col)
+			-- keep the name plate a neutral dark grey (don't flood it with the
+			-- bright rarity colour) so the coloured text stays readable.
+			setProp(slot, "ItemName", "BackgroundColor3", Color3.fromRGB(64, 64, 64))
 			setVisible(slot, "ItemName", true)
 			setProp(slot, "Container.Amount", "Text", (amount and amount > 1) and ("x" .. amount) or "")
 			setProp(slot, "Tags.Chroma", "Visible", chroma and true or false)
@@ -1226,6 +1229,18 @@ local function stopAcceptCooldown()
 	cooldownToken = cooldownToken + 1
 	CooldownRunning = false
 	setVisible(TradeRoot, "Actions.Accept.Cooldown", false)
+end
+
+-- Build the offer "visual" for a catalog item (real image/name/rarity colour).
+local function catalogVisual(key, category)
+	local data = ((category == "Pets") and PetDB or ItemDB)[key]
+	if not data then return nil end
+	return {
+		Image  = getImage(data.Image),
+		Name   = data.ItemName or data.Name or key,
+		Color  = Rarity[data.Rarity] or Color3.fromRGB(220, 220, 225),
+		Chroma = data.Chroma == true,
+	}
 end
 
 -- Offer an item into whichever side OfferMode currently targets. `visual` (from
@@ -2026,7 +2041,7 @@ makeRowButton(pSpawn, "Diagnose data", "why catalog is real / fallback", "Diag",
 	task.spawn(applyRealData)
 end)
 
-local spawnRow = makeRow(pSpawn, "Spawn item", "search the game catalog, tap +")
+local spawnRow = makeRow(pSpawn, "Spawn item", "tap to add it to the current offer")
 local SearchBox = Instance.new("TextBox")
 SearchBox.Size = UDim2.new(0, 118, 0, 30); SearchBox.Position = UDim2.new(1, -130, 0.5, -15)
 SearchBox.BackgroundColor3 = C_BG; SearchBox.Text = ""
@@ -2052,7 +2067,7 @@ local function refreshSpawn(query)
 	query = tostring(query or ""):lower()
 	local shown = 0
 	for _, it in ipairs(spawnIndex) do
-		if shown >= 40 then break end
+		if shown >= 60 then break end
 		if query == "" or it.name:lower():find(query, 1, true) or tostring(it.key):lower():find(query, 1, true) then
 			shown = shown + 1
 			local b = Instance.new("TextButton")
@@ -2063,8 +2078,9 @@ local function refreshSpawn(query)
 			b.Font = Enum.Font.Gotham; b.TextSize = 12; b.BorderSizePixel = 0
 			b.ZIndex = 3; b.LayoutOrder = shown; b.Parent = SpawnList; corner(b, 6)
 			track(b.MouseButton1Click:Connect(function()
-				local ok = spawnItemSlot(it.key, it.cat)
-				b.Text = "  " .. it.name .. (ok and "   ✓ added" or "   ! open picker first")
+				-- Add straight into the current offer side with real visuals.
+				offerItemLocal(it.key, it.cat, catalogVisual(it.key, it.cat))
+				b.Text = "  " .. it.name .. "   ✓ → " .. OfferMode:gsub("Player", "P")
 			end))
 		end
 	end
