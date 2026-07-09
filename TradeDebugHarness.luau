@@ -936,13 +936,15 @@ local function showRequestModal(player2Name, isIncoming)
 		warn("[TradeDebug] TradeRequest frame not found in PlayerGui — cannot show request.")
 		return
 	end
+	-- Always bring the request on-screen so it actually appears (on phone this
+	-- also un-hides the leaderboard/Waiting screen it lives in). Reveal ancestors
+	-- FIRST, then configureRequest sets Visible + shows exactly one variant.
+	revealAncestors(RequestFrame)
 	configureRequest(player2Name, isIncoming)
+	-- On phone additionally light the "+" notification badge.
 	if IsPhone then
 		local badge = findPlusBadge()
 		if badge then pcall(function() badge.Visible = true end) end
-		-- Do NOT reveal ancestors: the request appears when the leaderboard opens.
-	else
-		revealAncestors(RequestFrame)
 	end
 end
 
