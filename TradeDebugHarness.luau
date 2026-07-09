@@ -1676,6 +1676,31 @@ local function slotAmount(d)
 	return 1
 end
 
+-- A slot belongs to a SHOP / crate / currency screen (not the player's owned
+-- inventory) if an ancestor is named like a shop or it carries a price element.
+-- This keeps donation/godly-for-1699 items out of the mirrored inventory.
+local SHOP_WORDS = { "shop", "store", "purchase", "crate", "unbox",
+	"gamepass", "robux", "gemshop", "market", "premium", "recycl", "dealer" }
+local function looksLikeShop(d)
+	local a, depth = d.Parent, 0
+	while a and depth < 14 do
+		local ln = string.lower(a.Name)
+		for _, w in ipairs(SHOP_WORDS) do
+			if string.find(ln, w, 1, true) then return true end
+		end
+		a, depth = a.Parent, depth + 1
+	end
+	for _, t in ipairs(d:GetDescendants()) do
+		local ln = string.lower(t.Name)
+		if ln == "price" or ln == "cost" or ln == "gems" or ln == "robux"
+			or ln == "coins" or string.find(ln, "gemamount", 1, true)
+			or string.find(ln, "price", 1, true) then
+			return true
+		end
+	end
+	return false
+end
+
 -- Scan PlayerGui for the player's REAL inventory slots WHEREVER the game
 -- rendered them (the big Weapons/Pets menu holds ~200 slots; the trade GUI's
 -- own inventory may hold only a couple). We (a) hook each real slot in place so
@@ -1693,7 +1718,7 @@ local function collectRealSlots()
 				if d:FindFirstAncestor(nm) then inOffer = true; break end
 			end
 			local img = (not inOffer) and slotIconImage(d) or nil
-			if img then
+			if img and not looksLikeShop(d) then
 				local nameLabel = slotNameLabel(d)
 				local known = ItemDB[d.Name] or PetDB[d.Name]
 				-- The item's identity = its display name (unique per item), NOT the
@@ -1771,9 +1796,8 @@ local function renderAddItems(category, collected, spawnedList, db, pass)
 		container:SetAttribute("__MHPass", pass)
 		container:SetAttribute("__MHOrder", 0)
 		ensureLayout(container, cache.cell)
-		if container:IsA("ScrollingFrame") then
-			pcall(function() container.AutomaticCanvasSize = Enum.AutomaticSize.Y end)
-		end
+		-- NOTE: we deliberately do NOT touch CanvasSize/AutomaticCanvasSize here —
+		-- doing so shifted the phone trade layout. The game's own grid handles it.
 	end
 
 	local function add(paint, key, visual)
