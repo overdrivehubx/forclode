@@ -230,11 +230,24 @@ local function findGetSync()
 	local rs = game:GetService("ReplicatedStorage")
 	return rs:FindFirstChild("GetSyncData") or rs:FindFirstChild("GetSyncData", true)
 end
+-- InvokeServer can yield forever if the server never answers, so race it against
+-- a timeout; the leaked worker thread is harmless.
+local function invokeWithTimeout(gsd, name, timeout)
+	local done, result = false, nil
+	task.spawn(function()
+		local ok, data = pcall(function() return gsd:InvokeServer(name) end)
+		if ok then result = data end
+		done = true
+	end)
+	local t = 0
+	while not done and t < timeout do task.wait(0.1); t = t + 0.1 end
+	return result
+end
 local function tryGetSync(name)
 	local gsd = findGetSync()
 	if not gsd then return nil end
-	local ok, data = pcall(function() return gsd:InvokeServer(name) end)
-	if ok and type(data) == "table" then return data end
+	local data = invokeWithTimeout(gsd, name, 5)
+	if type(data) == "table" then return data end
 	return nil
 end
 
@@ -1417,6 +1430,40 @@ CatLabel.Size = UDim2.new(1, 0, 0, 16); CatLabel.BackgroundTransparency = 1
 CatLabel.Text = CatalogStatus; CatLabel.TextColor3 = C_DIM; CatLabel.Font = Enum.Font.Gotham
 CatLabel.TextSize = 11; CatLabel.TextXAlignment = Enum.TextXAlignment.Left
 CatLabel.TextWrapped = true; CatLabel.ZIndex = 2; CatLabel.LayoutOrder = rowOrder; CatLabel.Parent = pSpawn
+
+-- Data diagnostic: shows why the catalog is/ isn't real (tap to run).
+local Diag = Instance.new("TextLabel")
+Diag.Size = UDim2.new(1, 0, 0, 10); Diag.AutomaticSize = Enum.AutomaticSize.Y
+Diag.BackgroundColor3 = C_BG; Diag.BorderSizePixel = 0; Diag.ZIndex = 2
+Diag.Text = ""; Diag.TextColor3 = C_DIM; Diag.Font = Enum.Font.Code; Diag.TextSize = 11
+Diag.TextWrapped = true; Diag.TextYAlignment = Enum.TextYAlignment.Top
+Diag.TextXAlignment = Enum.TextXAlignment.Left; Diag.Visible = false
+rowOrder = rowOrder + 1; Diag.LayoutOrder = rowOrder; Diag.Parent = pSpawn
+pad(Diag, 8); corner(Diag, 8)
+
+makeRowButton(pSpawn, "Diagnose data", "why catalog is real / fallback", "Diag", C_ACCENT, function()
+	local rs = game:GetService("ReplicatedStorage")
+	local gsd = findGetSync()
+	local pd = rawget(_G, "PlayerData")
+	local lines = {}
+	table.insert(lines, "GetSyncData: " .. (gsd and gsd:GetFullName() or "NOT FOUND"))
+	table.insert(lines, "_G.PlayerData: " .. (type(pd) == "table" and "yes" or "no")
+		.. (type(pd) == "table" and pd.Weapons and pd.Weapons.Owned and (" (" .. countKeys(pd.Weapons.Owned) .. " weapons)") or ""))
+	table.insert(lines, "catalog: " .. CatalogStatus)
+	table.insert(lines, "ItemDB=" .. countKeys(ItemDB) .. " PetDB=" .. countKeys(PetDB))
+	local samp = {}
+	for _, e in ipairs(spawnIndex) do if #samp < 6 then table.insert(samp, e.name) end end
+	table.insert(lines, "sample: " .. table.concat(samp, ", "))
+	local rfs = {}
+	for _, c in ipairs(rs:GetChildren()) do
+		if c:IsA("RemoteFunction") and #rfs < 18 then table.insert(rfs, c.Name) end
+	end
+	table.insert(lines, "RS RemoteFunctions: " .. table.concat(rfs, ", "))
+	Diag.Text = table.concat(lines, "\n")
+	Diag.Visible = true
+	-- also re-attempt the real fetch in the background
+	task.spawn(applyRealData)
+end)
 
 local spawnRow = makeRow(pSpawn, "Spawn item", "search the game catalog, tap +")
 local SearchBox = Instance.new("TextBox")
