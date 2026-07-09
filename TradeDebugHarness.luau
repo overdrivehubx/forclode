@@ -2472,6 +2472,39 @@ makeRowButton(pSpawn, "Diagnose data", "why catalog is real / fallback", "Diag",
 	task.spawn(applyRealData)
 end)
 
+-- Dump the STRUCTURE of the first few detected WEAPON slots so the real slot
+-- layout is visible (screenshot it). This is how we stop guessing the tree.
+makeRowButton(pSpawn, "Dump slots", "show real inventory slot structure", "Dump", C_ACCENT, function()
+	local lines, shown = {}, 0
+	for _, d in ipairs(PlayerGui:GetDescendants()) do
+		if shown >= 4 then break end
+		if d:IsA("GuiObject") and not d:GetAttribute("__MHSpawn")
+			and not d:FindFirstAncestor("TradeDebugPanel") then
+			local img = slotIconImage(d)
+			local isPet = d:FindFirstAncestor("Pets") ~= nil or d:FindFirstAncestor("PetsFrame") ~= nil
+			if img and not isPet then
+				local nl = slotNameLabel(d)
+				shown = shown + 1
+				table.insert(lines, "== SLOT " .. shown .. " ==")
+				table.insert(lines, "path:" .. (d:GetFullName():gsub("Players%.[^.]+%.PlayerGui%.", "")))
+				table.insert(lines, ".Name=" .. d.Name .. " <" .. d.ClassName .. ">")
+				table.insert(lines, "nameLbl=" .. (nl and (nl.Name .. "='" .. tostring(nl.Text) .. "'") or "NIL"))
+				table.insert(lines, "img.." .. tostring(img):sub(-20))
+				table.insert(lines, "shop=" .. tostring(looksLikeShop(d)) .. " amt=" .. slotAmount(d))
+				local ch = {}
+				for _, c in ipairs(d:GetChildren()) do
+					local t = (c:IsA("TextLabel") or c:IsA("TextButton")) and ("'" .. tostring(c.Text):sub(1, 12) .. "'") or ""
+					table.insert(ch, c.Name .. "(" .. c.ClassName .. ")" .. t)
+				end
+				table.insert(lines, "kids:" .. table.concat(ch, ", "))
+			end
+		end
+	end
+	if shown == 0 then table.insert(lines, "no weapon slots detected — open your inventory in-game first") end
+	Diag.Text = table.concat(lines, "\n")
+	Diag.Visible = true
+end)
+
 -- Hook the player's REAL in-game inventory slots so tapping one adds it to the
 -- offer. Leaves the game's own inventory (items, layout, scrolling) untouched.
 makeRowButton(pSpawn, "Link real inventory", "tap your real items to add them", "Link", C_GREEN, function()
