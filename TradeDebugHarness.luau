@@ -901,23 +901,33 @@ local function readSlotVisual(slot)
 	}
 end
 
--- Hook the game's OWN inventory slots (already populated with real items) so a
--- tap offers that item by copying its visuals. Used when there's no catalog.
-local function hookGameSlots(frame, category)
-	if not frame then return end
-	for _, slot in ipairs(frame:GetChildren()) do
-		if slot:IsA("GuiObject") and (resolve(slot, "Container.Icon") or slot:FindFirstChild("Icon", true))
-			and not slot:GetAttribute("__MHHooked") then
-			slot:SetAttribute("__MHHooked", true)
-			local button = resolve(slot, "Container.Button") or resolve(slot, "Container.ActionButton")
-				or slot:FindFirstChildWhichIsA("GuiButton") or slot:FindFirstChildWhichIsA("GuiButton", true)
-			if button and button:IsA("GuiButton") then
-				trackRender(button.MouseButton1Click:Connect(function()
+-- Hook the game's OWN inventory slots so a tap offers that item by copying its
+-- visuals. Name-agnostic: scans the whole item picker for any frame that has
+-- BOTH an icon and a button (a real slot), so it works on renamed builds.
+local function hookAllInventorySlots()
+	local scope = ItemsPicker or TradeGUI
+	if not scope then return end
+	for _, slot in ipairs(scope:GetDescendants()) do
+		if slot:IsA("GuiObject") and not slot:GetAttribute("__MHHooked") then
+			local icon = slot:FindFirstChild("Icon") or resolve(slot, "Container.Icon")
+			local btn = resolve(slot, "Container.Button") or resolve(slot, "Container.ActionButton")
+				or slot:FindFirstChild("Button")
+			if icon and icon:IsA("ImageLabel") and btn and btn:IsA("GuiButton") then
+				slot:SetAttribute("__MHHooked", true)
+				local category = (slot:FindFirstAncestor("Pets") or slot:FindFirstAncestor("PetsFrame")) and "Pets" or "Weapons"
+				trackRender(btn.MouseButton1Click:Connect(function()
 					offerItemLocal(slot.Name, category, readSlotVisual(slot))
 				end))
 			end
 		end
 	end
+end
+
+-- Re-hook whenever the game adds new inventory slots.
+if ItemsPicker then
+	track(ItemsPicker.DescendantAdded:Connect(function()
+		task.defer(hookAllInventorySlots)
+	end))
 end
 
 local function renderInventory()
@@ -927,8 +937,7 @@ local function renderInventory()
 		renderInventoryPane(PetsFrame, OwnedPets, PetDB, "Pets")
 	else
 		-- No catalog: leave the game's real inventory in place and just hook it.
-		hookGameSlots(InventoryFrame, "Weapons")
-		hookGameSlots(PetsFrame, "Pets")
+		hookAllInventorySlots()
 	end
 end
 
@@ -1015,12 +1024,10 @@ end
 local function openItemsPicker()
 	if ItemsPicker then
 		revealAncestors(ItemsPicker)
+		revealSubtree(ItemsPicker)  -- show the real inventory regardless of renamed frames
 		ItemsPicker.Visible = true
 	end
 	if TradeRoot then TradeRoot.Visible = false end
-	-- Default to the Weapons tab and make its scroll frame + content visible.
-	setVisible(TradeGUI, "Container.Items.Main.Weapons", true)
-	setVisible(TradeGUI, "Container.Items.Main.Pets", false)
 	if InventoryFrame then revealAncestors(InventoryFrame) end
 	renderInventory()
 end
@@ -1523,6 +1530,16 @@ makeRowButton(pSpawn, "Diagnose data", "why catalog is real / fallback", "Diag",
 		if c:IsA("RemoteFunction") and #rfs < 18 then table.insert(rfs, c.Name) end
 	end
 	table.insert(lines, "RS RemoteFunctions: " .. table.concat(rfs, ", "))
+	-- Count hookable inventory slots currently in the picker.
+	local nslots = 0
+	if ItemsPicker then
+		for _, s in ipairs(ItemsPicker:GetDescendants()) do
+			local icon = s:FindFirstChild("Icon") or resolve(s, "Container.Icon")
+			local btn = resolve(s, "Container.Button") or resolve(s, "Container.ActionButton") or s:FindFirstChild("Button")
+			if icon and icon:IsA("ImageLabel") and btn and btn:IsA("GuiButton") then nslots = nslots + 1 end
+		end
+	end
+	table.insert(lines, "ItemsPicker: " .. (ItemsPicker and ItemsPicker:GetFullName() or "nil") .. " | slots=" .. nslots)
 	Diag.Text = table.concat(lines, "\n")
 	Diag.Visible = true
 	-- also re-attempt the real fetch in the background
