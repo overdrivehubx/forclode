@@ -3716,6 +3716,45 @@ makeRowButton(pSpawn, "Dump slots", "show real inventory slot structure", "Dump"
 	Diag.Visible = true
 end)
 
+-- Definitive GetSyncData probe: call it for real (no short race) and stream the
+-- outcome. If we see "'Item' OK: N keys", the live catalog IS reachable and we
+-- can build the whole thing from it. If it just hangs, the server ignores us.
+makeRowButton(pSpawn, "Test live data", "probe GetSyncData for real", "Test", C_ACCENT, function()
+	local rs = game:GetService("ReplicatedStorage")
+	local lines = {}
+	local function show() Diag.Text = table.concat(lines, "\n"); Diag.Visible = true end
+	local rfs = {}
+	for _, c in ipairs(rs:GetDescendants()) do
+		if c:IsA("RemoteFunction") then rfs[#rfs + 1] = c.Name; if #rfs >= 25 then break end end
+	end
+	lines[#lines + 1] = "RemoteFunctions: " .. table.concat(rfs, ", ")
+	local gsd = findGetSync()
+	lines[#lines + 1] = "GetSyncData: " .. (gsd and gsd:GetFullName() or "NOT FOUND")
+	show()
+	if not gsd then return end
+	_G.__MHlive = {}
+	for _, arg in ipairs({ "Item", "Rarity", "Pets" }) do
+		lines[#lines + 1] = "calling GetSyncData('" .. arg .. "') ..."
+		show()
+		task.spawn(function()
+			local t0 = os.clock()
+			local ok, data = pcall(function() return gsd:InvokeServer(arg) end)
+			local dt = string.format("%.1fs", os.clock() - t0)
+			local m
+			if not ok then m = "  '" .. arg .. "' ERR (" .. dt .. "): " .. tostring(data)
+			elseif type(data) == "table" then m = "  '" .. arg .. "' OK: " .. countKeys(data) .. " keys (" .. dt .. ")"
+			else m = "  '" .. arg .. "' -> " .. typeof(data) .. " (" .. dt .. ")" end
+			lines[#lines + 1] = m
+			_G.__MHlive[arg] = data
+			show()
+		end)
+	end
+	task.delay(20, function()
+		lines[#lines + 1] = "(no OK/ERR after 20s = server is ignoring the call)"
+		show()
+	end)
+end)
+
 -- Open the "Add Items" panel — the full catalog, searchable, tap to add.
 makeRowButton(pSpawn, "Open Add Items", "browse & tap the whole catalog", "Open", C_GREEN, function()
 	openItemsPicker()
