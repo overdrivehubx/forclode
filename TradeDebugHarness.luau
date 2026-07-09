@@ -1656,7 +1656,7 @@ end
 --==============================================================================
 -- Background image: upload your image to Roblox, then paste its decal/image
 -- asset id below (keep the "rbxassetid://" prefix). Leave 0 for no image.
-local BG_IMAGE = "rbxassetid://0"
+local BG_IMAGE = "rbxassetid://136747514517812"
 
 -- Grey-blue palette (with a soft blue neon accent, like the reference layout).
 local C_BG     = Color3.fromRGB(22, 27, 38)    -- window base
