@@ -3603,50 +3603,51 @@ end)
 
 -- Dump the STRUCTURE of the first few detected WEAPON slots so the real slot
 -- layout is visible (screenshot it). This is how we stop guessing the tree.
-makeRowButton(pSpawn, "Dump slots", "show real inventory slot structure", "Dump", C_ACCENT, function()
+makeRowButton(pSpawn, "Dump slots", "show inventory container + slot", "Dump", C_ACCENT, function()
 	local lines = {}
 	local function kidsOf(node)
 		local ch = {}
 		for _, c in ipairs(node:GetChildren()) do
 			local t = (c:IsA("TextLabel") or c:IsA("TextButton") or c:IsA("TextBox"))
-				and ("'" .. tostring(c.Text):sub(1, 12) .. "'") or ""
+				and ("'" .. tostring(c.Text):sub(1, 10) .. "'") or ""
 			table.insert(ch, c.Name .. "(" .. c.ClassName .. ")" .. t)
 		end
 		return table.concat(ch, ", ")
 	end
-	-- Walk the trade GUI's own inventory tabs (Container.Items.Tabs.*).
-	local items = TradeGUI and (resolve(TradeGUI, "Container.Items") or ffc(TradeGUI, "Items"))
-	local tabs = items and (items:FindFirstChild("Tabs") or items)
-	if not tabs then
-		Diag.Text = "no Container.Items(.Tabs) under " .. (TradeGUI and TradeGUI.Name or "nil")
-		Diag.Visible = true; return
-	end
-	local tn = {}
-	for _, c in ipairs(tabs:GetChildren()) do tn[#tn + 1] = c.Name end
-	table.insert(lines, "Tabs: " .. table.concat(tn, ", "))
-	for _, tab in ipairs(tabs:GetChildren()) do
-		if tab:IsA("GuiObject") and tab.Name ~= "Search" then
-			table.insert(lines, "── TAB " .. tab.Name .. " ──")
-			local cnt = 0
-			for _, s in ipairs(tab:GetDescendants()) do
-				if cnt >= 2 then break end
-				local img = slotIconImage(s)
-				local nm = slotNameLabel(s)
-				if img and nm then
-					cnt = cnt + 1
-					table.insert(lines, " slot=" .. s.Name .. "<" .. s.ClassName .. ">"
-						.. " parent=" .. s.Parent.Name)
-					table.insert(lines, "  nameLbl=" .. nm.Name .. "='" .. tostring(nm.Text) .. "'")
-					table.insert(lines, "  kids:" .. kidsOf(s))
-					local cont = s:FindFirstChild("Container")
-					if cont then table.insert(lines, "  Container:" .. kidsOf(cont)) end
-					local inm = s:FindFirstChild("ItemName")
-					if inm then table.insert(lines, "  ItemName:" .. kidsOf(inm)) end
-				end
-			end
-			if cnt == 0 then table.insert(lines, " (no icon+name slots)") end
+	-- The container we actually render the inventory into.
+	local cont = InvContainer
+	if cont then
+		local sz = cont.AbsoluteSize
+		table.insert(lines, "InvContainer: " .. cont:GetFullName():gsub("Players%.[^.]+%.PlayerGui%.", ""))
+		table.insert(lines, ("  <%s>  size=%dx%d"):format(cont.ClassName, math.floor(sz.X), math.floor(sz.Y)))
+		local lay
+		for _, c in ipairs(cont:GetChildren()) do
+			if c:IsA("UIGridLayout") or c:IsA("UIListLayout") then lay = c break end
 		end
+		if lay then
+			local cs = lay:IsA("UIGridLayout") and lay.CellSize or nil
+			table.insert(lines, "  layout=" .. lay.ClassName .. (cs and (" cell=" .. math.floor(cs.X.Offset) .. "x" .. math.floor(cs.Y.Offset)) or ""))
+		else
+			table.insert(lines, "  layout= NONE")
+		end
+		-- first rendered slot's structure (for the rarity plate)
+		for _, s in ipairs(cont:GetChildren()) do
+			if s:IsA("GuiObject") and s:GetAttribute("__MHSpawn") then
+				table.insert(lines, "slot=" .. s.Name .. "<" .. s.ClassName .. ">")
+				table.insert(lines, "  kids:" .. kidsOf(s))
+				local inm = s:FindFirstChild("ItemName")
+				if inm then
+					table.insert(lines, "  ItemName<" .. inm.ClassName .. ">:" .. kidsOf(inm))
+				end
+				local tg = s:FindFirstChild("Tags")
+				if tg then table.insert(lines, "  Tags:" .. kidsOf(tg)) end
+				break
+			end
+		end
+	else
+		table.insert(lines, "InvContainer nil — open Add Items first")
 	end
+	table.insert(lines, "Rarity['Godly']=" .. tostring(Rarity["Godly"]))
 	Diag.Text = table.concat(lines, "\n")
 	Diag.Visible = true
 end)
