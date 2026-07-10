@@ -3288,7 +3288,7 @@ end
 -- │  "rbxassetid://" prefix). Set to "" for no image. The picture shows at      │
 -- │  ~50% transparency with a slight dark tint so the menu stays readable.      │
 -- └──────────────────────────────────────────────────────────────────────────┘
-local BG_IMAGE = "rbxassetid://136747514517812"
+local BG_IMAGE = "rbxassetid://97579398996288"
 
 -- Grey-blue palette (with a soft blue neon accent, like the reference layout).
 local C_BG     = Color3.fromRGB(22, 27, 38)    -- window base
