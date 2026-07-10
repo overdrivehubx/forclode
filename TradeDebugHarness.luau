@@ -3610,12 +3610,6 @@ end)
 makeRowButton(pTrade, "Outgoing request", "YOU send a request (waiting)", "Show", C_BTN, function()
 	showRequestModal(currentName(), false)
 end)
--- Reliable ACCEPT that doesn't depend on tapping the game's green button (which
--- fails to register on some phones): opens the trade layout directly.
-makeRowButton(pTrade, "Accept & open trade", "opens the trade (works on phone)", "Open", C_GREEN, function()
-	HarnessTradeActive = true
-	startTrade(currentName())
-end)
 
 local _, setP2Side = makeRowToggle(pTrade, "Spawn to Player 2 side", "on = spawned items land in THEIR offer", false, function(on)
 	OfferMode = on and "Player2" or "Player1"
@@ -4309,10 +4303,6 @@ if true then
 				Callback = function() showRequestModal(currentName(), true) end })
 			T:Button({ Title = "Outgoing request", Desc = "YOU send a request (waiting)",
 				Callback = function() showRequestModal(currentName(), false) end })
-			-- Reliable ACCEPT: opens the trade directly, without needing to tap the
-			-- game's green button (that button doesn't register taps on some phones).
-			T:Button({ Title = "✓ Accept & open trade", Desc = "opens the trade layout (works on phone)",
-				Callback = function() HarnessTradeActive = true; startTrade(currentName()) end })
 			T:Toggle({ Title = "Spawn to Player 2 side", Desc = "on = spawned items land in THEIR offer", Default = false,
 				Callback = function(on) OfferMode = on and "Player2" or "Player1" end })
 			T:Toggle({ Title = "Overlay on REAL trade", Desc = "fake items on your side (visual only)", Default = false,
@@ -4565,6 +4555,27 @@ if RequestFrame then
 	if not findRequestAccept() then
 		warn("[TradeDebug] Native request Accept button not found at load.")
 	end
+
+	-- Robust fallback for phones where the button's OWN click/touch events never
+	-- fire (which is why accept did nothing on mobile): detect the tap by SCREEN
+	-- POSITION over the accept/decline button instead. onAccept keeps its
+	-- HarnessTradeActive guard + debounce, so this only acts on our fake request.
+	local function inBounds(pos, gui)
+		if not (gui and gui.Visible) then return false end
+		local ap, sz = gui.AbsolutePosition, gui.AbsoluteSize
+		if sz.X < 4 or sz.Y < 4 then return false end
+		return pos.X >= ap.X and pos.X <= ap.X + sz.X and pos.Y >= ap.Y and pos.Y <= ap.Y + sz.Y
+	end
+	track(UIS.InputBegan:Connect(function(input)
+		if input.UserInputType ~= Enum.UserInputType.Touch
+			and input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+		if not (RequestFrame and RequestFrame.Visible) then return end
+		local pos = input.Position
+		local dec = findRequestDecline()
+		if dec and inBounds(pos, dec) then onDecline(); return end
+		local acc = findRequestAccept()
+		if acc and inBounds(pos, acc) then onAccept() end
+	end))
 end
 
 --==============================================================================
