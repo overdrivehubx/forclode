@@ -2796,10 +2796,19 @@ local function paintSlot(slot, data, amount)
 	-- ItemName.Item in this build).
 	local nameFrame = setSlotLabelText(slot, data.ItemName or data.Name or slot.Name)
 	nameFrame = nameFrame or slot:FindFirstChild("ItemName")
-	-- Rarity plate colour (exactly like the game: ItemName.BackgroundColor3).
-	if nameFrame and nameFrame:IsA("GuiObject") then
-		local col = (data.Rarity == "Common") and RARITY_GREY or (Rarity[data.Rarity] or RARITY_GREY)
-		pcall(function() nameFrame.BackgroundColor3 = col end)
+	-- Rarity plate colour. Colour whichever element is the visible plate: the
+	-- ItemName frame itself AND a RarityBar/Item child, so the right one shows.
+	local col = (data.Rarity == "Common") and RARITY_GREY or (Rarity[data.Rarity] or RARITY_GREY)
+	if typeof(col) == "Color3" then
+		if nameFrame and nameFrame:IsA("GuiObject") then
+			pcall(function() nameFrame.BackgroundColor3 = col end)
+			for _, ch in ipairs(nameFrame:GetChildren()) do
+				if ch:IsA("GuiObject") and (ch.Name == "RarityBar" or ch.Name == "Bar"
+					or ch.Name == "Plate" or ch.Name == "Background") then
+					pcall(function() ch.BackgroundColor3 = col end)
+				end
+			end
+		end
 	end
 	local amt = resolve(slot, "Container.Amount") or slot:FindFirstChild("Amount", true)
 	if amt and amt:IsA("TextLabel") then amt.Text = (amount and amount > 1) and ("x" .. amount) or "" end
@@ -3668,14 +3677,14 @@ local function requireItemDB()
 		for _, seg in ipairs(p) do node = node and node:FindFirstChild(seg) end
 		if node and node:IsA("ModuleScript") then
 			local ok, mod = pcall(require, node)
-			if ok and looksLikeItemDB(mod) then return mod, node:GetFullName() end
+			if ok and looksLikeItemDB(mod) then return mod, node.Parent end
 		end
 	end
 	-- last resort: scan for any ModuleScript named Item that requires to an item DB
 	for _, m in ipairs(rs:GetDescendants()) do
 		if m:IsA("ModuleScript") and (m.Name == "Item" or m.Name == "Items") then
 			local ok, mod = pcall(require, m)
-			if ok and looksLikeItemDB(mod) then return mod, m:GetFullName() end
+			if ok and looksLikeItemDB(mod) then return mod, m.Parent end
 		end
 	end
 	return nil
@@ -3685,9 +3694,24 @@ end
 -- fails, scan memory (getgc) for the SyncedData table the game already cached.
 local function loadLiveCatalog()
 	local src
-	local reqItem = requireItemDB()
+	local reqItem, parent = requireItemDB()
 	if reqItem then
 		src = { Item = reqItem }
+		-- Also require the sibling Pets / Rarity modules so colours + pets are LIVE
+		-- too (require Item alone left rarity colours on the embedded fallback).
+		if parent then
+			local function reqSib(...)
+				for _, name in ipairs({ ... }) do
+					local n = parent:FindFirstChild(name)
+					if n and n:IsA("ModuleScript") then
+						local ok, m = pcall(require, n)
+						if ok and type(m) == "table" then return m end
+					end
+				end
+			end
+			src.Pets = reqSib("Pets", "Pet")
+			src.Rarity = reqSib("Rarity", "RarityColor", "RarityColors", "Rarities")
+		end
 	else
 		local getgcf = (type(getgc) == "function" and getgc)
 			or (rawget(_G, "getgc")) or (getgenv and type(getgenv().getgc) == "function" and getgenv().getgc) or nil
@@ -3696,6 +3720,23 @@ local function loadLiveCatalog()
 				for _, o in pairs(getgcf(true)) do
 					if type(o) == "table" and looksLikeItemDB(rawget(o, "Item")) then
 						src = { Item = rawget(o, "Item"), Pets = rawget(o, "Pets"), Rarity = rawget(o, "Rarity") }
+						break
+					end
+				end
+			end)
+		end
+	end
+	-- If Pets/Rarity are still missing (require only got Item), grab them from
+	-- memory so rarity COLOURS and pets are the game's real ones too.
+	if src and (type(src.Pets) ~= "table" or type(src.Rarity) ~= "table") then
+		local getgcf2 = (type(getgc) == "function" and getgc)
+			or (getgenv and type(getgenv().getgc) == "function" and getgenv().getgc) or nil
+		if getgcf2 then
+			pcall(function()
+				for _, o in pairs(getgcf2(true)) do
+					if type(o) == "table" and looksLikeItemDB(rawget(o, "Item")) then
+						if type(src.Pets) ~= "table" then src.Pets = rawget(o, "Pets") end
+						if type(src.Rarity) ~= "table" then src.Rarity = rawget(o, "Rarity") end
 						break
 					end
 				end
