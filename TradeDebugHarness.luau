@@ -3147,17 +3147,19 @@ local function showRequestModal(player2Name, isIncoming)
 		warn("[TradeDebug] TradeRequest frame not found in PlayerGui — cannot show request.")
 		return
 	end
-	-- Tear down any leftover trade UI from a PREVIOUS trade so a second (and third,
-	-- …) incoming request always presents cleanly — this is the fix for "can't
-	-- send the trade a second time". Cancel a pending "trade complete" close, stop
-	-- the cooldown, clear accepted badges, and hide the trade/processing panels.
+	-- Tear down leftover state from a PREVIOUS trade so a second (and third, …)
+	-- incoming request presents cleanly — the fix for "can't send the trade a
+	-- second time". Cancel a pending "trade complete" close, stop the cooldown,
+	-- clear accepted badges and the Processing overlay. NOTE: do NOT hide TradeRoot
+	-- here — startTrade (on Accept) is what re-shows it, and hiding it could leave
+	-- the trade GUI invisible after accepting. The previous trade already hid the
+	-- trade panel via completeTradeIfBothAccepted.
 	completeToken = completeToken + 1
 	stopAcceptCooldown()
 	showAcceptedBadge("your", false); showAcceptedBadge("their", false)
 	local processing = resolve(TradeGUI, "Container.Processing")
 		or (Container and Container:FindFirstChild("Processing"))
 	if processing then pcall(function() processing.Visible = false end) end
-	if TradeRoot then pcall(function() TradeRoot.Visible = false end) end
 	-- Always bring the request on-screen so it actually appears (on phone this
 	-- also un-hides the leaderboard/Waiting screen it lives in). Reveal ancestors
 	-- FIRST, then configureRequest sets Visible + shows exactly one variant.
