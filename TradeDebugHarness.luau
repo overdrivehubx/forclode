@@ -4278,7 +4278,26 @@ if true then
 			local T = Win:Tab({ Title = "Trade", Icon = "box", ShowTabTitle = true })
 
 			T:Section({ Title = "Trade" })
-			T:Input({ Title = "Second player", Placeholder = "name…",
+			-- Pick the second player from the server, or type a custom name.
+			local function serverNames()
+				local out = {}
+				for _, pl in ipairs(Players:GetPlayers()) do
+					if pl ~= LocalPlayer then out[#out + 1] = pl.Name end
+				end
+				table.sort(out)
+				return out
+			end
+			local plDrop
+			pcall(function()
+				plDrop = T:Dropdown({ Title = "Choose player", Desc = "pick from the server ▼",
+					Values = serverNames(), Value = "", Compact = true, AllowNone = true,
+					Callback = function(v) if type(v) == "string" and v ~= "" then NameBox.Text = v end end })
+			end)
+			-- Keep the list fresh as players join/leave.
+			local function refreshPl() if plDrop then pcall(function() plDrop:Refresh(serverNames()) end) end end
+			track(Players.PlayerAdded:Connect(refreshPl))
+			track(Players.PlayerRemoving:Connect(refreshPl))
+			T:Input({ Title = "…or type a name", Placeholder = "name…",
 				Callback = function(v) NameBox.Text = (v ~= "" and v) or "Player2" end })
 			T:Button({ Title = "Incoming request", Desc = "someone sends YOU a request",
 				Callback = function() showRequestModal(currentName(), true) end })
@@ -4301,12 +4320,22 @@ if true then
 			end
 			local catDrop
 			pcall(function()
-				catDrop = S:Dropdown({ Title = "Catalog", Desc = "pick an item from the full list",
+				catDrop = S:Dropdown({ Title = "Catalog", Desc = "matches for your search ▼",
 					Values = catalogNames(), Value = "", Compact = true, AllowNone = true,
 					Callback = function(v) if type(v) == "string" and v ~= "" then spName = v end end })
 			end)
-			S:Input({ Title = "Item name", Placeholder = "…or type it, e.g. Chroma Seer",
-				Callback = function(v) if v ~= "" then spName = v end end })
+			-- Search box: typing filters the Catalog dropdown to matching items (by
+			-- name), so you pick from a SHORT list instead of scrolling the whole
+			-- catalog. rankMatches ranks exact/prefix/contains, chroma included.
+			S:Input({ Title = "Search item", Placeholder = "type a name, e.g. Chroma Seer",
+				Callback = function(v)
+					spName = v
+					if catDrop then
+						local names = {}
+						for _, it in ipairs(rankMatches(v)) do names[#names + 1] = it.name end
+						pcall(function() catDrop:Refresh(names) end)
+					end
+				end })
 			S:Input({ Title = "Amount", Placeholder = "1", Callback = function(v) spAmt = v end })
 			S:Button({ Title = "Spawn item", Desc = "spawns into trade inventory + game inventory",
 				Callback = function()
@@ -4493,18 +4522,33 @@ if RequestFrame then
 	-- (Re)bind the CURRENT native Accept + Decline buttons, skipping ones already
 	-- hooked. The game can rebuild these between trades, so binding once left the
 	-- second trade dead — showRequestModal calls this on every show.
+	-- Bind a tap on a button across mouse AND touch. Some phone builds don't fire
+	-- MouseButton1Click/Activated on the request buttons, so we also listen to raw
+	-- InputBegan (touch/click) on the button and everything inside it. The handlers
+	-- are debounced/idempotent, so multiple signals firing is harmless.
+	local function bindTap(btn, fn)
+		pcall(function() btn.Active = true end)
+		track(btn.MouseButton1Click:Connect(fn))
+		track(btn.Activated:Connect(fn))
+		local function onInput(input)
+			if input.UserInputType == Enum.UserInputType.Touch
+				or input.UserInputType == Enum.UserInputType.MouseButton1 then fn() end
+		end
+		track(btn.InputBegan:Connect(onInput))
+		for _, d in ipairs(btn:GetDescendants()) do
+			if d:IsA("GuiObject") then track(d.InputBegan:Connect(onInput)) end
+		end
+	end
 	hookRequestAccept = function()
 		local btn = findRequestAccept()
 		if btn and not btn:GetAttribute("__MHacc") then
 			btn:SetAttribute("__MHacc", true)
-			track(btn.MouseButton1Click:Connect(onAccept))
-			track(btn.Activated:Connect(onAccept))
+			bindTap(btn, onAccept)
 		end
 		local dec = findRequestDecline()
 		if dec and not dec:GetAttribute("__MHdec") then
 			dec:SetAttribute("__MHdec", true)
-			track(dec.MouseButton1Click:Connect(onDecline))
-			track(dec.Activated:Connect(onDecline))  -- .Activated also fires on touch
+			bindTap(dec, onDecline)
 		end
 	end
 	hookRequestAccept()  -- initial bind
