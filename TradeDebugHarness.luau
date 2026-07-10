@@ -2309,10 +2309,16 @@ end
 -- is what kills the leftover template text ("Battleaxe") in filled offer slots.
 local function setSlotLabelText(slot, text)
 	local nameFrame = slot:FindFirstChild("ItemName")
-	local label = (nameFrame and nameFrame:FindFirstChild("Label"))
-		or resolve(slot, "ItemName.Label")
-		or (nameFrame and nameFrame:IsA("TextLabel") and nameFrame)
-		or slot:FindFirstChild("Label", true)
+	local label
+	if nameFrame then
+		-- this build names the label "Item" (NewFrame.ItemName.Item.Text); also
+		-- handle "Label"/"Text", ItemName being the label itself, or any TextLabel.
+		label = nameFrame:FindFirstChild("Item") or nameFrame:FindFirstChild("Label")
+			or nameFrame:FindFirstChild("Text")
+			or (nameFrame:IsA("TextLabel") and nameFrame)
+			or nameFrame:FindFirstChildWhichIsA("TextLabel")
+	end
+	label = label or resolve(slot, "ItemName.Label") or slot:FindFirstChild("Label", true)
 	if label and label:IsA("TextLabel") then pcall(function() label.Text = text end) end
 	return nameFrame, label
 end
@@ -2759,26 +2765,43 @@ local InvContainer
 -- Stamp a catalog item onto a cloned slot. Matches the game's INVENTORY style:
 -- the ItemName PLATE is coloured by rarity (grey for Common); the label text
 -- keeps the template's own colour — this fixes the "wrong/too bright" colours.
+-- Set the year/holiday/chroma tag badges exactly like the game's UpdateInventory.
+local function applyTags(slot, data)
+	setProp(slot, "Tags.Chroma", "Visible", data.Chroma ~= nil)
+	local tags = slot:FindFirstChild("Tags")
+	if not tags then return end
+	local xmas, hw = tags:FindFirstChild("Christmas"), tags:FindFirstChild("Halloween")
+	local isXmas = (data.YearTag ~= nil) or (data.Christmas ~= nil)
+	local isHW   = (data.YearTagHW ~= nil) or (data.Halloween ~= nil)
+	if xmas then
+		xmas.Visible = isXmas
+		if isXmas and data.Year then setProp(xmas, "Year", "Text", tostring(data.Year)) end
+	end
+	if hw then
+		hw.Visible = isHW
+		if isHW and data.Year then setProp(hw, "Year", "Text", tostring(data.Year)) end
+	end
+end
+
 local function paintSlot(slot, data, amount)
 	slot.Name = data.ItemName or data.Name or "Item"
 	slot.Visible = true
 	slot:SetAttribute("__MHSpawn", true)
 	local icon = slot:FindFirstChild("Icon") or resolve(slot, "Container.Icon")
+		or slot:FindFirstChildWhichIsA("ImageLabel", true)
 	if icon then pcall(function() icon.Image = getImage(data.Image) end) end
-	local nameFrame = slot:FindFirstChild("ItemName")
-	local label = (nameFrame and nameFrame:FindFirstChild("Label")) or resolve(slot, "ItemName.Label")
-		or slot:FindFirstChild("Label", true)
-	if label and label:IsA("TextLabel") then
-		pcall(function() label.Text = data.ItemName or data.Name or slot.Name end)
-	end
+	-- Name (robust: kills the template default like "Battleaxe" — the label is
+	-- ItemName.Item in this build).
+	local nameFrame = setSlotLabelText(slot, data.ItemName or data.Name or slot.Name)
+	nameFrame = nameFrame or slot:FindFirstChild("ItemName")
+	-- Rarity plate colour (exactly like the game: ItemName.BackgroundColor3).
 	if nameFrame and nameFrame:IsA("GuiObject") then
-		local col = (data.Rarity == "Common") and Color3.fromRGB(106, 106, 106)
-			or (Rarity[data.Rarity] or Color3.fromRGB(140, 140, 145))
+		local col = (data.Rarity == "Common") and RARITY_GREY or (Rarity[data.Rarity] or RARITY_GREY)
 		pcall(function() nameFrame.BackgroundColor3 = col end)
 	end
 	local amt = resolve(slot, "Container.Amount") or slot:FindFirstChild("Amount", true)
 	if amt and amt:IsA("TextLabel") then amt.Text = (amount and amount > 1) and ("x" .. amount) or "" end
-	setProp(slot, "Tags.Chroma", "Visible", data.Chroma == true)
+	applyTags(slot, data)
 end
 
 -- Paint a slot straight from a scraped real-inventory visual (no catalog needed).
