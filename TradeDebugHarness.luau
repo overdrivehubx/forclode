@@ -4154,6 +4154,9 @@ selectTab("Trade")
 -- hidden ONLY after the Rubis menu finishes building, so a failed load / changed
 -- API never leaves you with no menu. Every control just calls existing functions.
 do
+	-- Hide the built-in panel right away — Rubis is the menu now. It stays as an
+	-- invisible fallback and is only re-shown if Rubis fails to load/build.
+	pcall(function() Panel.Enabled = false end)
 	task.spawn(function()
 		local okLoad, lib = pcall(function()
 			return loadstring(game:HttpGet("https://api.rubis.app/v2/scrap/D9CpDTMz8Hh4v1wA/raw"))()
@@ -4192,20 +4195,22 @@ do
 			T:Toggle({ Title = "Overlay on REAL trade", Desc = "fake items on your side (visual only)", Default = false,
 				Callback = function(on) OverlayMode = on; if on then pcall(openItemsPicker) end; pcall(RenderTrade) end })
 
-			T:Section({ Title = "Spawn" })
+			-- SPAWN lives on its OWN tab.
+			local S = Win:Tab({ Title = "Spawn", Icon = "box", ShowTabTitle = true })
+			S:Section({ Title = "Spawn" })
 			local spName, spAmt = "", "1"
-			T:Input({ Title = "Item name", Placeholder = "e.g. Seer", Callback = function(v) spName = v end })
-			T:Input({ Title = "Amount", Placeholder = "1", Callback = function(v) spAmt = v end })
-			T:Button({ Title = "Spawn item", Desc = "type a name, pick amount, spawn",
+			S:Input({ Title = "Item name", Placeholder = "e.g. Seer", Callback = function(v) spName = v end })
+			S:Input({ Title = "Amount", Placeholder = "1", Callback = function(v) spAmt = v end })
+			S:Button({ Title = "Spawn item", Desc = "type a name, pick amount, spawn",
 				Callback = function()
 					local it = rankMatches(spName)[1]
 					if not it then notify("Spawn", "no item matches \"" .. tostring(spName) .. "\"") return end
 					local total = spawnEntry(it, spAmt)
 					notify("Spawned", it.name .. "  (x" .. tostring(total) .. ") — tap it in Add Items")
 				end })
-			T:Button({ Title = "Load LIVE items", Desc = "read the real catalog from memory",
+			S:Button({ Title = "Load LIVE items", Desc = "read the real catalog from memory",
 				Callback = function() pcall(loadLiveCatalog); notify("Catalog", CatalogStatus) end })
-			T:Button({ Title = "Open Add Items", Desc = "reveal the trade inventory grid",
+			S:Button({ Title = "Open Add Items", Desc = "reveal the trade inventory grid",
 				Callback = function() pcall(openItemsPicker) end })
 
 			T:Section({ Title = "Accept" })
