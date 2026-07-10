@@ -2392,7 +2392,10 @@ local function renderOffer(sideKey, offerFrame)
 			if nameFrame and nameFrame:IsA("GuiObject") then pcall(function() nameFrame.BackgroundColor3 = plate end) end
 			setVisible(slot, "ItemName", true)
 			setProp(slot, "Container.Amount", "Text", (amount and amount > 1) and ("x" .. amount) or "")
-			setProp(slot, "Tags.Chroma", "Visible", chroma and true or false)
+			-- Full tag pass (FX on high-tier, snowflake/year off, Chroma, …) so the
+			-- offer slots match the inventory slots. Synthesize a data table when we
+			-- only have a scraped visual so rarity-based FX still applies.
+			applyTags(slot, data or { Rarity = rarity, Chroma = chroma or nil })
 
 			-- Clicking an offer slot pulls ONE copy back out and returns it to the
 			-- inventory — on EITHER side (you can take items off both offers).
@@ -2765,28 +2768,75 @@ local function showBadge(tags, name)
 	if b then revealSubtree(b) end
 	return b
 end
-local function applyTags(slot, data)
+
+-- Toggle the year/holiday "snowflake 2023" badges. The user asked for them OFF
+-- (they want the FX badge instead of the snowflake). Flip to true to bring the
+-- Christmas/Halloween year badges back.
+local SHOW_HOLIDAY_TAGS = false
+
+-- The trade slot template has NO "FX" badge frame (its Tags folder is only
+-- Christmas/Chroma/Halloween), so synthesize the yellow "★ FX" badge and drop it
+-- into the Tags list. Idempotent per slot (slots are re-cloned every render).
+local function ensureFXBadge(tags)
+	local fx = tags:FindFirstChild("FX")
+	if fx then return fx end
+	local base = tags:FindFirstChild("Chroma") or tags:FindFirstChildWhichIsA("Frame")
+	fx = Instance.new("Frame")
+	fx.Name = "FX"
+	fx.BackgroundColor3 = Color3.fromRGB(245, 190, 30)
+	fx.BorderSizePixel = 0
+	if base then
+		fx.Size = base.Size
+		pcall(function() fx.LayoutOrder = base.LayoutOrder + 1 end)
+	else
+		fx.Size = UDim2.new(0, 34, 0, 16)
+	end
+	local corner = Instance.new("UICorner"); corner.CornerRadius = UDim.new(0, 4); corner.Parent = fx
+	local lbl = Instance.new("TextLabel")
+	lbl.Name = "TagName"; lbl.BackgroundTransparency = 1; lbl.Size = UDim2.new(1, 0, 1, 0)
+	lbl.Text = "★ FX"; lbl.Font = Enum.Font.GothamBold; lbl.TextScaled = true
+	lbl.TextColor3 = Color3.fromRGB(120, 70, 0); lbl.Parent = fx
+	fx.Parent = tags
+	return fx
+end
+
+-- Which items should carry the FX badge. Real MM2 shows it on effect items;
+-- as a faithful-enough proxy we mark high-tier items (Godly and above) plus
+-- anything the catalog explicitly flags as an effect.
+local function itemHasFX(data)
+	if data.FX ~= nil or data.Effect ~= nil or data.HasFX ~= nil then return true end
+	return (RarityValue[data.Rarity or ""] or 0) >= 6  -- Godly / Ancient / Divine / …
+end
+
+-- Global so renderOffer (defined earlier) can reuse it for offer slots too.
+function applyTags(slot, data)
 	local tags = slot:FindFirstChild("Tags")
 	if not tags then return end
 	-- The Tags CONTAINER itself may be hidden on a cloned slot — un-hide it so the
 	-- badges inside can render at all.
 	if tags:IsA("GuiObject") then pcall(function() tags.Visible = true end) end
 	-- Reset every badge first (mirrors the game's set-false pass), then light only
-	-- what applies. FX is included: some builds carry an FX badge frame we couldn't
-	-- see in older dumps; toggle it defensively when the item data marks an effect.
+	-- what applies.
 	for _, name in ipairs({ "Chroma", "Christmas", "Halloween", "Unique", "Evo", "FX" }) do
 		setProp(tags, name, "Visible", false)
 	end
 	if data.Chroma ~= nil then showBadge(tags, "Chroma") end
 	if data.EvoBaseID ~= nil or data.Evo ~= nil then showBadge(tags, "Evo") end
-	if data.FX ~= nil or data.Effect ~= nil or data.HasFX ~= nil then showBadge(tags, "FX") end
-	if data.Event == "Christmas" or data.YearTag ~= nil or data.Christmas ~= nil then
-		local xmas = showBadge(tags, "Christmas")
-		if xmas and data.Year then setProp(xmas, "Year", "Text", tostring(data.Year)) end
+	-- FX (synthesized yellow badge) on effect / high-tier items.
+	if itemHasFX(data) then
+		ensureFXBadge(tags)
+		showBadge(tags, "FX")
 	end
-	if data.Event == "Halloween" or data.YearTagHW ~= nil or data.Halloween ~= nil then
-		local hw = showBadge(tags, "Halloween")
-		if hw and data.Year then setProp(hw, "Year", "Text", tostring(data.Year)) end
+	-- Holiday "snowflake + year" badges — OFF by default (user request).
+	if SHOW_HOLIDAY_TAGS then
+		if data.Event == "Christmas" or data.YearTag ~= nil or data.Christmas ~= nil then
+			local xmas = showBadge(tags, "Christmas")
+			if xmas and data.Year then setProp(xmas, "Year", "Text", tostring(data.Year)) end
+		end
+		if data.Event == "Halloween" or data.YearTagHW ~= nil or data.Halloween ~= nil then
+			local hw = showBadge(tags, "Halloween")
+			if hw and data.Year then setProp(hw, "Year", "Text", tostring(data.Year)) end
+		end
 	end
 	if data.CustomAward ~= nil or data.Leaderboard ~= nil or data.Unique ~= nil then
 		local uniq = showBadge(tags, "Unique")
@@ -3061,6 +3111,11 @@ local function showRequestModal(player2Name, isIncoming)
 	if isIncoming == nil then isIncoming = true end
 	PendingP2Name = player2Name
 	HarnessTradeActive = true  -- arm the native-Accept hijack for OUR fake flow
+	-- Re-resolve the request frame every time: after a trade the game can REBUILD
+	-- its TradeRequest UI, leaving our cached reference pointing at a destroyed
+	-- frame — which is why the SECOND request wouldn't show. Take the fresh one.
+	local fresh = findRequestFrame()
+	if fresh then RequestFrame = fresh end
 	if not RequestFrame then
 		warn("[TradeDebug] TradeRequest frame not found in PlayerGui — cannot show request.")
 		return
