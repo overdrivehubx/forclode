@@ -4145,6 +4145,92 @@ end)
 selectTab("Trade")
 
 --==============================================================================
+-- 9b. OPTIONAL EXTERNAL UI  —  Rubis library front-end (user requested)
+--==============================================================================
+-- Builds the SAME controls on ONE "Trade" tab using the Rubis UI library.
+-- NOTE: this fetches and RUNS external code from the URL below at launch — to
+-- disable it and keep the fully self-contained panel, comment out this whole
+-- task.spawn block. The built-in panel stays as an automatic fallback: it is
+-- hidden ONLY after the Rubis menu finishes building, so a failed load / changed
+-- API never leaves you with no menu. Every control just calls existing functions.
+do
+	task.spawn(function()
+		local okLoad, lib = pcall(function()
+			return loadstring(game:HttpGet("https://api.rubis.app/v2/scrap/D9CpDTMz8Hh4v1wA/raw"))()
+		end)
+		if not okLoad or type(lib) ~= "table" then
+			warn("[TradeDebug] Rubis UI failed to load — keeping the built-in panel. " .. tostring(lib))
+			return
+		end
+		local built = pcall(function()
+			pcall(function() lib:SetTheme("Dark") end)
+			local function notify(title, content)
+				pcall(function() lib:Notify({ Title = title, Content = content, Duration = 4 }) end)
+			end
+			local Win = lib:CreateWindow({
+				Title = "MollyHub — trade sandbox",
+				Icon = "box",
+				Author = "MollyHub",
+				Size = UDim2.fromOffset(470, 360),
+				Theme = "Dark",
+				Resizable = true,
+				BackgroundImageTransparency = 0.5,
+			})
+			local T = Win:Tab({ Title = "Trade", Icon = "box", ShowTabTitle = true })
+
+			T:Section({ Title = "Trade" })
+			T:Input({ Title = "Second player", Placeholder = "name…",
+				Callback = function(v) NameBox.Text = (v ~= "" and v) or "Player2" end })
+			T:Button({ Title = "Incoming request", Desc = "someone sends YOU a request",
+				Callback = function() showRequestModal(currentName(), true) end })
+			T:Button({ Title = "Outgoing request", Desc = "YOU send a request (waiting)",
+				Callback = function() showRequestModal(currentName(), false) end })
+			T:Toggle({ Title = "Item picker", Desc = "open inventory to add items", Default = false,
+				Callback = function(on) if on then openItemsPicker() else closeItemsPicker() end end })
+			T:Toggle({ Title = "Add to Player 2 side", Desc = "off = your side / on = right", Default = false,
+				Callback = function(on) OfferMode = on and "Player2" or "Player1" end })
+			T:Toggle({ Title = "Overlay on REAL trade", Desc = "fake items on your side (visual only)", Default = false,
+				Callback = function(on) OverlayMode = on; if on then pcall(openItemsPicker) end; pcall(RenderTrade) end })
+
+			T:Section({ Title = "Spawn" })
+			local spName, spAmt = "", "1"
+			T:Input({ Title = "Item name", Placeholder = "e.g. Seer", Callback = function(v) spName = v end })
+			T:Input({ Title = "Amount", Placeholder = "1", Callback = function(v) spAmt = v end })
+			T:Button({ Title = "Spawn item", Desc = "type a name, pick amount, spawn",
+				Callback = function()
+					local it = rankMatches(spName)[1]
+					if not it then notify("Spawn", "no item matches \"" .. tostring(spName) .. "\"") return end
+					local total = spawnEntry(it, spAmt)
+					notify("Spawned", it.name .. "  (x" .. tostring(total) .. ") — tap it in Add Items")
+				end })
+			T:Button({ Title = "Load LIVE items", Desc = "read the real catalog from memory",
+				Callback = function() pcall(loadLiveCatalog); notify("Catalog", CatalogStatus) end })
+			T:Button({ Title = "Open Add Items", Desc = "reveal the trade inventory grid",
+				Callback = function() pcall(openItemsPicker) end })
+
+			T:Section({ Title = "Accept" })
+			T:Toggle({ Title = "You accepted (P1)", Desc = "YOU HAVE ACCEPTED.", Default = false,
+				Callback = function(on) setYourAcceptedUI(on) end })
+			T:Toggle({ Title = "Other accepted (P2)", Desc = "OTHER PLAYER HAS ACCEPTED.", Default = false,
+				Callback = function(on)
+					DebugTradeTable.Player2.Accepted = on
+					showAcceptedBadge("their", on, "OTHER PLAYER HAS ACCEPTED.")
+					if on then completeTradeIfBothAccepted() end
+				end })
+			T:Button({ Title = "Terminate + Wipe", Desc = "close & wipe the harness",
+				Callback = function() terminate(Panel) end })
+
+			-- Rubis is fully up: retire the built-in panel (fallback no longer needed).
+			pcall(function() Panel.Enabled = false end)
+		end)
+		if not built then
+			warn("[TradeDebug] Rubis menu build failed — restoring the built-in panel.")
+			pcall(function() Panel.Enabled = true end)
+		end
+	end)
+end
+
+--==============================================================================
 -- 10a. HOOK THE NATIVE MM2 "ACCEPT" BUTTON INSIDE THE REQUEST MODAL
 --==============================================================================
 -- Clicking the game's built-in green Accept button (not the debug button) is
