@@ -4365,14 +4365,48 @@ if true then
 					local l = (c.R + c.G + c.B) / 3        -- brightness 0..1
 					return Color3.new(l * 0.80, l * 0.88, math.min(1, l * 1.06 + 0.03))
 				end
-				for _ = 1, 6 do
+				-- Inject OUR background photo into Rubis's main window frame — the
+				-- CreateWindow image options weren't honoured, so we place the image
+				-- ourselves: lowest sibling ZIndex = behind every control, above the
+				-- window's flat fill. ~50% see-through + the window keeps its tint.
+				local function injectPhoto(g)
+					if g:GetAttribute("__MHbg") or BG_IMAGE == "" then return end
+					local win, area
+					for _, d in ipairs(g:GetDescendants()) do
+						if (d:IsA("Frame") or d:IsA("CanvasGroup")) and d.Visible
+							and d.AbsoluteSize.X > 260 and d.AbsoluteSize.Y > 180 then
+							local a = d.AbsoluteSize.X * d.AbsoluteSize.Y
+							if not area or a > area then win, area = d, a end
+						end
+					end
+					if not win then return end
+					g:SetAttribute("__MHbg", true)
+					local img = Instance.new("ImageLabel")
+					img.Name = "__MHPhoto"
+					img.Size = UDim2.new(1, 0, 1, 0)
+					img.BackgroundTransparency = 1
+					img.Image = BG_IMAGE
+					img.ScaleType = Enum.ScaleType.Crop
+					img.ImageTransparency = 0.5
+					local z = math.huge
+					for _, ch in ipairs(win:GetChildren()) do
+						if ch:IsA("GuiObject") then z = math.min(z, ch.ZIndex) end
+					end
+					img.ZIndex = (z == math.huge) and 0 or (z - 1)
+					local uc = Instance.new("UICorner")
+					uc.CornerRadius = UDim.new(0, 12); uc.Parent = img
+					img.Parent = win
+				end
+				for _ = 1, 8 do
 					task.wait(0.3)
 					for _, root in ipairs(guiRoots) do
 						for _, g in ipairs(root:GetChildren()) do
 							if g:IsA("ScreenGui") and not seenGui[g] then
+								pcall(injectPhoto, g)
 								for _, d in ipairs(g:GetDescendants()) do
 									if (d:IsA("Frame") or d:IsA("ImageLabel") or d:IsA("ImageButton"))
-										and d.BackgroundTransparency < 1 and not d:GetAttribute("__MHtint") then
+										and d.BackgroundTransparency < 1 and not d:GetAttribute("__MHtint")
+										and d.Name ~= "__MHPhoto" then
 										-- once per element, else repeated passes would over-tint
 										pcall(function()
 											d:SetAttribute("__MHtint", true)
