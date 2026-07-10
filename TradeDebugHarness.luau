@@ -2723,17 +2723,31 @@ end
 -- Resolve the trade GUI's own Weapons/Pets tab container (the "Add Items" grid),
 -- even when it is EMPTY offline. We fill it ourselves from the catalog.
 local function findTabContainer(category)
+	local direct = (category == "Pets") and PetsFrame or InventoryFrame
+	if direct and direct.AbsoluteSize.X >= 120 then return direct end
 	local items = ItemsPicker or (TradeGUI and resolve(TradeGUI, "Container.Items")) or nil
 	if items then
-		local tabs = items:FindFirstChild("Tabs") or items
-		local tab = tabs:FindFirstChild(category)  -- "Weapons" / "Pets"
-		if tab then
-			if tab:IsA("ScrollingFrame") then return tab end
-			return tab:FindFirstChildWhichIsA("ScrollingFrame") or tab
+		-- The item grid is a WIDE scrolling/grid container (the tab button
+		-- "Tabs.Weapons" is tiny ~92px). Pick the widest matching one.
+		local best, bestArea
+		for _, d in ipairs(items:GetDescendants()) do
+			if (d:IsA("ScrollingFrame") or d:IsA("Frame")) and d.AbsoluteSize.X >= 150 and d.AbsoluteSize.Y >= 80 then
+				local hasGrid = d:FindFirstChildWhichIsA("UIGridLayout") ~= nil
+				local ln = string.lower(d:GetFullName())
+				local isPet = string.find(ln, "pet") ~= nil
+				local matches = ((category == "Pets") == isPet)
+				if matches and (hasGrid or d:IsA("ScrollingFrame")) then
+					local area = d.AbsoluteSize.X * d.AbsoluteSize.Y
+					if not bestArea or area > bestArea then best, bestArea = d, area end
+				end
+			end
 		end
+		if best then return best end
+		-- fall back to the named tab even if small
+		local tabs = items:FindFirstChild("Tabs") or items
+		local tab = tabs:FindFirstChild(category)
+		if tab then return tab:FindFirstChildWhichIsA("ScrollingFrame") or tab end
 	end
-	-- Desktop deep-path fallback.
-	local direct = (category == "Pets") and PetsFrame or InventoryFrame
 	return direct
 end
 
@@ -2799,12 +2813,16 @@ local function paintSlot(slot, data, amount)
 	-- Rarity plate colour. Colour whichever element is the visible plate: the
 	-- ItemName frame itself AND a RarityBar/Item child, so the right one shows.
 	local col = (data.Rarity == "Common") and RARITY_GREY or (Rarity[data.Rarity] or RARITY_GREY)
-	if typeof(col) == "Color3" then
-		if nameFrame and nameFrame:IsA("GuiObject") then
-			pcall(function() nameFrame.BackgroundColor3 = col end)
-			for _, ch in ipairs(nameFrame:GetChildren()) do
-				if ch:IsA("GuiObject") and (ch.Name == "RarityBar" or ch.Name == "Bar"
-					or ch.Name == "Plate" or ch.Name == "Background") then
+	if typeof(col) == "Color3" and nameFrame and nameFrame:IsA("GuiObject") then
+		pcall(function() nameFrame.BackgroundColor3 = col end)
+		-- the visible plate in this build is ItemName.BG (an ImageLabel) — tint it.
+		for _, ch in ipairs(nameFrame:GetChildren()) do
+			if ch.Name == "BG" or ch.Name == "RarityBar" or ch.Name == "Bar"
+				or ch.Name == "Plate" or ch.Name == "Background" then
+				if ch:IsA("ImageLabel") or ch:IsA("ImageButton") then
+					pcall(function() ch.ImageColor3 = col end)
+					pcall(function() ch.BackgroundColor3 = col end)
+				elseif ch:IsA("GuiObject") then
 					pcall(function() ch.BackgroundColor3 = col end)
 				end
 			end
