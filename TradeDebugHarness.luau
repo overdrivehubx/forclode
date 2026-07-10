@@ -213,7 +213,7 @@ local Rarity = {
 	["Christmas"] = Color3.fromRGB(255, 40, 40),
 	["Halloween"] = Color3.fromRGB(255, 120, 0),
 }
-local RARITY_GREY = Color3.fromRGB(106, 106, 106)  -- Common plate (0.415686)
+local RARITY_GREY = Color3.fromRGB(95, 95, 95)  -- Common plate: game uses Color3.new(0.372549)
 
 -- Coerce whatever the live "Rarity" module stores for a tier into a Color3.
 -- The game's Sync/Rarity table may hold a bare Color3, or a record like
