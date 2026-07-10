@@ -3354,10 +3354,11 @@ local Bg = Instance.new("ImageLabel")
 Bg.Name = "Bg"; Bg.Size = UDim2.new(1, 0, 1, 0); Bg.BackgroundTransparency = 1
 Bg.Image = BG_IMAGE; Bg.ScaleType = Enum.ScaleType.Crop
 Bg.ImageTransparency = 0.5; Bg.ZIndex = 0; Bg.Parent = Window
--- Slight dark tint over the image ("чутка затемненная").
+-- Dark tint over the image so it reads a bit darker ("чуть потемнее"). Lower the
+-- transparency for MORE darkening, raise it for a brighter image.
 local Overlay = Instance.new("Frame")
-Overlay.Size = UDim2.new(1, 0, 1, 0); Overlay.BackgroundColor3 = Color3.fromRGB(14, 18, 26)
-Overlay.BackgroundTransparency = 0.45; Overlay.BorderSizePixel = 0; Overlay.ZIndex = 0; Overlay.Parent = Window
+Overlay.Size = UDim2.new(1, 0, 1, 0); Overlay.BackgroundColor3 = Color3.fromRGB(12, 16, 24)
+Overlay.BackgroundTransparency = 0.3; Overlay.BorderSizePixel = 0; Overlay.ZIndex = 0; Overlay.Parent = Window
 
 -- Sidebar (left).
 local Side = Instance.new("Frame")
@@ -3639,10 +3640,9 @@ end)
 --------------------------------------------------------------------------------
 -- PAGE 2 — Spawn (add game items into your inventory)
 --------------------------------------------------------------------------------
--- Single-tab menu: everything (spawner + accept controls + info) lives on the one
--- "Trade" tab, so these page vars all alias it — no extra tabs are created.
-local pSpawn = pTrade
-makeSection(pSpawn, "Spawn")
+-- Two tabs: Trade and Spawn. The spawner gets its own tab; Accept + Info fold
+-- into the Trade tab (they alias pTrade below).
+local pSpawn = makeTab("Spawn")
 
 -- Flat, name-sorted index of the whole catalog (weapons + pets), rebuildable
 -- when the real catalog finishes loading in the background.
@@ -4153,7 +4153,11 @@ selectTab("Trade")
 -- task.spawn block. The built-in panel stays as an automatic fallback: it is
 -- hidden ONLY after the Rubis menu finishes building, so a failed load / changed
 -- API never leaves you with no menu. Every control just calls existing functions.
-do
+-- Rubis is DISABLED: it did not load/build in your executor (so the menu looked
+-- unchanged — you were seeing the built-in panel). The self-contained blue-gray
+-- panel below is the menu now. Flip `if false` to `if true` to try Rubis again;
+-- if you do and it fails, check the console (F9) for the build error.
+if false then
 	-- Hide the built-in panel right away — Rubis is the menu now. It stays as an
 	-- invisible fallback and is only re-shown if Rubis fails to load/build.
 	pcall(function() Panel.Enabled = false end)
