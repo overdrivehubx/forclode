@@ -4170,11 +4170,10 @@ selectTab("Trade")
 -- task.spawn block. The built-in panel stays as an automatic fallback: it is
 -- hidden ONLY after the Rubis menu finishes building, so a failed load / changed
 -- API never leaves you with no menu. Every control just calls existing functions.
--- Rubis is DISABLED: it did not load/build in your executor (so the menu looked
--- unchanged — you were seeing the built-in panel). The self-contained blue-gray
--- panel below is the menu now. Flip `if false` to `if true` to try Rubis again;
--- if you do and it fails, check the console (F9) for the build error.
-if false then
+-- Rubis is ENABLED. Flip `if true` to `if false` to fall back to the built-in
+-- blue-gray panel. If Rubis fails to build, the console (F9) shows the error and
+-- the built-in panel is restored automatically.
+if true then
 	-- Hide the built-in panel right away — Rubis is the menu now. It stays as an
 	-- invisible fallback and is only re-shown if Rubis fails to load/build.
 	pcall(function() Panel.Enabled = false end)
@@ -4183,7 +4182,8 @@ if false then
 			return loadstring(game:HttpGet("https://api.rubis.app/v2/scrap/D9CpDTMz8Hh4v1wA/raw"))()
 		end)
 		if not okLoad or type(lib) ~= "table" then
-			warn("[TradeDebug] Rubis UI failed to load — keeping the built-in panel. " .. tostring(lib))
+			warn("[TradeDebug] Rubis UI failed to load — restoring the built-in panel. " .. tostring(lib))
+			pcall(function() Panel.Enabled = true end)  -- un-hide the fallback
 			return
 		end
 		local built = pcall(function()
@@ -4191,6 +4191,9 @@ if false then
 			local function notify(title, content)
 				pcall(function() lib:Notify({ Title = title, Content = content, Duration = 4 }) end)
 			end
+			-- Blue-gray, slightly transparent, with your background photo. Rubis reads
+			-- these option names; the image ones let you drop in BG_IMAGE. Unknown
+			-- fields are harmlessly ignored, so we pass a few likely aliases.
 			local Win = lib:CreateWindow({
 				Title = "MollyHub — trade sandbox",
 				Icon = "box",
@@ -4198,7 +4201,19 @@ if false then
 				Size = UDim2.fromOffset(470, 360),
 				Theme = "Dark",
 				Resizable = true,
-				BackgroundImageTransparency = 0.5,
+				SideBarWidth = 200,
+				Transparent = true,                 -- the whole menu is a bit see-through
+				BackgroundImageTransparency = 0.5,  -- photo at ~50%
+				BackgroundImage = BG_IMAGE,         -- your photo (BG_IMAGE up top)
+				Image = BG_IMAGE,
+				Background = BG_IMAGE,
+				-- Blue-gray accent for the open button / highlights.
+				OpenButton = {
+					Title = "MollyHub",
+					Enabled = true,
+					Draggable = true,
+					Color = ColorSequence.new(Color3.fromRGB(108, 150, 210), Color3.fromRGB(60, 84, 128)),
+				},
 			})
 			local T = Win:Tab({ Title = "Trade", Icon = "box", ShowTabTitle = true })
 
