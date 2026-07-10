@@ -3282,8 +3282,12 @@ end
 --==============================================================================
 -- 9. THE DEBUG CONTROLLER PANEL  —  "MollyHub"  (sidebar UI, grey-blue)
 --==============================================================================
--- Background image: upload your image to Roblox, then paste its decal/image
--- asset id below (keep the "rbxassetid://" prefix). Leave 0 for no image.
+-- ┌──────────────────────────────────────────────────────────────────────────┐
+-- │  PASTE YOUR BACKGROUND IMAGE ID HERE.                                       │
+-- │  Upload the image to Roblox, then put its asset id below (keep the          │
+-- │  "rbxassetid://" prefix). Set to "" for no image. The picture shows at      │
+-- │  ~50% transparency with a slight dark tint so the menu stays readable.      │
+-- └──────────────────────────────────────────────────────────────────────────┘
 local BG_IMAGE = "rbxassetid://136747514517812"
 
 -- Grey-blue palette (with a soft blue neon accent, like the reference layout).
@@ -3344,15 +3348,16 @@ corner(Window, 16)
 local WStroke = Instance.new("UIStroke")
 WStroke.Color = C_ACCENT; WStroke.Thickness = 1.5; WStroke.Transparency = 0.25; WStroke.Parent = Window
 
--- Background image + overlay for readability.
+-- Background image + overlay for readability. The image sits at ~50% transparency
+-- (half see-through) with a slight dark scrim on top so the menu stays legible.
 local Bg = Instance.new("ImageLabel")
 Bg.Name = "Bg"; Bg.Size = UDim2.new(1, 0, 1, 0); Bg.BackgroundTransparency = 1
 Bg.Image = BG_IMAGE; Bg.ScaleType = Enum.ScaleType.Crop
-Bg.ImageTransparency = 0.15; Bg.ZIndex = 0; Bg.Parent = Window
--- Scrim over the image so text stays readable, but light enough to SEE the image.
+Bg.ImageTransparency = 0.5; Bg.ZIndex = 0; Bg.Parent = Window
+-- Slight dark tint over the image ("чутка затемненная").
 local Overlay = Instance.new("Frame")
-Overlay.Size = UDim2.new(1, 0, 1, 0); Overlay.BackgroundColor3 = C_BG
-Overlay.BackgroundTransparency = 0.5; Overlay.BorderSizePixel = 0; Overlay.ZIndex = 0; Overlay.Parent = Window
+Overlay.Size = UDim2.new(1, 0, 1, 0); Overlay.BackgroundColor3 = Color3.fromRGB(14, 18, 26)
+Overlay.BackgroundTransparency = 0.45; Overlay.BorderSizePixel = 0; Overlay.ZIndex = 0; Overlay.Parent = Window
 
 -- Sidebar (left).
 local Side = Instance.new("Frame")
@@ -3468,6 +3473,18 @@ local function makeRow(page, title, desc)
 	return rowF
 end
 
+-- A slim section header (organizes the single Trade tab into labelled groups).
+local function makeSection(page, title)
+	rowOrder = rowOrder + 1
+	local h = Instance.new("TextLabel")
+	h.Size = UDim2.new(1, 0, 0, 22); h.BackgroundTransparency = 1
+	h.Text = "— " .. title:upper() .. " —"; h.TextColor3 = C_ACCENT
+	h.Font = Enum.Font.GothamBold; h.TextSize = 12
+	h.TextXAlignment = Enum.TextXAlignment.Left
+	h.ZIndex = 3; h.LayoutOrder = rowOrder; h.Parent = page
+	return h
+end
+
 -- Pill toggle placed on the right of a row. cb(state) fires on change.
 local function makeRowToggle(page, title, desc, initial, cb)
 	local rowF = makeRow(page, title, desc)
@@ -3508,6 +3525,7 @@ end
 -- PAGE 1 — Trade
 --------------------------------------------------------------------------------
 local pTrade = makeTab("Trade")
+makeSection(pTrade, "Trade")
 
 -- Name input (a full-width row with a TextBox).
 local nameRow = makeRow(pTrade, "Second player", "pick from server ▼ or type")
@@ -3621,7 +3639,10 @@ end)
 --------------------------------------------------------------------------------
 -- PAGE 2 — Spawn (add game items into your inventory)
 --------------------------------------------------------------------------------
-local pSpawn = makeTab("Spawn")
+-- Single-tab menu: everything (spawner + accept controls + info) lives on the one
+-- "Trade" tab, so these page vars all alias it — no extra tabs are created.
+local pSpawn = pTrade
+makeSection(pSpawn, "Spawn")
 
 -- Flat, name-sorted index of the whole catalog (weapons + pets), rebuildable
 -- when the real catalog finishes loading in the background.
@@ -4042,7 +4063,8 @@ end
 --------------------------------------------------------------------------------
 -- PAGE 3 — Accept
 --------------------------------------------------------------------------------
-local pAccept = makeTab("Accept")
+local pAccept = pTrade
+makeSection(pAccept, "Accept")
 
 local _, setAccP1 = makeRowToggle(pAccept, "You accepted (P1)", "YOU HAVE ACCEPTED.", false, function(on)
 	setYourAcceptedUI(on)  -- also flips the green Accept button to Cancel
@@ -4061,7 +4083,8 @@ end)
 --------------------------------------------------------------------------------
 -- PAGE 3 — Info
 --------------------------------------------------------------------------------
-local pInfo = makeTab("Info")
+local pInfo = pTrade
+makeSection(pInfo, "Info")
 local function ok(x) return x and "OK" or "nil" end
 local Status = Instance.new("TextLabel")
 Status.Size = UDim2.new(1, 0, 0, 140); Status.AutomaticSize = Enum.AutomaticSize.Y; Status.BackgroundColor3 = C_ROW
