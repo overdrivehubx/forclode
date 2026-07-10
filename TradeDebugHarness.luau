@@ -2176,6 +2176,11 @@ _G.DebugTradeTable = DebugTradeTable
 -- Which side receives the next inventory click. "Player1" = left, "Player2" = right.
 local OfferMode = "Player1"
 
+-- OVERLAY mode: paint the fake inventory + fake items onto YOUR side of a REAL,
+-- in-progress game trade. Purely visual on your client — nothing is sent, the
+-- other player's real offer is never touched, and only YOUR side is (re)painted.
+local OverlayMode = false
+
 -- Items the user spawned into the inventory (key -> amount). Every MM2 inventory
 -- starts with the two default starter items (Default Knife + Default Gun); they
 -- are never tradeable and never consumed, and always sort to the front.
@@ -2490,6 +2495,14 @@ end
 function RenderTrade()
 	clearRenderConnections()
 
+	-- OVERLAY: only paint YOUR side over a real trade. Do NOT touch the other
+	-- player's offer, their name, or the accepted badges — that all belongs to the
+	-- real game trade running underneath.
+	if OverlayMode then
+		renderOffer("Player1", Offer1)
+		return
+	end
+
 	-- Second participant's display name (swept across all offer frames).
 	setOfferUsername("their", "(" .. DebugTradeTable.Player2.Player.Name .. ")")
 
@@ -2570,7 +2583,8 @@ end
 -- and into the offer. Removing it later (tap the offer slot) returns it.
 local function offerItemLocal(itemKey, category, visual)
 	if isDefaultItem(itemKey) then return end       -- defaults can't be traded
-	local side = DebugTradeTable[OfferMode]
+	-- In overlay mode everything goes on YOUR side (you can't fill a real player's).
+	local side = OverlayMode and DebugTradeTable.Player1 or DebugTradeTable[OfferMode]
 	local pool = invPool(category)
 	if (pool[itemKey] or 0) <= 0 then return end     -- nothing left to offer
 
@@ -2592,17 +2606,20 @@ local function offerItemLocal(itemKey, category, visual)
 	pool[itemKey] = pool[itemKey] - 1
 	if pool[itemKey] <= 0 then pool[itemKey] = nil end
 
-	-- Any change to the table resets both acceptance flags, like the server does.
-	DebugTradeTable.LastOffer = os.time()
-	DebugTradeTable.Player1.Accepted = false
-	DebugTradeTable.Player2.Accepted = false
-
-	-- Editing an offer collapses the confirm/cancel steps, matching the live UI.
-	setVisible(TradeRoot, "Actions.Accept.Confirm", false)
-	setVisible(TradeRoot, "Actions.Accept.Cancel", false)
+	-- Consume-and-render is shared, but in OVERLAY mode we must not touch the real
+	-- trade's accept flow (flags, confirm/cancel, cooldown) — leave that to the game.
+	if not OverlayMode then
+		-- Any change to the table resets both acceptance flags, like the server does.
+		DebugTradeTable.LastOffer = os.time()
+		DebugTradeTable.Player1.Accepted = false
+		DebugTradeTable.Player2.Accepted = false
+		-- Editing an offer collapses the confirm/cancel steps, matching the live UI.
+		setVisible(TradeRoot, "Actions.Accept.Confirm", false)
+		setVisible(TradeRoot, "Actions.Accept.Cancel", false)
+	end
 	renderInventory()      -- refresh the inventory counts
 	RenderTrade()
-	startAcceptCooldown()  -- 6s "please wait before accepting"
+	if not OverlayMode then startAcceptCooldown() end  -- 6s "please wait before accepting"
 end
 
 -- Take ONE copy back out of a side's offer and RETURN it to the inventory.
@@ -2618,13 +2635,15 @@ function unofferOne(sideKey, index)
 	end
 	entry[2] = entry[2] - 1
 	if entry[2] <= 0 then table.remove(offer, index) end
-	DebugTradeTable.Player1.Accepted = false
-	DebugTradeTable.Player2.Accepted = false
-	setVisible(TradeRoot, "Actions.Accept.Confirm", false)
-	setVisible(TradeRoot, "Actions.Accept.Cancel", false)
+	if not OverlayMode then
+		DebugTradeTable.Player1.Accepted = false
+		DebugTradeTable.Player2.Accepted = false
+		setVisible(TradeRoot, "Actions.Accept.Confirm", false)
+		setVisible(TradeRoot, "Actions.Accept.Cancel", false)
+	end
 	renderInventory()
 	RenderTrade()
-	if startAcceptCooldown then startAcceptCooldown() end
+	if not OverlayMode and startAcceptCooldown then startAcceptCooldown() end
 end
 
 -- Sorting helper reused for both inventory panes.
@@ -3264,6 +3283,7 @@ end
 -- Clean close: play the fade, wipe the tables, drop the panel.
 local function terminate(panel)
 	HarnessTradeActive = false  -- disarm the native-Accept hijack
+	OverlayMode = false         -- idle the overlay refresh loop
 	-- Fade the trade panel out if it's a GuiObject we can tween.
 	local container = resolve(TradeGUI, "Container")
 	if container and container:IsA("GuiObject") then
@@ -3613,6 +3633,27 @@ end)
 -- Every fresh trade starts on YOUR side again (fixes: a "fake" P2-side trade
 -- left the toggle on, so the next real trade still filled the P2 side).
 table.insert(onNewTrade, function() OfferMode = "Player1"; setP2Side(false) end)
+
+-- OVERLAY toggle: use the fake inventory + fake slots ON TOP of a REAL trade.
+-- Turn it on WHILE you're in a genuine game trade: the Add Items grid becomes the
+-- fake inventory, tapping paints fake items onto YOUR side only (visual, nothing
+-- sent, the other player never sees it), and the real player's offer is left
+-- alone. A background loop re-asserts your fake side so the game can't wipe it.
+makeRowToggle(pTrade, "Overlay on REAL trade", "fake items on your side (visual only)", false, function(on)
+	OverlayMode = on
+	if on then
+		pcall(openItemsPicker)  -- reveal + fill the fake Add Items grid
+	end
+	pcall(RenderTrade)
+end)
+-- Re-paint your fake side a few times a second so the real game's own trade
+-- render can't overwrite the fake items while Overlay is on.
+task.spawn(function()
+	while true do
+		if OverlayMode then pcall(RenderTrade) end
+		task.wait(0.4)
+	end
+end)
 
 --------------------------------------------------------------------------------
 -- PAGE 2 — Spawn (add game items into your inventory)
