@@ -2010,6 +2010,7 @@ local function looksLikeTrade(gui)
 	return false
 end
 
+local TradeCandidatesInfo = "?"
 local function findTradeGui()
 	local candidates = {}
 	for _, gui in ipairs(PlayerGui:GetChildren()) do
@@ -2019,6 +2020,15 @@ local function findTradeGui()
 		for _, gui in ipairs(PlayerGui:GetDescendants()) do
 			if looksLikeTrade(gui) then table.insert(candidates, gui) end
 		end
+	end
+	-- Record what we saw (name + enabled) so the Info tab can show which trade
+	-- GUIs the game actually made — helps decide the table/phone binding.
+	do
+		local names = {}
+		for _, g in ipairs(candidates) do
+			names[#names + 1] = g.Name .. (g.Enabled and "(on)" or "(off)")
+		end
+		TradeCandidatesInfo = (#names > 0) and table.concat(names, ", ") or "none"
 	end
 
 	-- The game creates ONLY the trade GUI for the mode the player chose in-game
@@ -4012,10 +4022,11 @@ end)
 local pInfo = makeTab("Info")
 local function ok(x) return x and "OK" or "nil" end
 local Status = Instance.new("TextLabel")
-Status.Size = UDim2.new(1, 0, 0, 120); Status.BackgroundColor3 = C_ROW
+Status.Size = UDim2.new(1, 0, 0, 140); Status.AutomaticSize = Enum.AutomaticSize.Y; Status.BackgroundColor3 = C_ROW
 Status.BorderSizePixel = 0; Status.ZIndex = 2; Status.LayoutOrder = 1; Status.Parent = pInfo
-Status.Text = ("  layout: %s (%s)\n  Req %s · Trade %s · Cont %s\n  Items %s · Inv %s · Pets %s\n\n  offline • no server calls"):format(
+Status.Text = ("  layout: %s (%s)\n  trade GUIs: %s\n  Req %s · Trade %s · Cont %s\n  Items %s · Inv %s · Pets %s\n\n  offline • no server calls"):format(
 	(TradeGUI and TradeGUI.Name or "NOT FOUND"), IsPhone and "phone" or "pc",
+	TradeCandidatesInfo,
 	ok(RequestFrame), ok(TradeRoot), ok(Container), ok(ItemsPicker), ok(InventoryFrame), ok(PetsFrame))
 Status.TextColor3 = C_DIM; Status.Font = Enum.Font.Gotham; Status.TextSize = 12
 Status.TextWrapped = true; Status.TextYAlignment = Enum.TextYAlignment.Top
