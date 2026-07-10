@@ -3637,6 +3637,23 @@ task.spawn(function()
 	end
 end)
 
+-- Background MUSIC: paste your audio asset id on the marked line below, then use
+-- the "Music" toggle to play/stop it (loops). Wrapped in a do-block so it adds no
+-- lasting local (the harness is close to Luau's 200-local-per-function limit).
+do
+	local music = Instance.new("Sound")
+	music.Name = "MollyHubMusic"
+	--  ▼▼▼  PASTE YOUR MUSIC ID HERE (keep the rbxassetid:// prefix)  ▼▼▼
+	music.SoundId = "rbxassetid://0"
+	--  ▲▲▲  ---------------------------------------------------------  ▲▲▲
+	music.Looped = true
+	music.Volume = 0.5
+	pcall(function() music.Parent = game:GetService("SoundService") end)
+	makeRowToggle(pTrade, "Music", "play background music (set id in script)", false, function(on)
+		if on then pcall(function() music:Play() end) else pcall(function() music:Pause() end) end
+	end)
+end
+
 --------------------------------------------------------------------------------
 -- PAGE 2 — Spawn (add game items into your inventory)
 --------------------------------------------------------------------------------
