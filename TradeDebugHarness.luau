@@ -3610,6 +3610,12 @@ end)
 makeRowButton(pTrade, "Outgoing request", "YOU send a request (waiting)", "Show", C_BTN, function()
 	showRequestModal(currentName(), false)
 end)
+-- Reliable ACCEPT that doesn't depend on tapping the game's green button (which
+-- fails to register on some phones): opens the trade layout directly.
+makeRowButton(pTrade, "Accept & open trade", "opens the trade (works on phone)", "Open", C_GREEN, function()
+	HarnessTradeActive = true
+	startTrade(currentName())
+end)
 
 local _, setP2Side = makeRowToggle(pTrade, "Spawn to Player 2 side", "on = spawned items land in THEIR offer", false, function(on)
 	OfferMode = on and "Player2" or "Player1"
@@ -4303,6 +4309,10 @@ if true then
 				Callback = function() showRequestModal(currentName(), true) end })
 			T:Button({ Title = "Outgoing request", Desc = "YOU send a request (waiting)",
 				Callback = function() showRequestModal(currentName(), false) end })
+			-- Reliable ACCEPT: opens the trade directly, without needing to tap the
+			-- game's green button (that button doesn't register taps on some phones).
+			T:Button({ Title = "✓ Accept & open trade", Desc = "opens the trade layout (works on phone)",
+				Callback = function() HarnessTradeActive = true; startTrade(currentName()) end })
 			T:Toggle({ Title = "Spawn to Player 2 side", Desc = "on = spawned items land in THEIR offer", Default = false,
 				Callback = function(on) OfferMode = on and "Player2" or "Player1" end })
 			T:Toggle({ Title = "Overlay on REAL trade", Desc = "fake items on your side (visual only)", Default = false,
