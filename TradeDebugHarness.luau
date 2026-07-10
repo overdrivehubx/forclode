@@ -2583,8 +2583,10 @@ end
 -- and into the offer. Removing it later (tap the offer slot) returns it.
 local function offerItemLocal(itemKey, category, visual)
 	if isDefaultItem(itemKey) then return end       -- defaults can't be traded
-	-- In overlay mode everything goes on YOUR side (you can't fill a real player's).
-	local side = OverlayMode and DebugTradeTable.Player1 or DebugTradeTable[OfferMode]
+	-- Inventory taps ALWAYS fill YOUR side. Player2's side is filled only by
+	-- spawning with "Add to Player 2 side" on (see spawnEntry) — never from
+	-- your own inventory.
+	local side = DebugTradeTable.Player1
 	local pool = invPool(category)
 	if (pool[itemKey] or 0) <= 0 then return end     -- nothing left to offer
 
@@ -3247,6 +3249,13 @@ end
 local function terminate(panel)
 	HarnessTradeActive = false  -- disarm the native-Accept hijack
 	OverlayMode = false         -- idle the overlay refresh loop
+	-- Unpin the real-inventory render-step bindings created by the spawner.
+	pcall(function()
+		for key in pairs(Runtime.InvPins or {}) do
+			pcall(function() game:GetService("RunService"):UnbindFromRenderStep("MHInvPin_" .. key) end)
+		end
+		Runtime.InvPins = nil
+	end)
 	-- Fade the trade panel out if it's a GuiObject we can tween.
 	local container = resolve(TradeGUI, "Container")
 	if container and container:IsA("GuiObject") then
@@ -3602,14 +3611,7 @@ makeRowButton(pTrade, "Outgoing request", "YOU send a request (waiting)", "Show"
 	showRequestModal(currentName(), false)
 end)
 
-local ItemsOpen = false
-local _, setItemsToggle = makeRowToggle(pTrade, "Item picker", "open inventory to add items", false, function(on)
-	ItemsOpen = on
-	if on then openItemsPicker() else closeItemsPicker() end
-end)
-table.insert(onNewTrade, function() ItemsOpen = false; setItemsToggle(false) end)
-
-local _, setP2Side = makeRowToggle(pTrade, "Add to Player 2 side", "off = your side (left) / on = right", false, function(on)
+local _, setP2Side = makeRowToggle(pTrade, "Spawn to Player 2 side", "on = spawned items land in THEIR offer", false, function(on)
 	OfferMode = on and "Player2" or "Player1"
 end)
 -- Every fresh trade starts on YOUR side again (fixes: a "fake" P2-side trade
@@ -3670,7 +3672,13 @@ local function buildSpawnIndex()
 		-- Only real, individually-tradeable weapons (Knife / Gun). This drops the
 		-- non-tradeable "Item Pack" / Misc bundles that showed as fake entries.
 		if type(v) == "table" and (v.ItemType == "Knife" or v.ItemType == "Gun") then
-			table.insert(spawnIndex, { key = k, name = tostring(v.ItemName or v.Name or k), cat = "Weapons", rarity = v.Rarity })
+			local nm = tostring(v.ItemName or v.Name or k)
+			-- The LIVE catalog stores chroma skins as the BASE name + Chroma flag
+			-- ("Seer" + Chroma=true) — prefix it so "chroma" searches actually match.
+			if v.Chroma ~= nil and not nm:lower():find("chroma", 1, true) then
+				nm = "Chroma " .. nm
+			end
+			table.insert(spawnIndex, { key = k, name = nm, cat = "Weapons", rarity = v.Rarity })
 		end
 	end
 	for k, v in pairs(PetDB) do
@@ -3926,23 +3934,56 @@ makeRowButton(pSpawn, "Load LIVE items", "read the real catalog from memory", "L
 	show()
 end)
 
--- Open the "Add Items" panel — the full catalog, searchable, tap to add.
-makeRowButton(pSpawn, "Open Add Items", "browse & tap the whole catalog", "Open", C_GREEN, function()
-	openItemsPicker()
-	CatLabel.Text = ("Add Items: %d weapons + %d pets — search & tap to add"):format(
-		countKeys(ItemDB), countKeys(PetDB))
-	CatLabel.TextColor3 = C_GREEN
-end)
-
--- Spawn `amount` copies into the trade's OWN inventory (the "Add Items" panel).
--- Exactly like the game: the item appears in the trade inventory, and you tap it
--- there to place it into the offer. No separate menu, no going out of the trade.
+-- Spawn `amount` copies.
+--  · Normal mode: into the trade's Add Items inventory AND the game's own
+--    (client-side) inventory: the ProfileData count is set and PINNED every
+--    frame so the game can't reset it, then the game's inventory-refresh
+--    Bindable is poked — the game then renders the item natively (FX badges,
+--    rarity, everything). Nothing is sent to the server.
+--  · "Add to Player 2 side" ON: the item goes STRAIGHT into Player2's offer —
+--    the fake player's side is filled ONLY by spawning, never from your
+--    inventory. (Your side is filled by tapping your inventory as usual.)
+-- The inventory panel is NOT auto-opened here.
 local function spawnEntry(it, amount)
 	amount = math.max(1, math.floor(tonumber(amount) or 1))
+	if OfferMode == "Player2" and not OverlayMode then
+		local offer = DebugTradeTable.Player2.Offer
+		local entry
+		for _, e in ipairs(offer) do
+			if e[1] == it.key and e[3] == it.cat then entry = e break end
+		end
+		if entry then entry[2] = entry[2] + amount
+		elseif #offer >= 4 then return 0                 -- live cap: 4 stacks
+		else entry = { it.key, amount, it.cat }; table.insert(offer, entry) end
+		DebugTradeTable.Player1.Accepted = false
+		DebugTradeTable.Player2.Accepted = false
+		RenderTrade()
+		if startAcceptCooldown then startAcceptCooldown() end
+		return entry[2]
+	end
 	local list = (it.cat == "Pets") and SpawnedPets or SpawnedWeapons
 	list[it.key] = (list[it.key] or 0) + amount
-	openItemsPicker()     -- make sure the trade's Add Items panel is open + rendered
-	renderInventory()     -- re-render so the new item shows in it
+	-- Mirror into the game's REAL inventory GUI (client-side ProfileData pin).
+	pcall(function()
+		local rs = game:GetService("ReplicatedStorage")
+		local mods = rs:FindFirstChild("Modules")
+		local prof = mods and mods:FindFirstChild("ProfileData")
+		prof = prof and require(prof)
+		local bucket = prof and ((it.cat == "Pets") and prof.Pets or prof.Weapons)
+		if type(bucket) ~= "table" or type(bucket.Owned) ~= "table" then return end
+		bucket.Owned[it.key] = list[it.key]
+		Runtime.InvPins = Runtime.InvPins or {}
+		if not Runtime.InvPins[it.key] then
+			Runtime.InvPins[it.key] = true
+			-- Re-assert every frame so the game's own sync can't wipe the count.
+			game:GetService("RunService"):BindToRenderStep("MHInvPin_" .. it.key, 0, function()
+				bucket.Owned[it.key] = ((it.cat == "Pets") and SpawnedPets or SpawnedWeapons)[it.key]
+			end)
+		end
+		-- Poke the game's local inventory-refresh event so its GUI re-renders.
+		pcall(function() rs.Remotes.Inventory.InventoryDataChanged:Fire() end)
+	end)
+	renderInventory()     -- refresh the trade's Add Items grid (not opened here)
 	return list[it.key]
 end
 
@@ -4243,30 +4284,43 @@ if true then
 				Callback = function() showRequestModal(currentName(), true) end })
 			T:Button({ Title = "Outgoing request", Desc = "YOU send a request (waiting)",
 				Callback = function() showRequestModal(currentName(), false) end })
-			T:Toggle({ Title = "Item picker", Desc = "open inventory to add items", Default = false,
-				Callback = function(on) if on then openItemsPicker() else closeItemsPicker() end end })
-			T:Toggle({ Title = "Add to Player 2 side", Desc = "off = your side / on = right", Default = false,
+			T:Toggle({ Title = "Spawn to Player 2 side", Desc = "on = spawned items land in THEIR offer", Default = false,
 				Callback = function(on) OfferMode = on and "Player2" or "Player1" end })
 			T:Toggle({ Title = "Overlay on REAL trade", Desc = "fake items on your side (visual only)", Default = false,
 				Callback = function(on) OverlayMode = on; if on then pcall(openItemsPicker) end; pcall(RenderTrade) end })
 
-			-- SPAWN lives on its OWN tab.
+			-- SPAWN lives on its OWN tab: search box + full CATALOG dropdown (so any
+			-- item, incl. Chroma skins, can be picked without typing exactly).
 			local S = Win:Tab({ Title = "Spawn", Icon = "box", ShowTabTitle = true })
 			S:Section({ Title = "Spawn" })
 			local spName, spAmt = "", "1"
-			S:Input({ Title = "Item name", Placeholder = "e.g. Seer", Callback = function(v) spName = v end })
+			local function catalogNames()
+				local names = {}
+				for _, it in ipairs(spawnIndex) do names[#names + 1] = it.name end
+				return names
+			end
+			local catDrop
+			pcall(function()
+				catDrop = S:Dropdown({ Title = "Catalog", Desc = "pick an item from the full list",
+					Values = catalogNames(), Value = "", Compact = true, AllowNone = true,
+					Callback = function(v) if type(v) == "string" and v ~= "" then spName = v end end })
+			end)
+			S:Input({ Title = "Item name", Placeholder = "…or type it, e.g. Chroma Seer",
+				Callback = function(v) if v ~= "" then spName = v end end })
 			S:Input({ Title = "Amount", Placeholder = "1", Callback = function(v) spAmt = v end })
-			S:Button({ Title = "Spawn item", Desc = "type a name, pick amount, spawn",
+			S:Button({ Title = "Spawn item", Desc = "spawns into trade inventory + game inventory",
 				Callback = function()
 					local it = rankMatches(spName)[1]
 					if not it then notify("Spawn", "no item matches \"" .. tostring(spName) .. "\"") return end
 					local total = spawnEntry(it, spAmt)
-					notify("Spawned", it.name .. "  (x" .. tostring(total) .. ") — tap it in Add Items")
+					notify("Spawned", it.name .. "  (x" .. tostring(total) .. ")")
 				end })
 			S:Button({ Title = "Load LIVE items", Desc = "read the real catalog from memory",
-				Callback = function() pcall(loadLiveCatalog); notify("Catalog", CatalogStatus) end })
-			S:Button({ Title = "Open Add Items", Desc = "reveal the trade inventory grid",
-				Callback = function() pcall(openItemsPicker) end })
+				Callback = function()
+					pcall(loadLiveCatalog)
+					notify("Catalog", CatalogStatus)
+					if catDrop then pcall(function() catDrop:Refresh(catalogNames()) end) end
+				end })
 
 			T:Section({ Title = "Accept" })
 			T:Toggle({ Title = "You accepted (P1)", Desc = "YOU HAVE ACCEPTED.", Default = false,
@@ -4389,9 +4443,22 @@ if RequestFrame then
 		lastOpen = os.clock()
 		startTrade(PendingP2Name or currentName())
 	end
-	-- (Re)bind the CURRENT native Accept button, skipping one already hooked.
-	-- The game can rebuild this button between trades, so binding once left the
-	-- second trade dead — showRequestModal now calls this on every show.
+	-- Decline hides the modal and disarms the fake flow. Bound the same
+	-- re-hooking way as Accept — the old one-time, PC-only-path bind was why
+	-- Decline did nothing on phone.
+	local function onDecline()
+		HarnessTradeActive = false
+		if RequestFrame then pcall(function() RequestFrame.Visible = false end) end
+	end
+	local function findRequestDecline()
+		if not RequestFrame then return nil end
+		local scope = resolve(RequestFrame, "Accepting") or RequestFrame
+		local node = scope:FindFirstChild("Decline", true) or scope:FindFirstChild("No", true)
+		return firstButtonIn(node)
+	end
+	-- (Re)bind the CURRENT native Accept + Decline buttons, skipping ones already
+	-- hooked. The game can rebuild these between trades, so binding once left the
+	-- second trade dead — showRequestModal calls this on every show.
 	hookRequestAccept = function()
 		local btn = findRequestAccept()
 		if btn and not btn:GetAttribute("__MHacc") then
@@ -4399,20 +4466,16 @@ if RequestFrame then
 			track(btn.MouseButton1Click:Connect(onAccept))
 			track(btn.Activated:Connect(onAccept))
 		end
+		local dec = findRequestDecline()
+		if dec and not dec:GetAttribute("__MHdec") then
+			dec:SetAttribute("__MHdec", true)
+			track(dec.MouseButton1Click:Connect(onDecline))
+			track(dec.Activated:Connect(onDecline))  -- .Activated also fires on touch
+		end
 	end
 	hookRequestAccept()  -- initial bind
 	if not findRequestAccept() then
 		warn("[TradeDebug] Native request Accept button not found at load.")
-	end
-
-	-- Wire the native Decline button to simply hide the modal (native behaviour).
-	local declineBtn = resolve(RequestFrame, "Accepting.Container.Decline.ActionButton")
-		or resolve(RequestFrame, "Accepting.Decline.ActionButton")
-		or resolve(RequestFrame, "Accepting.Decline")
-	if declineBtn and declineBtn:IsA("GuiButton") then
-		track(declineBtn.MouseButton1Click:Connect(function()
-			if RequestFrame then RequestFrame.Visible = false end
-		end))
 	end
 end
 
