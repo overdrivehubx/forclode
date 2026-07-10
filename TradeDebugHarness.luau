@@ -2193,6 +2193,11 @@ local PendingP2Name = "Player2"
 local onNewTrade = {}
 -- Token that invalidates a pending "trade complete" close if a new trade starts.
 local completeToken = 0
+-- True only while a HARNESS-initiated fake trade is active. The native green
+-- Accept button is only hijacked (→ our fake startTrade) when this is set, so
+-- accepting a REAL trade with a real player is left completely untouched — the
+-- harness never wipes or steals items from a genuine game trade.
+local HarnessTradeActive = false
 -- Forward decls so the request modal can (re)hook the native Accept button —
 -- the game may rebuild that button between trades, so a one-time hook goes stale
 -- (this is the "can't start a second trade" bug). We re-hook on every show.
@@ -2666,98 +2671,6 @@ local function renderInventoryPane(frame, owned, db, category)
 	end
 end
 
--- Read an item slot's on-screen visuals (image / name / rarity colour) so an
--- offer can display the real item without any catalog lookup.
-local function readSlotVisual(slot)
-	local icon = resolve(slot, "Container.Icon") or slot:FindFirstChild("Icon", true)
-	local nameLabel = resolve(slot, "ItemName.Label") or resolve(slot, "Container.ItemName")
-		or (slot:FindFirstChild("ItemName") and slot.ItemName:FindFirstChildWhichIsA("TextLabel"))
-		or slot:FindFirstChild("Label", true)
-	local col = Color3.new(1, 1, 1)
-	if nameLabel then
-		col = (nameLabel:IsA("TextLabel") and nameLabel.TextColor3) or col
-		local holder = nameLabel.Parent
-		if holder and holder:IsA("GuiObject") and holder.BackgroundTransparency < 1 then col = holder.BackgroundColor3 end
-	end
-	return {
-		Image = (icon and icon.Image) or "",
-		Name  = (nameLabel and nameLabel.Text) or slot.Name,
-		Color = col,
-		Chroma = slot:FindFirstChild("Chroma", true) ~= nil,
-	}
-end
-
--- ===== Real-inventory link ====================================================
--- The game renders the player's owned items as slots in PlayerGui (each slot's
--- .Name is the item key, with a real Icon image + rarity + amount). We scrape
--- those to mirror the REAL inventory into the trade — no server calls, no
--- catalog dependency. Open your inventory/trade so the slots exist, then Link.
-local function slotIconImage(d)
-	local icon
-	if d:IsA("ImageLabel") or d:IsA("ImageButton") then icon = d
-	else icon = d:FindFirstChild("Icon") or resolve(d, "Container.Icon") end
-	if icon and (icon:IsA("ImageLabel") or icon:IsA("ImageButton")) then
-		local img = icon.Image
-		if type(img) == "string" and img ~= "" and img ~= "rbxassetid://0" then return img end
-	end
-	return nil
-end
-
-local function scrapeRealInventory()
-	local result = { Weapons = {}, Pets = {} }
-	local total = 0
-	for _, d in ipairs(PlayerGui:GetDescendants()) do
-		if d:IsA("GuiObject")
-			and not d:GetAttribute("__MHSpawn")               -- skip slots we rendered
-			and not d:FindFirstAncestor("TradeDebugPanel") then -- skip our own panel
-			-- skip anything inside a trade OFFER frame (those are offered items)
-			local inOffer = false
-			for _, nm in ipairs({ "Offer1", "Offer2", "YourOffer", "TheirOffer" }) do
-				if d:FindFirstAncestor(nm) then inOffer = true; break end
-			end
-			local img = (not inOffer) and slotIconImage(d) or nil
-			if img then
-				local key = d.Name
-				local known = ItemDB[key] or PetDB[key]
-				local nameLabel = resolve(d, "ItemName.Label")
-					or (d:FindFirstChild("ItemName") and d.ItemName:FindFirstChildWhichIsA("TextLabel"))
-					or (d:FindFirstChild("ItemName") and d.ItemName:IsA("TextLabel") and d.ItemName)
-				-- only treat as an item slot if it has a name label or a known key
-				if known or (nameLabel and nameLabel:IsA("TextLabel")) then
-					local isPet = (d:FindFirstAncestor("Pets") or d:FindFirstAncestor("PetsFrame")) ~= nil
-						or PetDB[key] ~= nil
-					local cat = isPet and "Pets" or "Weapons"
-					local visual = readSlotVisual(d)
-					visual.Image = img
-					if nameLabel and nameLabel:IsA("TextLabel") and tostring(nameLabel.Text) ~= "" then
-						visual.Name = nameLabel.Text
-					end
-					-- Prefer clean catalog name/rarity when the key is known.
-					local db = known and (isPet and PetDB or ItemDB)[key]
-					if db then
-						visual.Name = db.ItemName or db.Name or visual.Name
-						visual.Color = (db.Rarity == "Common") and RARITY_GREY
-							or (Rarity[db.Rarity] or visual.Color)
-						visual.Chroma = db.Chroma == true
-					end
-					-- Amount from the slot ("x67" -> 67).
-					local amtLabel = resolve(d, "Container.Amount") or d:FindFirstChild("Amount", true)
-					local amount = 1
-					if amtLabel and amtLabel:IsA("TextLabel") then
-						local n = tonumber((tostring(amtLabel.Text):gsub("%D", "")))
-						if n and n > 0 then amount = n end
-					end
-					if not result[cat][key] then
-						result[cat][key] = { visual = visual, amount = amount }
-						total = total + 1
-					end
-				end
-			end
-		end
-	end
-	return result, total
-end
--- ============================================================================
 
 -- Find the inventory container for a category + a real slot to clone (correct
 -- size/style for the platform). Name-agnostic: uses any real slot in the picker.
@@ -2844,30 +2757,41 @@ local InvContainer
 --   Unique    <- ItemData.CustomAward / Leaderboard / Unique (+ owner PlayerName)
 -- Each child is toggled defensively (setProp no-ops when the template lacks it),
 -- so slots with only a subset of badge frames still render correctly.
+-- Show a single badge frame by name: force IT and its children visible (the
+-- cloned inventory template can carry a hidden badge subtree, which is why tags
+-- showed in the offer but not in the Add Items grid).
+local function showBadge(tags, name)
+	local b = tags:FindFirstChild(name)
+	if b then revealSubtree(b) end
+	return b
+end
 local function applyTags(slot, data)
 	local tags = slot:FindFirstChild("Tags")
 	if not tags then return end
-	-- Reset then light only what applies (mirrors the game's set-false-first pass).
-	for _, name in ipairs({ "Chroma", "Christmas", "Halloween", "Unique", "Evo" }) do
+	-- The Tags CONTAINER itself may be hidden on a cloned slot — un-hide it so the
+	-- badges inside can render at all.
+	if tags:IsA("GuiObject") then pcall(function() tags.Visible = true end) end
+	-- Reset every badge first (mirrors the game's set-false pass), then light only
+	-- what applies. FX is included: some builds carry an FX badge frame we couldn't
+	-- see in older dumps; toggle it defensively when the item data marks an effect.
+	for _, name in ipairs({ "Chroma", "Christmas", "Halloween", "Unique", "Evo", "FX" }) do
 		setProp(tags, name, "Visible", false)
 	end
-	if data.Chroma ~= nil then setProp(tags, "Chroma", "Visible", true) end
-	if data.EvoBaseID ~= nil or data.Evo ~= nil then setProp(tags, "Evo", "Visible", true) end
-	local xmas = tags:FindFirstChild("Christmas")
-	if xmas and (data.Event == "Christmas" or data.YearTag ~= nil or data.Christmas ~= nil) then
-		xmas.Visible = true
-		if data.Year then setProp(xmas, "Year", "Text", tostring(data.Year)) end
+	if data.Chroma ~= nil then showBadge(tags, "Chroma") end
+	if data.EvoBaseID ~= nil or data.Evo ~= nil then showBadge(tags, "Evo") end
+	if data.FX ~= nil or data.Effect ~= nil or data.HasFX ~= nil then showBadge(tags, "FX") end
+	if data.Event == "Christmas" or data.YearTag ~= nil or data.Christmas ~= nil then
+		local xmas = showBadge(tags, "Christmas")
+		if xmas and data.Year then setProp(xmas, "Year", "Text", tostring(data.Year)) end
 	end
-	local hw = tags:FindFirstChild("Halloween")
-	if hw and (data.Event == "Halloween" or data.YearTagHW ~= nil or data.Halloween ~= nil) then
-		hw.Visible = true
-		if data.Year then setProp(hw, "Year", "Text", tostring(data.Year)) end
+	if data.Event == "Halloween" or data.YearTagHW ~= nil or data.Halloween ~= nil then
+		local hw = showBadge(tags, "Halloween")
+		if hw and data.Year then setProp(hw, "Year", "Text", tostring(data.Year)) end
 	end
-	local uniq = tags:FindFirstChild("Unique")
-	if uniq and (data.CustomAward ~= nil or data.Leaderboard ~= nil or data.Unique ~= nil) then
-		uniq.Visible = true
+	if data.CustomAward ~= nil or data.Leaderboard ~= nil or data.Unique ~= nil then
+		local uniq = showBadge(tags, "Unique")
 		local owner = data.CustomAward or data.Leaderboard
-		if type(owner) == "string" then setProp(uniq, "PlayerName", "Text", owner) end
+		if uniq and type(owner) == "string" then setProp(uniq, "PlayerName", "Text", owner) end
 	end
 end
 
@@ -2936,13 +2860,6 @@ local function slotNameLabel(d)
 	return n and n:IsA("TextLabel") and n or nil
 end
 
--- Build an offer visual (image / name / rarity colour) from a real game slot.
--- Read a slot's amount ("x67" / "67" -> 67).
--- A slot belongs to a SHOP / crate / currency screen (not the player's owned
--- inventory) if an ancestor is named like a shop or it carries a price element.
--- This keeps donation/godly-for-1699 items out of the mirrored inventory.
-local SHOP_WORDS = { "shop", "store", "purchase", "crate", "unbox",
-	"gamepass", "robux", "gemshop", "market", "premium", "recycl", "dealer" }
 -- Scan PlayerGui for the player's REAL inventory slots WHEREVER the game
 -- rendered them (the big Weapons/Pets menu holds ~200 slots; the trade GUI's
 -- own inventory may hold only a couple). We (a) hook each real slot in place so
@@ -3143,6 +3060,7 @@ end
 local function showRequestModal(player2Name, isIncoming)
 	if isIncoming == nil then isIncoming = true end
 	PendingP2Name = player2Name
+	HarnessTradeActive = true  -- arm the native-Accept hijack for OUR fake flow
 	if not RequestFrame then
 		warn("[TradeDebug] TradeRequest frame not found in PlayerGui — cannot show request.")
 		return
@@ -3217,6 +3135,7 @@ local function completeTradeIfBothAccepted()
 			-- Reset accepted state so the NEXT trade starts clean.
 			DebugTradeTable.Player1.Accepted = false
 			DebugTradeTable.Player2.Accepted = false
+			HarnessTradeActive = false  -- disarm; re-shown request re-arms it
 			showAcceptedBadge("your", false); showAcceptedBadge("their", false)
 			for _, f in ipairs(onNewTrade) do pcall(f) end
 		end)
@@ -3289,6 +3208,7 @@ end
 
 -- Clean close: play the fade, wipe the tables, drop the panel.
 local function terminate(panel)
+	HarnessTradeActive = false  -- disarm the native-Accept hijack
 	-- Fade the trade panel out if it's a GuiObject we can tween.
 	local container = resolve(TradeGUI, "Container")
 	if container and container:IsA("GuiObject") then
@@ -3712,12 +3632,8 @@ makeRowButton(pSpawn, "Diagnose data", "why catalog is real / fallback", "Diag",
 		end
 	end
 	table.insert(lines, "ItemsPicker: " .. (ItemsPicker and ItemsPicker:GetFullName() or "nil") .. " | slots=" .. nslots)
-	local _, rc = scrapeRealInventory()
-	table.insert(lines, "real inventory slots found: " .. rc)
 	Diag.Text = table.concat(lines, "\n")
 	Diag.Visible = true
-	-- also re-attempt the real fetch in the background
-	task.spawn(applyRealData)
 end)
 
 -- Dump the STRUCTURE of the first few detected WEAPON slots so the real slot
@@ -3759,7 +3675,17 @@ makeRowButton(pSpawn, "Dump slots", "show inventory container + slot", "Dump", C
 					table.insert(lines, "  ItemName<" .. inm.ClassName .. ">:" .. kidsOf(inm))
 				end
 				local tg = s:FindFirstChild("Tags")
-				if tg then table.insert(lines, "  Tags:" .. kidsOf(tg)) end
+				if tg then
+					table.insert(lines, "  Tags:" .. kidsOf(tg))
+					-- Full per-badge detail (class + Visible) so we can see if an FX
+					-- badge frame exists in this build and whether it's showing.
+					for _, b in ipairs(tg:GetChildren()) do
+						if b:IsA("GuiObject") then
+							table.insert(lines, ("   • %s(%s) vis=%s kids[%s]"):format(
+								b.Name, b.ClassName, tostring(b.Visible), kidsOf(b)))
+						end
+					end
+				end
 				break
 			end
 		end
@@ -4176,6 +4102,9 @@ if RequestFrame then
 	-- guarding against a double-open with a short debounce.
 	local lastOpen = 0
 	local function onAccept()
+		-- Only hijack the native Accept when WE armed a fake request. A real trade
+		-- the player accepts normally must pass straight through, untouched.
+		if not HarnessTradeActive then return end
 		if os.clock() - lastOpen < 0.3 then return end
 		lastOpen = os.clock()
 		startTrade(PendingP2Name or currentName())
