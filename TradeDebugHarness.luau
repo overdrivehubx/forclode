@@ -2794,21 +2794,38 @@ local InvContainer
 -- Stamp a catalog item onto a cloned slot. Matches the game's INVENTORY style:
 -- the ItemName PLATE is coloured by rarity (grey for Common); the label text
 -- keeps the template's own colour — this fixes the "wrong/too bright" colours.
--- Set the year/holiday/chroma tag badges exactly like the game's UpdateInventory.
+-- Set the tag badges exactly like the game's UpdateInventory / trade render:
+--   Chroma    <- ItemData.Chroma
+--   Christmas <- ItemData.YearTag   (+ Year text)
+--   Halloween <- ItemData.YearTagHW (+ Year text)
+--   Unique    <- ItemData.CustomAward / Leaderboard / Unique (+ owner PlayerName)
+--   Evo       <- ItemData.Evo
+-- Every child is toggled defensively (setProp no-ops when the template lacks it),
+-- so builds whose slot has only a subset of badges still render correctly.
 local function applyTags(slot, data)
-	setProp(slot, "Tags.Chroma", "Visible", data.Chroma ~= nil)
 	local tags = slot:FindFirstChild("Tags")
 	if not tags then return end
-	local xmas, hw = tags:FindFirstChild("Christmas"), tags:FindFirstChild("Halloween")
-	local isXmas = (data.YearTag ~= nil) or (data.Christmas ~= nil)
-	local isHW   = (data.YearTagHW ~= nil) or (data.Halloween ~= nil)
-	if xmas then
-		xmas.Visible = isXmas
-		if isXmas and data.Year then setProp(xmas, "Year", "Text", tostring(data.Year)) end
+	-- Reset then light only what applies (mirrors the game's set-false-first pass).
+	for _, name in ipairs({ "Chroma", "Christmas", "Halloween", "Unique", "Evo" }) do
+		setProp(tags, name, "Visible", false)
 	end
-	if hw then
-		hw.Visible = isHW
-		if isHW and data.Year then setProp(hw, "Year", "Text", tostring(data.Year)) end
+	if data.Chroma ~= nil then setProp(tags, "Chroma", "Visible", true) end
+	if data.Evo ~= nil then setProp(tags, "Evo", "Visible", true) end
+	local xmas = tags:FindFirstChild("Christmas")
+	if xmas and (data.YearTag ~= nil or data.Christmas ~= nil) then
+		xmas.Visible = true
+		if data.Year then setProp(xmas, "Year", "Text", tostring(data.Year)) end
+	end
+	local hw = tags:FindFirstChild("Halloween")
+	if hw and (data.YearTagHW ~= nil or data.Halloween ~= nil) then
+		hw.Visible = true
+		if data.Year then setProp(hw, "Year", "Text", tostring(data.Year)) end
+	end
+	local uniq = tags:FindFirstChild("Unique")
+	if uniq and (data.CustomAward ~= nil or data.Leaderboard ~= nil or data.Unique ~= nil) then
+		uniq.Visible = true
+		local owner = data.CustomAward or data.Leaderboard
+		if type(owner) == "string" then setProp(uniq, "PlayerName", "Text", owner) end
 	end
 end
 
