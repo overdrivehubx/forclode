@@ -2176,8 +2176,10 @@ _G.DebugTradeTable = DebugTradeTable
 -- Which side receives the next inventory click. "Player1" = left, "Player2" = right.
 local OfferMode = "Player1"
 
--- Items the user spawned into the inventory (key -> amount).
-local SpawnedWeapons = {}
+-- Items the user spawned into the inventory (key -> amount). Every MM2 inventory
+-- starts with the two default starter items (Default Knife + Default Gun); they
+-- are never tradeable and never consumed, and always sort to the front.
+local SpawnedWeapons = { DefaultKnife = 1, DefaultGun = 1 }
 local SpawnedPets = {}
 
 -- Items scraped from the REAL game inventory rendered in PlayerGui
@@ -2387,17 +2389,14 @@ local function renderOffer(sideKey, offerFrame)
 			setProp(slot, "Container.Amount", "Text", (amount and amount > 1) and ("x" .. amount) or "")
 			setProp(slot, "Tags.Chroma", "Visible", chroma and true or false)
 
-			-- Clicking a slot in your own offer removes it (local, no server).
+			-- Clicking an offer slot pulls ONE copy back out and returns it to the
+			-- inventory — on EITHER side (you can take items off both offers).
 			local removeBtn = resolve(slot, "Container.ActionButton")
-			if removeBtn and sideKey == "Player1" then
+				or resolve(slot, "Container.Button")
+			if removeBtn then
+				local idx = i  -- capture this slot's offer index
 				trackRender(removeBtn.MouseButton1Click:Connect(function()
-					table.remove(DebugTradeTable[sideKey].Offer, i)
-					DebugTradeTable.Player1.Accepted = false
-					DebugTradeTable.Player2.Accepted = false
-					setVisible(TradeRoot, "Actions.Accept.Confirm", false)
-					setVisible(TradeRoot, "Actions.Accept.Cancel", false)
-					RenderTrade()
-					if startAcceptCooldown then startAcceptCooldown() end
+					unofferOne(sideKey, idx)
 				end))
 			end
 		end
@@ -2548,10 +2547,24 @@ end
 
 -- Offer an item into whichever side OfferMode currently targets. `visual` (from
 -- a clicked real inventory slot) lets offers show real items with no catalog.
+-- The inventory pool a category draws from (weapons vs pets).
+local function invPool(category)
+	return (category == "Pets") and SpawnedPets or SpawnedWeapons
+end
+
+-- Default starter items are never tradeable and never consumed (like the game).
+local function isDefaultItem(key)
+	return key == "DefaultKnife" or key == "DefaultGun"
+end
+
+-- Place ONE copy of an item into the current side's offer, CONSUMING it from the
+-- inventory (Add Items) — exactly like the game moves an item out of your pack
+-- and into the offer. Removing it later (tap the offer slot) returns it.
 local function offerItemLocal(itemKey, category, visual)
-	if itemKey == "DefaultKnife" or itemKey == "DefaultGun" then return end
+	if isDefaultItem(itemKey) then return end       -- defaults can't be traded
 	local side = DebugTradeTable[OfferMode]
-	if #side.Offer >= 4 then return end -- live cap: 4 stacks per side
+	local pool = invPool(category)
+	if (pool[itemKey] or 0) <= 0 then return end     -- nothing left to offer
 
 	-- Stack onto an existing entry or add a new one (mirrors Module.Trade.OfferItem).
 	local existing
@@ -2561,10 +2574,15 @@ local function offerItemLocal(itemKey, category, visual)
 	if existing then
 		existing[2] = existing[2] + 1
 	else
+		if #side.Offer >= 4 then return end          -- live cap: 4 stacks per side
 		local e = { itemKey, 1, category }
 		e.visual = visual
 		table.insert(side.Offer, e)
 	end
+
+	-- Consume one from the inventory so the count drops (and it can run out).
+	pool[itemKey] = pool[itemKey] - 1
+	if pool[itemKey] <= 0 then pool[itemKey] = nil end
 
 	-- Any change to the table resets both acceptance flags, like the server does.
 	DebugTradeTable.LastOffer = os.time()
@@ -2574,8 +2592,31 @@ local function offerItemLocal(itemKey, category, visual)
 	-- Editing an offer collapses the confirm/cancel steps, matching the live UI.
 	setVisible(TradeRoot, "Actions.Accept.Confirm", false)
 	setVisible(TradeRoot, "Actions.Accept.Cancel", false)
+	renderInventory()      -- refresh the inventory counts
 	RenderTrade()
 	startAcceptCooldown()  -- 6s "please wait before accepting"
+end
+
+-- Take ONE copy back out of a side's offer and RETURN it to the inventory.
+-- Used by the offer-slot tap on BOTH sides (you can pull items off either side).
+-- Global so renderOffer (defined earlier) can reference it.
+function unofferOne(sideKey, index)
+	local offer = DebugTradeTable[sideKey].Offer
+	local entry = offer[index]
+	if not entry then return end
+	if not isDefaultItem(entry[1]) then
+		local pool = invPool(entry[3])
+		pool[entry[1]] = (pool[entry[1]] or 0) + 1
+	end
+	entry[2] = entry[2] - 1
+	if entry[2] <= 0 then table.remove(offer, index) end
+	DebugTradeTable.Player1.Accepted = false
+	DebugTradeTable.Player2.Accepted = false
+	setVisible(TradeRoot, "Actions.Accept.Confirm", false)
+	setVisible(TradeRoot, "Actions.Accept.Cancel", false)
+	renderInventory()
+	RenderTrade()
+	if startAcceptCooldown then startAcceptCooldown() end
 end
 
 -- Sorting helper reused for both inventory panes.
@@ -2794,14 +2835,15 @@ local InvContainer
 -- Stamp a catalog item onto a cloned slot. Matches the game's INVENTORY style:
 -- the ItemName PLATE is coloured by rarity (grey for Common); the label text
 -- keeps the template's own colour — this fixes the "wrong/too bright" colours.
--- Set the tag badges exactly like the game's UpdateInventory / trade render:
---   Chroma    <- ItemData.Chroma
---   Christmas <- ItemData.YearTag   (+ Year text)
---   Halloween <- ItemData.YearTagHW (+ Year text)
+-- Set the tag badges exactly like the game's GridFunctions / DisplayItem, reading
+-- the SAME item fields the game uses (this build stores holidays in Event/Year):
+--   Chroma    <- ItemData.Chroma == true
+--   Evo       <- ItemData.EvoBaseID ~= nil        (the "evolved" badge)
+--   Christmas <- ItemData.Event == "Christmas"    (+ Year text)   [or YearTag]
+--   Halloween <- ItemData.Event == "Halloween"    (+ Year text)   [or YearTagHW]
 --   Unique    <- ItemData.CustomAward / Leaderboard / Unique (+ owner PlayerName)
---   Evo       <- ItemData.Evo
--- Every child is toggled defensively (setProp no-ops when the template lacks it),
--- so builds whose slot has only a subset of badges still render correctly.
+-- Each child is toggled defensively (setProp no-ops when the template lacks it),
+-- so slots with only a subset of badge frames still render correctly.
 local function applyTags(slot, data)
 	local tags = slot:FindFirstChild("Tags")
 	if not tags then return end
@@ -2810,14 +2852,14 @@ local function applyTags(slot, data)
 		setProp(tags, name, "Visible", false)
 	end
 	if data.Chroma ~= nil then setProp(tags, "Chroma", "Visible", true) end
-	if data.Evo ~= nil then setProp(tags, "Evo", "Visible", true) end
+	if data.EvoBaseID ~= nil or data.Evo ~= nil then setProp(tags, "Evo", "Visible", true) end
 	local xmas = tags:FindFirstChild("Christmas")
-	if xmas and (data.YearTag ~= nil or data.Christmas ~= nil) then
+	if xmas and (data.Event == "Christmas" or data.YearTag ~= nil or data.Christmas ~= nil) then
 		xmas.Visible = true
 		if data.Year then setProp(xmas, "Year", "Text", tostring(data.Year)) end
 	end
 	local hw = tags:FindFirstChild("Halloween")
-	if hw and (data.YearTagHW ~= nil or data.Halloween ~= nil) then
+	if hw and (data.Event == "Halloween" or data.YearTagHW ~= nil or data.Halloween ~= nil) then
 		hw.Visible = true
 		if data.Year then setProp(hw, "Year", "Text", tostring(data.Year)) end
 	end
@@ -2921,21 +2963,27 @@ end
 
 -- Make sure the container arranges children in a grid (some builds position
 -- slots absolutely; if there is no layout we add one so clones don't overlap).
+-- Inventory icons were too small (the game's trade grid cell is only 84x96). Use
+-- a bigger cell so the icons match the offer slots — clamp into [MIN, MAX].
+local INV_CELL_MIN, INV_CELL_MAX = 108, 132
+local function clampCell(v, fallback)
+	if not v or v < 8 then return fallback end
+	if v < INV_CELL_MIN then return INV_CELL_MIN end
+	if v > INV_CELL_MAX then return INV_CELL_MAX end
+	return v
+end
 local function ensureLayout(container, cell)
+	local cx = clampCell(cell and cell.X, 112)
+	local cy = clampCell(cell and cell.Y, 120)
 	for _, c in ipairs(container:GetChildren()) do
 		if c:IsA("UIGridLayout") then
-			-- keep the game's grid but clamp huge cells so it doesn't look broken
-			local cs = c.CellSize
-			if cs.X.Offset > 130 or cs.Y.Offset > 130 or cs.X.Offset < 8 then
-				c.CellSize = UDim2.new(0, 84, 0, 96)
-			end
+			-- Enlarge the game's tiny grid cell so icons read at a comfortable size.
+			c.CellSize = UDim2.new(0, cx, 0, cy)
 			return
 		end
 		if c:IsA("UIListLayout") then return end
 	end
 	local grid = Instance.new("UIGridLayout")
-	local cx = (cell and cell.X > 8 and cell.X <= 130) and cell.X or 84
-	local cy = (cell and cell.Y > 8 and cell.Y <= 130) and cell.Y or 96
 	grid.CellSize = UDim2.new(0, cx, 0, cy)
 	grid.CellPadding = UDim2.new(0, 6, 0, 6)
 	grid.SortOrder = Enum.SortOrder.LayoutOrder
@@ -2960,6 +3008,9 @@ local function invArr(owned, db, query)
 		end
 	end
 	table.sort(arr, function(a, b)
+		-- Default Knife then Default Gun always lead (mirrors the game's sort).
+		if a.key == "DefaultKnife" then return true elseif b.key == "DefaultKnife" then return false
+		elseif a.key == "DefaultGun" then return true elseif b.key == "DefaultGun" then return false end
 		local ra = RarityValue[a.rarity or "Common"] or 0
 		local rb = RarityValue[b.rarity or "Common"] or 0
 		if ra ~= rb then return ra > rb end
@@ -3006,7 +3057,8 @@ local function renderPaneInventory(category, owned, db, query)
 	return #arr
 end
 
-local function renderInventory()
+-- Global (not local) so offerItemLocal / unofferOne, defined earlier, can call it.
+function renderInventory()
 	pcall(renderPaneInventory, "Weapons", SpawnedWeapons, ItemDB, CurrentQuery)
 	pcall(renderPaneInventory, "Pets", SpawnedPets, PetDB, CurrentQuery)
 end
@@ -3095,6 +3147,17 @@ local function showRequestModal(player2Name, isIncoming)
 		warn("[TradeDebug] TradeRequest frame not found in PlayerGui — cannot show request.")
 		return
 	end
+	-- Tear down any leftover trade UI from a PREVIOUS trade so a second (and third,
+	-- …) incoming request always presents cleanly — this is the fix for "can't
+	-- send the trade a second time". Cancel a pending "trade complete" close, stop
+	-- the cooldown, clear accepted badges, and hide the trade/processing panels.
+	completeToken = completeToken + 1
+	stopAcceptCooldown()
+	showAcceptedBadge("your", false); showAcceptedBadge("their", false)
+	local processing = resolve(TradeGUI, "Container.Processing")
+		or (Container and Container:FindFirstChild("Processing"))
+	if processing then pcall(function() processing.Visible = false end) end
+	if TradeRoot then pcall(function() TradeRoot.Visible = false end) end
 	-- Always bring the request on-screen so it actually appears (on phone this
 	-- also un-hides the leaderboard/Waiting screen it lives in). Reveal ancestors
 	-- FIRST, then configureRequest sets Visible + shows exactly one variant.
@@ -4201,21 +4264,22 @@ do
 	end
 end
 
--- Load the real catalog/inventory in the BACKGROUND (InvokeServer may yield) so
--- the menu is already on screen; the spawn list + inventory refresh when it lands.
-task.spawn(applyRealData)
-
--- Auto-load the LIVE catalog from memory (getgc). Retries a few times in case
--- the game hasn't cached it yet; falls back silently to the embedded catalog.
+-- Load the LIVE catalog. Prefer reading it straight from memory (require + getgc)
+-- — that is reliable and needs NO server round-trip, so item tags (Event/Year/
+-- Chroma/Evo) and rarity colours are the game's real ones. Only if that never
+-- succeeds do we fall back to the slow GetSyncData:InvokeServer probe (which
+-- times out on many executors — hence it is the LAST resort, not the first).
 task.spawn(function()
 	for _ = 1, 8 do
 		local ok, live = pcall(loadLiveCatalog)
 		if ok and live then
 			print("[TradeDebug] LIVE catalog loaded from memory (" .. countKeys(ItemDB) .. " items).")
-			break
+			return
 		end
 		task.wait(3)
 	end
+	-- getgc/require never produced the catalog — try the server probe as a fallback.
+	if not RealCatalog then task.spawn(applyRealData) end
 end)
 
 print("[TradeDebug] Harness loaded. Layout: " .. (TradeGUI and TradeGUI.Name or "NOT FOUND") ..
