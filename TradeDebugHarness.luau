@@ -2783,6 +2783,12 @@ local function paintSlot(slot, data, amount)
 	slot.Name = data.ItemName or data.Name or "Item"
 	slot.Visible = true
 	slot:SetAttribute("__MHSpawn", true)
+	-- The template (an offer slot) carries an absolute Position/AnchorPoint that
+	-- makes clones "float". Reset them so the container's UIGridLayout places it.
+	pcall(function()
+		slot.Position = UDim2.new(0, 0, 0, 0)
+		slot.AnchorPoint = Vector2.new(0, 0)
+	end)
 	local icon = slot:FindFirstChild("Icon") or resolve(slot, "Container.Icon")
 		or slot:FindFirstChildWhichIsA("ImageLabel", true)
 	if icon then pcall(function() icon.Image = getImage(data.Image) end) end
