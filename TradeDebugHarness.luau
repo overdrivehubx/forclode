@@ -4188,8 +4188,27 @@ if true then
 		end
 		local built = pcall(function()
 			pcall(function() lib:SetTheme("Dark") end)
+			-- Try to push a blue-gray custom theme (Rubis's exact key names are
+			-- unknown to us, so try a few shapes; unknown ones are ignored/pcall'd).
+			pcall(function()
+				lib:SetTheme({
+					Name = "MollyBlue",
+					Accent = Color3.fromRGB(108, 150, 210), AccentColor = Color3.fromRGB(108, 150, 210),
+					Background = Color3.fromRGB(24, 30, 42), Main = Color3.fromRGB(24, 30, 42),
+					Topbar = Color3.fromRGB(30, 37, 52), Second = Color3.fromRGB(35, 43, 60),
+					Text = Color3.fromRGB(228, 234, 246),
+				})
+			end)
 			local function notify(title, content)
 				pcall(function() lib:Notify({ Title = title, Content = content, Duration = 4 }) end)
+			end
+			-- Snapshot existing GUIs so we can find + reskin Rubis's own ScreenGui.
+			local guiRoots = { PlayerGui }
+			pcall(function() guiRoots[#guiRoots + 1] = game:GetService("CoreGui") end)
+			pcall(function() if gethui then guiRoots[#guiRoots + 1] = gethui() end end)
+			local seenGui = {}
+			for _, root in ipairs(guiRoots) do
+				for _, g in ipairs(root:GetChildren()) do seenGui[g] = true end
 			end
 			-- Blue-gray, slightly transparent, with your background photo. Rubis reads
 			-- these option names; the image ones let you drop in BG_IMAGE. Unknown
@@ -4260,6 +4279,58 @@ if true then
 				end })
 			T:Button({ Title = "Terminate + Wipe", Desc = "close & wipe the harness",
 				Callback = function() terminate(Panel) end })
+
+			-- MUSIC on its OWN tab. Reuse the "MollyHubMusic" Sound the built-in panel
+			-- created (in SoundService); make one if it isn't there yet.
+			local music = game:GetService("SoundService"):FindFirstChild("MollyHubMusic")
+			if not music then
+				music = Instance.new("Sound")
+				music.Name = "MollyHubMusic"; music.Looped = true; music.Volume = 0.5
+				music.SoundId = "rbxassetid://0"
+				pcall(function() music.Parent = game:GetService("SoundService") end)
+			end
+			local Mu = Win:Tab({ Title = "Music", Icon = "music", ShowTabTitle = true })
+			Mu:Section({ Title = "Music" })
+			Mu:Input({ Title = "Music ID", Placeholder = "rbxassetid://… or a number",
+				Callback = function(v)
+					v = tostring(v)
+					if v ~= "" then
+						music.SoundId = v:find("rbxassetid") and v or ("rbxassetid://" .. v:gsub("%D", ""))
+					end
+				end })
+			Mu:Toggle({ Title = "Play music", Default = false,
+				Callback = function(on) if on then pcall(function() music:Play() end) else pcall(function() music:Pause() end) end end })
+			Mu:Slider({ Title = "Volume", Value = { Min = 0, Max = 1, Default = 0.5 },
+				Callback = function(v) music.Volume = tonumber(v) or 0.5 end })
+
+			-- Blue-gray reskin: if the theme calls above didn't take, tint Rubis's own
+			-- ScreenGui toward blue-gray while KEEPING each element's brightness (so the
+			-- light/dark structure survives). Runs a few passes in case it renders late.
+			task.spawn(function()
+				local function blueTint(c)
+					local l = (c.R + c.G + c.B) / 3        -- brightness 0..1
+					return Color3.new(l * 0.80, l * 0.88, math.min(1, l * 1.06 + 0.03))
+				end
+				for _ = 1, 6 do
+					task.wait(0.3)
+					for _, root in ipairs(guiRoots) do
+						for _, g in ipairs(root:GetChildren()) do
+							if g:IsA("ScreenGui") and not seenGui[g] then
+								for _, d in ipairs(g:GetDescendants()) do
+									if (d:IsA("Frame") or d:IsA("ImageLabel") or d:IsA("ImageButton"))
+										and d.BackgroundTransparency < 1 and not d:GetAttribute("__MHtint") then
+										-- once per element, else repeated passes would over-tint
+										pcall(function()
+											d:SetAttribute("__MHtint", true)
+											d.BackgroundColor3 = blueTint(d.BackgroundColor3)
+										end)
+									end
+								end
+							end
+						end
+					end
+				end
+			end)
 
 			-- Rubis is fully up: retire the built-in panel (fallback no longer needed).
 			pcall(function() Panel.Enabled = false end)
