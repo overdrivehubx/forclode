@@ -1987,15 +1987,6 @@ end
 
 local UIS = game:GetService("UserInputService")
 local IsTouch = UIS.TouchEnabled and not UIS.MouseEnabled
--- Phone vs "table" (tablet/desktop): a phone is a touch device with a SMALL
--- screen. Tablets & PC get the desktop trade layout; only true phones get the
--- phone layout — exactly the distribution the user asked for.
-local IsPhoneDevice = (function()
-	if not IsTouch then return false end
-	local ok, vp = pcall(function() return workspace.CurrentCamera.ViewportSize end)
-	if ok and vp then return math.min(vp.X, vp.Y) < 620 end
-	return true
-end)()
 
 -- A ScreenGui "looks like" a trade GUI if it owns Container.Trade, or is named
 -- Trade/…Phone with a Container. NOTE: we deliberately do NOT require Offer1 —
@@ -2172,7 +2163,6 @@ local SpawnedPets = {}
 
 -- Items scraped from the REAL game inventory rendered in PlayerGui
 -- (category -> { key = { visual = {Image,Name,Color,Chroma}, amount } }).
-local RealInv = { Weapons = {}, Pets = {} }
 
 -- Name captured when the request modal is shown; consumed when the native
 -- green Accept button is clicked (mirrors AcceptRequest -> StartTrade).
@@ -2811,24 +2801,6 @@ local function paintSlot(slot, data, amount)
 end
 
 -- Paint a slot straight from a scraped real-inventory visual (no catalog needed).
-local function paintSlotVisual(slot, visual, amount)
-	slot.Name = visual.Name or "Item"
-	slot.Visible = true
-	slot:SetAttribute("__MHSpawn", true)
-	local icon = slot:FindFirstChild("Icon") or resolve(slot, "Container.Icon")
-	if icon then pcall(function() icon.Image = visual.Image end) end
-	local nameFrame = slot:FindFirstChild("ItemName")
-	local label = (nameFrame and nameFrame:FindFirstChild("Label")) or resolve(slot, "ItemName.Label")
-		or slot:FindFirstChild("Label", true)
-	if label and label:IsA("TextLabel") then pcall(function() label.Text = visual.Name end) end
-	if nameFrame and nameFrame:IsA("GuiObject") then
-		pcall(function() nameFrame.BackgroundColor3 = visual.Color end)
-	end
-	local amt = resolve(slot, "Container.Amount") or slot:FindFirstChild("Amount", true)
-	if amt and amt:IsA("TextLabel") then amt.Text = (amount and amount > 1) and ("x" .. amount) or "" end
-	setProp(slot, "Tags.Chroma", "Visible", visual.Chroma == true)
-end
-
 -- Resolve a slot's clickable button (or the slot itself).
 local function slotButton(slot)
 	return resolve(slot, "Container.Button") or resolve(slot, "Container.ActionButton")
@@ -2854,108 +2826,18 @@ local function slotNameLabel(d)
 end
 
 -- Build an offer visual (image / name / rarity colour) from a real game slot.
-local function slotVisual(d, img, nameLabel, dispName)
-	local color = Color3.fromRGB(200, 200, 200)
-	if nameLabel and nameLabel:IsA("TextLabel") then
-		color = nameLabel.TextColor3
-		local holder = nameLabel.Parent
-		if holder and holder:IsA("GuiObject") and holder.BackgroundTransparency < 1 then
-			color = holder.BackgroundColor3  -- trade/inventory plate = rarity colour
-		end
-	end
-	local db = ItemDB[dispName] or PetDB[dispName] or ItemDB[d.Name] or PetDB[d.Name]
-	if db and db.Rarity then
-		color = (db.Rarity == "Common") and RARITY_GREY or (Rarity[db.Rarity] or color)
-	end
-	return { Image = img, Name = dispName, Color = color, Chroma = d:FindFirstChild("Chroma", true) ~= nil }
-end
-
 -- Read a slot's amount ("x67" / "67" -> 67).
-local function slotAmount(d)
-	local amt = resolve(d, "Container.Amount") or d:FindFirstChild("Amount", true)
-	if amt and amt:IsA("TextLabel") then
-		local n = tonumber((tostring(amt.Text):gsub("%D", "")))
-		if n and n > 0 then return n end
-	end
-	return 1
-end
-
 -- A slot belongs to a SHOP / crate / currency screen (not the player's owned
 -- inventory) if an ancestor is named like a shop or it carries a price element.
 -- This keeps donation/godly-for-1699 items out of the mirrored inventory.
 local SHOP_WORDS = { "shop", "store", "purchase", "crate", "unbox",
 	"gamepass", "robux", "gemshop", "market", "premium", "recycl", "dealer" }
-local function looksLikeShop(d)
-	local a, depth = d.Parent, 0
-	while a and depth < 14 do
-		local ln = string.lower(a.Name)
-		for _, w in ipairs(SHOP_WORDS) do
-			if string.find(ln, w, 1, true) then return true end
-		end
-		a, depth = a.Parent, depth + 1
-	end
-	for _, t in ipairs(d:GetDescendants()) do
-		local ln = string.lower(t.Name)
-		if ln == "price" or ln == "cost" or ln == "gems" or ln == "robux"
-			or ln == "coins" or string.find(ln, "gemamount", 1, true)
-			or string.find(ln, "price", 1, true) then
-			return true
-		end
-	end
-	return false
-end
-
 -- Scan PlayerGui for the player's REAL inventory slots WHEREVER the game
 -- rendered them (the big Weapons/Pets menu holds ~200 slots; the trade GUI's
 -- own inventory may hold only a couple). We (a) hook each real slot in place so
 -- a tap adds it to the offer, and (b) collect its {name, visual, amount} so we
 -- can also mirror it into the trade's own "Add Items" panel. Returns the
 -- collected table + slot count. Our own clones (__MHSpawn) are skipped.
-local function collectRealSlots()
-	local collected = { Weapons = {}, Pets = {} }
-	local n = 0
-	for _, d in ipairs(PlayerGui:GetDescendants()) do
-		if d:IsA("GuiObject") and not d:GetAttribute("__MHSpawn")
-			and not d:FindFirstAncestor("TradeDebugPanel") then
-			local inOffer = false
-			for _, nm in ipairs({ "Offer1", "Offer2", "YourOffer", "TheirOffer" }) do
-				if d:FindFirstAncestor(nm) then inOffer = true; break end
-			end
-			local img = (not inOffer) and slotIconImage(d) or nil
-			if img and not looksLikeShop(d) then
-				local nameLabel = slotNameLabel(d)
-				local known = ItemDB[d.Name] or PetDB[d.Name]
-				-- The item's identity = its display name (unique per item), NOT the
-				-- instance name (which may be a shared template name).
-				local dispName = (nameLabel and tostring(nameLabel.Text) ~= "" and nameLabel.Text)
-					or (known and d.Name) or nil
-				if dispName then
-					n = n + 1
-					local isPet = (d:FindFirstAncestor("Pets") or d:FindFirstAncestor("PetsFrame")) ~= nil
-						or PetDB[d.Name] ~= nil
-					local cat = isPet and "Pets" or "Weapons"
-					local visual = slotVisual(d, img, nameLabel, dispName)
-					local amount = slotAmount(d)
-					if not collected[cat][dispName] then
-						collected[cat][dispName] = { key = dispName, visual = visual, amount = amount }
-					end
-					if not d:GetAttribute("__MHHooked") then
-						d:SetAttribute("__MHHooked", true)
-						local key, cx, vis = dispName, cat, visual
-						local btn = slotButton(d)
-						if btn then
-							track(btn.MouseButton1Click:Connect(function()
-								offerItemLocal(key, cx, vis)
-							end))
-						end
-					end
-				end
-			end
-		end
-	end
-	return collected, n
-end
-
 -- Per-category { container, template, cell } captured from a real slot.
 local function getInvCache(category)
 	local cache = InvCache[category]
