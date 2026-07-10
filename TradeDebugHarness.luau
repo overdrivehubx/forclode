@@ -215,6 +215,25 @@ local Rarity = {
 }
 local RARITY_GREY = Color3.fromRGB(106, 106, 106)  -- Common plate (0.415686)
 
+-- Coerce whatever the live "Rarity" module stores for a tier into a Color3.
+-- The game's Sync/Rarity table may hold a bare Color3, or a record like
+-- {Color=..}/{Colour=..}/[1]=.., or a {r,g,b} triple (0-1 or 0-255). Returns
+-- nil when the value can't be read as a colour, so callers keep the embedded one.
+local function toColor3(v)
+	if typeof(v) == "Color3" then return v end
+	if type(v) == "table" then
+		for _, k in ipairs({ "Color", "Colour", "Color3", "Plate", 1 }) do
+			if typeof(v[k]) == "Color3" then return v[k] end
+		end
+		local r, g, b = v.R or v.r or v[1], v.G or v.g or v[2], v.B or v.b or v[3]
+		if type(r) == "number" and type(g) == "number" and type(b) == "number" then
+			if r > 1 or g > 1 or b > 1 then return Color3.fromRGB(r, g, b) end
+			return Color3.new(r, g, b)
+		end
+	end
+	return nil
+end
+
 local RarityValue = {
 	Classic=1, Common=2, Uncommon=3, Rare=4, Legendary=5,
 	Godly=6, Divine=6.6, Ancient=6.5, Victim=7, Unique=11,
@@ -3766,7 +3785,15 @@ local function loadLiveCatalog()
 		ItemDB = src.Item
 		Database.Weapons = ItemDB
 		if type(src.Pets) == "table" then PetDB = src.Pets; Database.Pets = PetDB end
-		if type(src.Rarity) == "table" then Rarity = src.Rarity end
+		-- Merge live rarity COLOURS in per-tier, keeping the embedded colour for
+		-- any tier the live table lacks or stores in a shape we can't read. This
+		-- avoids wiping every plate to grey if the module's format is unexpected.
+		if type(src.Rarity) == "table" then
+			for tier, v in pairs(src.Rarity) do
+				local c = toColor3(v)
+				if c then Rarity[tier] = c end
+			end
+		end
 		RealCatalog = true
 		CatalogStatus = "LIVE catalog: " .. countKeys(ItemDB) .. " items"
 		buildSpawnIndex()
