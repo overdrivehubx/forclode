@@ -2021,20 +2021,16 @@ local function findTradeGui()
 		end
 	end
 
-	local function isPhone(g) return string.find(string.lower(g.Name), "phone") ~= nil end
-
-	-- Platform-correct pick. Both the PC ("Trade") and the phone ("TradeGUI_Phone")
-	-- layouts can coexist in PlayerGui, so we must match the current device: on a
-	-- desktop (mouse) use the NON-phone GUI, on touch use the phone one. Driving the
-	-- wrong one shows the phone layout on PC (what the user was seeing). Score each:
-	-- platform match >> Enabled >> owns Container.Trade.
-	local preferPhone = IsPhoneDevice
+	-- The game creates ONLY the trade GUI for the mode the player chose in-game
+	-- (table vs phone) — the device/screen doesn't matter (you can pick "table" on
+	-- a phone to test the PC layout). So pick whichever GUI the game actually made:
+	-- prefer an Enabled one, then one that owns Container.Trade / Container.Items.
 	local best, bestScore
 	for _, gui in ipairs(candidates) do
 		local s = 0
-		if isPhone(gui) == preferPhone then s = s + 100 end
-		if gui.Enabled then s = s + 10 end
-		if resolve(gui, "Container.Trade") then s = s + 1 end
+		if gui.Enabled then s = s + 100 end
+		if resolve(gui, "Container.Trade") then s = s + 10 end
+		if resolve(gui, "Container.Items") then s = s + 1 end
 		if not bestScore or s > bestScore then best, bestScore = gui, s end
 	end
 	if best then return best end
@@ -2112,11 +2108,11 @@ local function findRequestFrame()
 end
 local RequestFrame = findRequestFrame()
 
--- Phone layout? (TradeGUI_Phone, touch device, or the request lives under the
--- Lobby "Waiting" screen). On phone the native flow is: a "!" badge appears on
--- the leaderboard "+" button, and the request shows once the tab is opened.
-local IsPhone = IsPhoneDevice
-	or (TradeGUI ~= nil and string.find(string.lower(TradeGUI.Name), "phone") ~= nil)
+-- Phone MODE? Decided by which trade GUI the game made (the in-game table/phone
+-- choice), NOT the device: the phone GUI is the "phone"-named one / the request
+-- lives under the Lobby "Waiting" screen. On phone the native flow is: a "!"
+-- badge appears on the leaderboard "+" button, request shows when the tab opens.
+local IsPhone = (TradeGUI ~= nil and string.find(string.lower(TradeGUI.Name), "phone") ~= nil)
 	or (RequestFrame ~= nil and RequestFrame:FindFirstAncestor("Waiting") ~= nil)
 
 -- Find the "+" leaderboard button's notification badge (phone only).
