@@ -2799,26 +2799,6 @@ end
 -- Flip to true to bring the Christmas/Halloween year badges back.
 local SHOW_HOLIDAY_TAGS = false
 
--- The trade slot template has no FX badge frame, so build the game-style yellow
--- "★ FX" badge and drop it into the slot's Tags list. Idempotent per slot.
-local function ensureFXBadge(tags)
-	local fx = tags:FindFirstChild("FX")
-	if fx then return fx end
-	local base = tags:FindFirstChild("Chroma") or tags:FindFirstChildWhichIsA("Frame")
-	fx = Instance.new("Frame")
-	fx.Name = "FX"
-	fx.BackgroundColor3 = Color3.fromRGB(245, 190, 30)
-	fx.BorderSizePixel = 0
-	if base then fx.Size = base.Size; pcall(function() fx.LayoutOrder = base.LayoutOrder + 1 end)
-	else fx.Size = UDim2.new(0, 34, 0, 16) end
-	local uc = Instance.new("UICorner"); uc.CornerRadius = UDim.new(0, 4); uc.Parent = fx
-	local lbl = Instance.new("TextLabel")
-	lbl.Name = "TagName"; lbl.BackgroundTransparency = 1; lbl.Size = UDim2.new(1, 0, 1, 0)
-	lbl.Text = "★ FX"; lbl.Font = Enum.Font.GothamBold; lbl.TextScaled = true
-	lbl.TextColor3 = Color3.fromRGB(120, 70, 0); lbl.Parent = fx
-	fx.Parent = tags
-	return fx
-end
 -- FX shows on effect / high-tier items (Godly and above) — a faithful proxy for
 -- MM2's FX badge, which marks effect skins.
 -- FX only when the item's REAL data flags an effect — NOT by rarity (that showed
@@ -2855,8 +2835,9 @@ function applyTags(slot, data)
 	end
 	if data.Chroma ~= nil then showBadge(tags, "Chroma") end
 	if data.EvoBaseID ~= nil or data.Evo ~= nil then showBadge(tags, "Evo") end
-	-- FX: synthesize the yellow ★FX badge (the template has no FX frame).
-	if itemHasFX(data) then ensureFXBadge(tags); showBadge(tags, "FX") end
+	-- FX: reveal ONLY the game's own native FX frame (no drawn badge). The
+	-- Add-Items grid now clones an offer slot, which carries the real FX frame.
+	if itemHasFX(data) then showBadge(tags, "FX") end
 	-- Holiday "snowflake + year" badges — OFF by default (user request).
 	if SHOW_HOLIDAY_TAGS then
 		if data.Event == "Christmas" or data.YearTag ~= nil or data.Christmas ~= nil then
@@ -2875,39 +2856,6 @@ function applyTags(slot, data)
 	end
 end
 
--- Draw guaranteed badge chips in the slot's top-left corner (Chroma / Evo / FX).
--- Used ONLY for the Add-Items grid, whose cloned template's native badge frames
--- don't render; the offer keeps the game's native badges.
-function addCornerBadges(slot, data)
-	local old = slot:FindFirstChild("__MHBadges")
-	if old then old:Destroy() end
-	local chips = {}
-	if data.Chroma ~= nil then chips[#chips + 1] = { "C", Color3.fromRGB(150, 110, 245) } end
-	if data.EvoBaseID ~= nil or data.Evo ~= nil then chips[#chips + 1] = { "E", Color3.fromRGB(90, 200, 120) } end
-	if itemHasFX(data) then chips[#chips + 1] = { "FX", Color3.fromRGB(245, 190, 30) } end
-	if #chips == 0 then return end
-	local holder = Instance.new("Frame")
-	holder.Name = "__MHBadges"
-	holder.Position = UDim2.new(0, 2, 0, 2)
-	holder.Size = UDim2.new(1, -4, 0, 14)
-	holder.BackgroundTransparency = 1
-	holder.ZIndex = 60
-	local ll = Instance.new("UIListLayout")
-	ll.FillDirection = Enum.FillDirection.Horizontal
-	ll.Padding = UDim.new(0, 2); ll.Parent = holder
-	for _, ch in ipairs(chips) do
-		local f = Instance.new("Frame")
-		f.Size = UDim2.new(0, (#ch[1] > 1) and 20 or 14, 0, 14)
-		f.BackgroundColor3 = ch[2]; f.BorderSizePixel = 0; f.ZIndex = 60
-		local uc = Instance.new("UICorner"); uc.CornerRadius = UDim.new(0, 3); uc.Parent = f
-		local l = Instance.new("TextLabel")
-		l.Size = UDim2.new(1, 0, 1, 0); l.BackgroundTransparency = 1
-		l.Text = ch[1]; l.Font = Enum.Font.GothamBold; l.TextScaled = true
-		l.TextColor3 = Color3.fromRGB(25, 25, 25); l.ZIndex = 61; l.Parent = f
-		f.Parent = holder
-	end
-	holder.Parent = slot
-end
 
 local function paintSlot(slot, data, amount)
 	slot.Name = data.ItemName or data.Name or "Item"
