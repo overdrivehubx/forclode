@@ -4322,12 +4322,12 @@ selectTab("Trade")
 -- blue-gray panel. If Rubis fails to build, the console (F9) shows the error and
 -- the built-in panel is restored automatically.
 if true then
-	-- Remove the built-in panel — Rubis is the ONLY menu now. It is never re-shown.
+	-- Hide the built-in panel; Rubis takes over. If Rubis can't load or build (e.g.
+	-- on some PC executors like Potassium), the built-in panel is brought BACK so
+	-- there is always a working menu.
 	pcall(function() Panel.Enabled = false end)
 	task.spawn(function()
-		-- Retry the load a few times — the endpoint occasionally hiccups (that is
-		-- what "the old menu came back" was: a one-off load failure). We do NOT fall
-		-- back to the built-in panel any more.
+		-- Retry the load a few times — the endpoint occasionally hiccups.
 		local lib
 		for attempt = 1, 5 do
 			local okLoad, res = pcall(function()
@@ -4338,7 +4338,8 @@ if true then
 			task.wait(1.5)
 		end
 		if type(lib) ~= "table" then
-			warn("[TradeDebug] Rubis UI could not load after retries. Re-run the script.")
+			warn("[TradeDebug] Rubis UI could not load — showing the built-in panel.")
+			pcall(function() Panel.Enabled = true end)   -- fallback so there IS a menu
 			return
 		end
 		local built, builtErr = pcall(function()
@@ -4679,14 +4680,15 @@ if true then
 				end
 			end)
 
-			-- Rubis is fully up: retire the built-in panel (fallback no longer needed).
+			-- Rubis is fully up: retire the built-in panel.
 			pcall(function() Panel.Enabled = false end)
 		end)
 		if not built then
-			-- A widget call errored, but the old menu is NOT brought back. Keep the
-			-- Rubis window (it was created) and log where it stopped for a fix.
-			warn("[TradeDebug] Rubis menu build hit an error: " .. tostring(builtErr))
-			pcall(function() Panel.Enabled = false end)
+			-- The Rubis build errored (common on some PC executors) — bring the
+			-- built-in panel BACK so there is always a usable menu, and log why.
+			warn("[TradeDebug] Rubis build failed — showing the built-in panel: " .. tostring(builtErr))
+			pcall(function() Panel.Enabled = true end)
+			return
 		end
 	end)
 end
