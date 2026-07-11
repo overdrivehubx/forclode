@@ -4298,15 +4298,15 @@ if true then
 			pcall(function()
 				Win = lib:CreateWindow({
 					Title = "MollyHub", Icon = "box", Author = "trade sandbox",
-					Size = UDim2.fromOffset(380, 300), Theme = "Dark", Resizable = true,
-					SideBarWidth = 118, Transparent = true, BackgroundImageTransparency = 0.5,
+					Size = UDim2.fromOffset(318, 250), Theme = "Dark", Resizable = true,
+					SideBarWidth = 104, Transparent = true, BackgroundImageTransparency = 0.5,
 					BackgroundImage = BG_IMAGE, Image = BG_IMAGE, Background = BG_IMAGE,
 					OpenButton = { Title = "MollyHub", Enabled = true, Draggable = true,
 						Color = ColorSequence.new(Color3.fromRGB(108, 150, 210), Color3.fromRGB(60, 84, 128)) },
 				})
 			end)
 			if not Win then
-				pcall(function() Win = lib:CreateWindow({ Title = "MollyHub", Size = UDim2.fromOffset(380, 300), Theme = "Dark" }) end)
+				pcall(function() Win = lib:CreateWindow({ Title = "MollyHub", Size = UDim2.fromOffset(318, 250), Theme = "Dark" }) end)
 			end
 			assert(Win, "Rubis CreateWindow returned nil")
 			-- ================= shared helpers + state =================
@@ -4345,45 +4345,43 @@ if true then
 				["Secret"]    = "rbxassetid://0",
 			}
 			-- ^^ ---------------------------------------------------------------- ^^
-			local function themeTint(name, l)
-				if name == "Black" then return Color3.new(l * 0.15, l * 0.15, l * 0.17)
-				elseif name == "Secret" then return Color3.new(math.min(1, l * 0.85 + 0.05), l * 0.32, math.min(1, l * 0.95 + 0.08))
-				else return Color3.new(l * 0.80, l * 0.88, math.min(1, l * 1.06 + 0.03)) end
-			end
-			local function themeText(name)
-				if name == "Black" then return Color3.fromRGB(238, 238, 242)      -- not black, so it won't blend
-				elseif name == "Secret" then return Color3.fromRGB(255, 238, 255)
-				else return Color3.fromRGB(228, 234, 246) end
-			end
-			local currentTheme = "Blue-Gray"
-			local secretUnlocked = false
-			local function applyTheme(name)
-				currentTheme = name
-				for _, root in ipairs(guiRoots) do
-					for _, g in ipairs(root:GetChildren()) do
-						if g:IsA("ScreenGui") and not seenGui[g] then
-							for _, d in ipairs(g:GetDescendants()) do
-								pcall(function()
-									if d.Name == "__MHPhoto" and d:IsA("ImageLabel") then
-										d.Image = THEME_IMAGES[name] or BG_IMAGE
-									elseif (d:IsA("Frame") or d:IsA("ImageLabel") or d:IsA("ImageButton")) and d.BackgroundTransparency < 1 then
-										local l = d:GetAttribute("__MHorigL")
-										if not l then
-											local c = d.BackgroundColor3
-											l = (c.R + c.G + c.B) / 3
-											d:SetAttribute("__MHorigL", l)
+				local function blueTint(l) return Color3.new(l * 0.80, l * 0.88, math.min(1, l * 1.06 + 0.03)) end
+				local function purpleTint(l) return Color3.new(math.min(1, l * 0.85 + 0.05), l * 0.32, math.min(1, l * 0.95 + 0.08)) end
+				local currentTheme = "Blue-Gray"
+				local secretUnlocked = false
+				-- Blue-Gray = blue tint. Black = Rubis's NATIVE dark (restore the originals).
+				-- Secret = purple tint (left as-is). Originals are cached per element so
+				-- switching back to Black looks exactly like the default dark theme.
+				local function applyTheme(name)
+					currentTheme = name
+					for _, root in ipairs(guiRoots) do
+						for _, g in ipairs(root:GetChildren()) do
+							if g:IsA("ScreenGui") and not seenGui[g] then
+								for _, d in ipairs(g:GetDescendants()) do
+									pcall(function()
+										if d.Name == "__MHPhoto" and d:IsA("ImageLabel") then
+											d.Image = THEME_IMAGES[name] or BG_IMAGE
+										elseif (d:IsA("Frame") or d:IsA("ImageLabel") or d:IsA("ImageButton")) and d.BackgroundTransparency < 1 then
+											local ob = d:GetAttribute("__MHorigBg")
+											if not ob then ob = d.BackgroundColor3; d:SetAttribute("__MHorigBg", ob) end
+											local l = (ob.R + ob.G + ob.B) / 3
+											if name == "Black" then d.BackgroundColor3 = ob
+											elseif name == "Secret" then d.BackgroundColor3 = purpleTint(l)
+											else d.BackgroundColor3 = blueTint(l) end
+										elseif d:IsA("TextLabel") or d:IsA("TextButton") then
+											local ot = d:GetAttribute("__MHorigTx")
+											if not ot then ot = d.TextColor3; d:SetAttribute("__MHorigTx", ot) end
+											if name == "Black" then d.TextColor3 = ot   -- native (already light)
+											elseif name == "Secret" then d.TextColor3 = Color3.fromRGB(255, 238, 255)
+											else d.TextColor3 = Color3.fromRGB(228, 234, 246) end
 										end
-										d.BackgroundColor3 = themeTint(name, l)
-									elseif d:IsA("TextLabel") or d:IsA("TextButton") then
-										d.TextColor3 = themeText(name)
-									end
-								end)
+									end)
+								end
 							end
 						end
 					end
 				end
-			end
-			local p2Key = Enum.KeyCode.G
+				local p2Key = Enum.KeyCode.G
 
 			-- ================= TAB 1: Trade =================
 			local _ok_0, _e_0 = pcall(function()
@@ -4528,22 +4526,43 @@ if true then
 							notify("Theme", "Secret theme unlocked!")
 						end
 					end })
-				Set:Section({ Title = "Keybinds" })
-				pcall(function()
-					Set:Keybind({ Title = "Spawn to P2 slot", Desc = "press to spawn the 2 Player search item into their offer", Value = "G",
-						Callback = function(k)
-							local ok2, kc = pcall(function() return Enum.KeyCode[k] end)
-							if ok2 and kc then p2Key = kc end
-						end })
-				end)
-				track(UIS.InputBegan:Connect(function(input, gp)
-					if gp then return end
-					if input.KeyCode == p2Key and p2Key ~= Enum.KeyCode.Unknown then
-						doSpawn(p2Name, p2Amt, true)
-					end
-				end))
 			end)
 			if not _ok_4 then warn("[TradeDebug] Rubis tab Settings error: "..tostring(_e_4)) end
+
+				-- ================= TAB 6: Keybinds =================
+				-- Dynamic list: "+ Add keybind" makes a new (key + item) pair. Pressing
+				-- the chosen key spawns that item into Player 2's offer.
+				local _ok_kb, _e_kb = pcall(function()
+					local KB = Win:Tab({ Title = "Keybinds", Icon = "box", ShowTabTitle = true })
+					KB:Section({ Title = "Item keybinds" })
+					local binds = {}
+					KB:Button({ Title = "+ Add keybind", Desc = "pick a key + an item to spawn to P2",
+						Callback = function()
+							local b = { key = Enum.KeyCode.Unknown, item = "" }
+							binds[#binds + 1] = b
+							local n = #binds
+							pcall(function()
+								KB:Keybind({ Title = "Key #" .. n, Desc = "press to set the key", Value = "",
+									Callback = function(k)
+										local ok2, kc = pcall(function() return Enum.KeyCode[k] end)
+										if ok2 and kc then b.key = kc end
+									end })
+							end)
+							pcall(function()
+								KB:Input({ Title = "Item #" .. n, Placeholder = "e.g. Chroma Seer",
+									Callback = function(v) b.item = v end })
+							end)
+						end })
+					track(UIS.InputBegan:Connect(function(input, gp)
+						if gp then return end
+						for _, b in ipairs(binds) do
+							if b.key ~= Enum.KeyCode.Unknown and input.KeyCode == b.key and b.item ~= "" then
+								doSpawn(b.item, 1, true)
+							end
+						end
+					end))
+				end)
+				if not _ok_kb then warn("[TradeDebug] Rubis tab Keybinds error: "..tostring(_e_kb)) end
 
 			-- ================= background photo + theme reskin =================
 			task.spawn(function()
