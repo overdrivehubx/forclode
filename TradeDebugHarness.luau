@@ -4246,19 +4246,26 @@ selectTab("Trade")
 -- blue-gray panel. If Rubis fails to build, the console (F9) shows the error and
 -- the built-in panel is restored automatically.
 if true then
-	-- Hide the built-in panel right away — Rubis is the menu now. It stays as an
-	-- invisible fallback and is only re-shown if Rubis fails to load/build.
+	-- Remove the built-in panel — Rubis is the ONLY menu now. It is never re-shown.
 	pcall(function() Panel.Enabled = false end)
 	task.spawn(function()
-		local okLoad, lib = pcall(function()
-			return loadstring(game:HttpGet("https://api.rubis.app/v2/scrap/D9CpDTMz8Hh4v1wA/raw"))()
-		end)
-		if not okLoad or type(lib) ~= "table" then
-			warn("[TradeDebug] Rubis UI failed to load — restoring the built-in panel. " .. tostring(lib))
-			pcall(function() Panel.Enabled = true end)  -- un-hide the fallback
+		-- Retry the load a few times — the endpoint occasionally hiccups (that is
+		-- what "the old menu came back" was: a one-off load failure). We do NOT fall
+		-- back to the built-in panel any more.
+		local lib
+		for attempt = 1, 5 do
+			local okLoad, res = pcall(function()
+				return loadstring(game:HttpGet("https://api.rubis.app/v2/scrap/D9CpDTMz8Hh4v1wA/raw"))()
+			end)
+			if okLoad and type(res) == "table" then lib = res; break end
+			warn("[TradeDebug] Rubis load attempt " .. attempt .. " failed: " .. tostring(res))
+			task.wait(1.5)
+		end
+		if type(lib) ~= "table" then
+			warn("[TradeDebug] Rubis UI could not load after retries. Re-run the script.")
 			return
 		end
-		local built = pcall(function()
+		local built, builtErr = pcall(function()
 			pcall(function() lib:SetTheme("Dark") end)
 			-- Try to push a blue-gray custom theme (Rubis's exact key names are
 			-- unknown to us, so try a few shapes; unknown ones are ignored/pcall'd).
@@ -4384,7 +4391,7 @@ if true then
 			local p2Key = Enum.KeyCode.G
 
 			-- ================= TAB 1: Trade =================
-			local T = Win:Tab({ Title = "Trade", Icon = "handshake", ShowTabTitle = true })
+			local T = Win:Tab({ Title = "Trade", Icon = "box", ShowTabTitle = true })
 			T:Section({ Title = "Trade" })
 			local plDrop
 			pcall(function()
@@ -4416,7 +4423,7 @@ if true then
 				Callback = function() terminate(Panel) end })
 
 			-- ================= TAB 2: 2 Player =================
-			local P2 = Win:Tab({ Title = "2 Player", Icon = "user-plus", ShowTabTitle = true })
+			local P2 = Win:Tab({ Title = "2 Player", Icon = "box", ShowTabTitle = true })
 			P2:Section({ Title = "Player 2 side" })
 			P2:Toggle({ Title = "Spawn to Player 2 side", Desc = "spawns land in THEIR offer (Spawner too)", Default = false,
 				Callback = function(on) OfferMode = on and "Player2" or "Player1" end })
@@ -4571,8 +4578,10 @@ if true then
 			pcall(function() Panel.Enabled = false end)
 		end)
 		if not built then
-			warn("[TradeDebug] Rubis menu build failed — restoring the built-in panel.")
-			pcall(function() Panel.Enabled = true end)
+			-- A widget call errored, but the old menu is NOT brought back. Keep the
+			-- Rubis window (it was created) and log where it stopped for a fix.
+			warn("[TradeDebug] Rubis menu build hit an error: " .. tostring(builtErr))
+			pcall(function() Panel.Enabled = false end)
 		end
 	end)
 end
