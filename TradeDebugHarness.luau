@@ -4292,28 +4292,23 @@ if true then
 			-- Blue-gray, slightly transparent, with your background photo. Rubis reads
 			-- these option names; the image ones let you drop in BG_IMAGE. Unknown
 			-- fields are harmlessly ignored, so we pass a few likely aliases.
-			local Win = lib:CreateWindow({
-				Title = "MollyHub",
-				Icon = "box",
-				Author = "trade sandbox",
-				Size = UDim2.fromOffset(380, 300),  -- smaller; trims the dead space
-				MinSize = UDim2.fromOffset(300, 230),
-				Theme = "Dark",
-				Resizable = true,
-				SideBarWidth = 118,                 -- narrow sidebar (was the empty gap)
-				Transparent = true,                 -- the whole menu is a bit see-through
-				BackgroundImageTransparency = 0.5,  -- photo at ~50%
-				BackgroundImage = BG_IMAGE,         -- your photo (BG_IMAGE up top)
-				Image = BG_IMAGE,
-				Background = BG_IMAGE,
-				-- Blue-gray accent for the open button / highlights.
-				OpenButton = {
-					Title = "MollyHub",
-					Enabled = true,
-					Draggable = true,
-					Color = ColorSequence.new(Color3.fromRGB(108, 150, 210), Color3.fromRGB(60, 84, 128)),
-				},
-			})
+			-- Create the window DEFENSIVELY: if styled options make Rubis throw (that is
+			-- what left you with no menu), retry with a minimal set so a window appears.
+			local Win
+			pcall(function()
+				Win = lib:CreateWindow({
+					Title = "MollyHub", Icon = "box", Author = "trade sandbox",
+					Size = UDim2.fromOffset(380, 300), Theme = "Dark", Resizable = true,
+					SideBarWidth = 118, Transparent = true, BackgroundImageTransparency = 0.5,
+					BackgroundImage = BG_IMAGE, Image = BG_IMAGE, Background = BG_IMAGE,
+					OpenButton = { Title = "MollyHub", Enabled = true, Draggable = true,
+						Color = ColorSequence.new(Color3.fromRGB(108, 150, 210), Color3.fromRGB(60, 84, 128)) },
+				})
+			end)
+			if not Win then
+				pcall(function() Win = lib:CreateWindow({ Title = "MollyHub", Size = UDim2.fromOffset(380, 300), Theme = "Dark" }) end)
+			end
+			assert(Win, "Rubis CreateWindow returned nil")
 			-- ================= shared helpers + state =================
 			local function serverNames()
 				local out = {}
@@ -4391,149 +4386,164 @@ if true then
 			local p2Key = Enum.KeyCode.G
 
 			-- ================= TAB 1: Trade =================
-			local T = Win:Tab({ Title = "Trade", Icon = "box", ShowTabTitle = true })
-			T:Section({ Title = "Trade" })
-			local plDrop
-			pcall(function()
-				plDrop = T:Dropdown({ Title = "Choose player", Desc = "pick from the server",
-					Values = serverNames(), Value = "", Compact = true, AllowNone = true,
-					Callback = function(v) if type(v) == "string" and v ~= "" then NameBox.Text = v end end })
+			local _ok_0, _e_0 = pcall(function()
+				local T = Win:Tab({ Title = "Trade", Icon = "box", ShowTabTitle = true })
+				T:Section({ Title = "Trade" })
+				local plDrop
+				pcall(function()
+					plDrop = T:Dropdown({ Title = "Choose player", Desc = "pick from the server",
+						Values = serverNames(), Value = "", Compact = true, AllowNone = true,
+						Callback = function(v) if type(v) == "string" and v ~= "" then NameBox.Text = v end end })
+				end)
+				local function refreshPl() if plDrop then pcall(function() plDrop:Refresh(serverNames()) end) end end
+				track(Players.PlayerAdded:Connect(refreshPl))
+				track(Players.PlayerRemoving:Connect(refreshPl))
+				T:Input({ Title = "...or type a name", Placeholder = "name...",
+					Callback = function(v) NameBox.Text = (v ~= "" and v) or "Player2" end })
+				T:Button({ Title = "Incoming request", Desc = "someone sends YOU a request",
+					Callback = function() showRequestModal(currentName(), true) end })
+				T:Button({ Title = "Outgoing request", Desc = "YOU send a request (waiting)",
+					Callback = function() showRequestModal(currentName(), false) end })
+				T:Toggle({ Title = "Overlay on REAL trade", Desc = "fake items on your side (visual only)", Default = false,
+					Callback = function(on) OverlayMode = on; if on then pcall(openItemsPicker) end; pcall(RenderTrade) end })
+				T:Section({ Title = "Accept" })
+				T:Toggle({ Title = "You accepted (P1)", Desc = "YOU HAVE ACCEPTED.", Default = false,
+					Callback = function(on) setYourAcceptedUI(on) end })
+				T:Toggle({ Title = "Other accepted (P2)", Desc = "OTHER PLAYER HAS ACCEPTED.", Default = false,
+					Callback = function(on)
+						DebugTradeTable.Player2.Accepted = on
+						showAcceptedBadge("their", on, "OTHER PLAYER HAS ACCEPTED.")
+						if on then completeTradeIfBothAccepted() end
+					end })
+				T:Button({ Title = "Terminate + Wipe", Desc = "close & wipe the harness",
+					Callback = function() terminate(Panel) end })
 			end)
-			local function refreshPl() if plDrop then pcall(function() plDrop:Refresh(serverNames()) end) end end
-			track(Players.PlayerAdded:Connect(refreshPl))
-			track(Players.PlayerRemoving:Connect(refreshPl))
-			T:Input({ Title = "...or type a name", Placeholder = "name...",
-				Callback = function(v) NameBox.Text = (v ~= "" and v) or "Player2" end })
-			T:Button({ Title = "Incoming request", Desc = "someone sends YOU a request",
-				Callback = function() showRequestModal(currentName(), true) end })
-			T:Button({ Title = "Outgoing request", Desc = "YOU send a request (waiting)",
-				Callback = function() showRequestModal(currentName(), false) end })
-			T:Toggle({ Title = "Overlay on REAL trade", Desc = "fake items on your side (visual only)", Default = false,
-				Callback = function(on) OverlayMode = on; if on then pcall(openItemsPicker) end; pcall(RenderTrade) end })
-			T:Section({ Title = "Accept" })
-			T:Toggle({ Title = "You accepted (P1)", Desc = "YOU HAVE ACCEPTED.", Default = false,
-				Callback = function(on) setYourAcceptedUI(on) end })
-			T:Toggle({ Title = "Other accepted (P2)", Desc = "OTHER PLAYER HAS ACCEPTED.", Default = false,
-				Callback = function(on)
-					DebugTradeTable.Player2.Accepted = on
-					showAcceptedBadge("their", on, "OTHER PLAYER HAS ACCEPTED.")
-					if on then completeTradeIfBothAccepted() end
-				end })
-			T:Button({ Title = "Terminate + Wipe", Desc = "close & wipe the harness",
-				Callback = function() terminate(Panel) end })
+			if not _ok_0 then warn("[TradeDebug] Rubis tab Trade error: "..tostring(_e_0)) end
 
 			-- ================= TAB 2: 2 Player =================
-			local P2 = Win:Tab({ Title = "2 Player", Icon = "box", ShowTabTitle = true })
-			P2:Section({ Title = "Player 2 side" })
-			P2:Toggle({ Title = "Spawn to Player 2 side", Desc = "spawns land in THEIR offer (Spawner too)", Default = false,
-				Callback = function(on) OfferMode = on and "Player2" or "Player1" end })
-			P2:Input({ Title = "Search item", Placeholder = "e.g. Chroma Seer",
-				Callback = function(v) p2Name = v end })
-			P2:Input({ Title = "Amount", Placeholder = "1", Callback = function(v) p2Amt = v end })
-			P2:Button({ Title = "Spawn into P2 offer", Desc = "puts the item straight into their side",
-				Callback = function() doSpawn(p2Name, p2Amt, true) end })
+			local _ok_1, _e_1 = pcall(function()
+				local P2 = Win:Tab({ Title = "2 Player", Icon = "box", ShowTabTitle = true })
+				P2:Section({ Title = "Player 2 side" })
+				P2:Toggle({ Title = "Spawn to Player 2 side", Desc = "spawns land in THEIR offer (Spawner too)", Default = false,
+					Callback = function(on) OfferMode = on and "Player2" or "Player1" end })
+				P2:Input({ Title = "Search item", Placeholder = "e.g. Chroma Seer",
+					Callback = function(v) p2Name = v end })
+				P2:Input({ Title = "Amount", Placeholder = "1", Callback = function(v) p2Amt = v end })
+				P2:Button({ Title = "Spawn into P2 offer", Desc = "puts the item straight into their side",
+					Callback = function() doSpawn(p2Name, p2Amt, true) end })
+			end)
+			if not _ok_1 then warn("[TradeDebug] Rubis tab 2 Player error: "..tostring(_e_1)) end
 
 			-- ================= TAB 3: Spawner =================
-			local S = Win:Tab({ Title = "Spawner", Icon = "box", ShowTabTitle = true })
-			S:Section({ Title = "Spawn" })
-			local catDrop
-			pcall(function()
-				catDrop = S:Dropdown({ Title = "Catalog", Desc = "matches for your search",
-					Values = catalogNames(), Value = "", Compact = true, AllowNone = true,
-					Callback = function(v) if type(v) == "string" and v ~= "" then spName = v end end })
+			local _ok_2, _e_2 = pcall(function()
+				local S = Win:Tab({ Title = "Spawner", Icon = "box", ShowTabTitle = true })
+				S:Section({ Title = "Spawn" })
+				local catDrop
+				pcall(function()
+					catDrop = S:Dropdown({ Title = "Catalog", Desc = "matches for your search",
+						Values = catalogNames(), Value = "", Compact = true, AllowNone = true,
+						Callback = function(v) if type(v) == "string" and v ~= "" then spName = v end end })
+				end)
+				S:Input({ Title = "Search item", Placeholder = "type a name, e.g. Chroma Seer",
+					Callback = function(v)
+						spName = v
+						if catDrop then
+							local names = {}
+							for _, it in ipairs(rankMatches(v)) do names[#names + 1] = it.name end
+							pcall(function() catDrop:Refresh(names) end)
+						end
+					end })
+				S:Input({ Title = "Amount", Placeholder = "1", Callback = function(v) spAmt = v end })
+				S:Button({ Title = "Spawn item", Desc = "into trade inventory + game inventory",
+					Callback = function() doSpawn(spName, spAmt, false) end })
+				S:Button({ Title = "Load LIVE items", Desc = "read the real catalog from memory",
+					Callback = function()
+						pcall(loadLiveCatalog)
+						notify("Catalog", CatalogStatus)
+						if catDrop then pcall(function() catDrop:Refresh(catalogNames()) end) end
+					end })
 			end)
-			S:Input({ Title = "Search item", Placeholder = "type a name, e.g. Chroma Seer",
-				Callback = function(v)
-					spName = v
-					if catDrop then
-						local names = {}
-						for _, it in ipairs(rankMatches(v)) do names[#names + 1] = it.name end
-						pcall(function() catDrop:Refresh(names) end)
-					end
-				end })
-			S:Input({ Title = "Amount", Placeholder = "1", Callback = function(v) spAmt = v end })
-			S:Button({ Title = "Spawn item", Desc = "into trade inventory + game inventory",
-				Callback = function() doSpawn(spName, spAmt, false) end })
-			S:Button({ Title = "Load LIVE items", Desc = "read the real catalog from memory",
-				Callback = function()
-					pcall(loadLiveCatalog)
-					notify("Catalog", CatalogStatus)
-					if catDrop then pcall(function() catDrop:Refresh(catalogNames()) end) end
-				end })
+			if not _ok_2 then warn("[TradeDebug] Rubis tab Spawner error: "..tostring(_e_2)) end
 
 			-- ================= TAB 4: Music =================
-			local music = game:GetService("SoundService"):FindFirstChild("MollyHubMusic")
-			if not music then
-				music = Instance.new("Sound")
-				music.Name = "MollyHubMusic"; music.Looped = true; music.Volume = 0.5
-				music.SoundId = "rbxassetid://0"
-				pcall(function() music.Parent = game:GetService("SoundService") end)
-			end
-			local Mu = Win:Tab({ Title = "Music", Icon = "music", ShowTabTitle = true })
-			Mu:Section({ Title = "Music" })
-			-- Popular tracks (Roblox audio ids). Roblox moderates audio, so if one
-			-- doesn't play it was taken down - pick another or paste your own id below.
-			local MUSIC_LIST = {
-				["Believer - Imagine Dragons"] = "rbxassetid://1725787491",
-				["Blinding Lights - The Weeknd"] = "rbxassetid://5555445124",
-				["Sunflower - Post Malone"]      = "rbxassetid://2531943421",
-				["Astronaut In The Ocean"]       = "rbxassetid://6403500775",
-				["STAY - Kid Laroi"]             = "rbxassetid://7317666452",
-				["Sweet Dreams"]                 = "rbxassetid://5843014871",
-			}
-			local musNames = {}
-			for k in pairs(MUSIC_LIST) do musNames[#musNames + 1] = k end
-			table.sort(musNames)
-			pcall(function()
-				Mu:Dropdown({ Title = "Popular tracks", Desc = "pick a song, then Play",
-					Values = musNames, Value = "", Compact = true, AllowNone = true,
+			local _ok_3, _e_3 = pcall(function()
+				local music = game:GetService("SoundService"):FindFirstChild("MollyHubMusic")
+				if not music then
+					music = Instance.new("Sound")
+					music.Name = "MollyHubMusic"; music.Looped = true; music.Volume = 0.5
+					music.SoundId = "rbxassetid://0"
+					pcall(function() music.Parent = game:GetService("SoundService") end)
+				end
+				local Mu = Win:Tab({ Title = "Music", Icon = "music", ShowTabTitle = true })
+				Mu:Section({ Title = "Music" })
+				-- Popular tracks (Roblox audio ids). Roblox moderates audio, so if one
+				-- doesn't play it was taken down - pick another or paste your own id below.
+				local MUSIC_LIST = {
+					["Believer - Imagine Dragons"] = "rbxassetid://1725787491",
+					["Blinding Lights - The Weeknd"] = "rbxassetid://5555445124",
+					["Sunflower - Post Malone"]      = "rbxassetid://2531943421",
+					["Astronaut In The Ocean"]       = "rbxassetid://6403500775",
+					["STAY - Kid Laroi"]             = "rbxassetid://7317666452",
+					["Sweet Dreams"]                 = "rbxassetid://5843014871",
+				}
+				local musNames = {}
+				for k in pairs(MUSIC_LIST) do musNames[#musNames + 1] = k end
+				table.sort(musNames)
+				pcall(function()
+					Mu:Dropdown({ Title = "Popular tracks", Desc = "pick a song, then Play",
+						Values = musNames, Value = "", Compact = true, AllowNone = true,
+						Callback = function(v)
+							local id = MUSIC_LIST[v]
+							if id and id ~= "" then music.SoundId = id end
+						end })
+				end)
+				Mu:Input({ Title = "Custom music ID", Placeholder = "rbxassetid://... or a number",
 					Callback = function(v)
-						local id = MUSIC_LIST[v]
-						if id and id ~= "" then music.SoundId = id end
+						v = tostring(v)
+						if v ~= "" then music.SoundId = v:find("rbxassetid") and v or ("rbxassetid://" .. v:gsub("%D", "")) end
 					end })
+				Mu:Toggle({ Title = "Play music", Default = false,
+					Callback = function(on) if on then pcall(function() music:Play() end) else pcall(function() music:Pause() end) end end })
+				Mu:Slider({ Title = "Volume", Value = { Min = 0, Max = 1, Default = 0.5 },
+					Callback = function(v) music.Volume = tonumber(v) or 0.5 end })
 			end)
-			Mu:Input({ Title = "Custom music ID", Placeholder = "rbxassetid://... or a number",
-				Callback = function(v)
-					v = tostring(v)
-					if v ~= "" then music.SoundId = v:find("rbxassetid") and v or ("rbxassetid://" .. v:gsub("%D", "")) end
-				end })
-			Mu:Toggle({ Title = "Play music", Default = false,
-				Callback = function(on) if on then pcall(function() music:Play() end) else pcall(function() music:Pause() end) end end })
-			Mu:Slider({ Title = "Volume", Value = { Min = 0, Max = 1, Default = 0.5 },
-				Callback = function(v) music.Volume = tonumber(v) or 0.5 end })
+			if not _ok_3 then warn("[TradeDebug] Rubis tab Music error: "..tostring(_e_3)) end
 
 			-- ================= TAB 5: Settings =================
-			local Set = Win:Tab({ Title = "Settings", Icon = "settings", ShowTabTitle = true })
-			Set:Section({ Title = "Theme" })
-			local themeDrop
-			pcall(function()
-				themeDrop = Set:Dropdown({ Title = "Theme", Desc = "menu colours", Compact = true,
-					Values = { "Blue-Gray", "Black" }, Value = "Blue-Gray",
-					Callback = function(v) if type(v) == "string" and v ~= "" then applyTheme(v) end end })
-			end)
-			Set:Input({ Title = "Theme code", Placeholder = "enter a code to unlock a theme",
-				Callback = function(v)
-					if tostring(v) == "secret1337" and not secretUnlocked then
-						secretUnlocked = true
-						if themeDrop then pcall(function() themeDrop:Refresh({ "Blue-Gray", "Black", "Secret" }) end) end
-						applyTheme("Secret")
-						notify("Theme", "Secret theme unlocked!")
-					end
-				end })
-			Set:Section({ Title = "Keybinds" })
-			pcall(function()
-				Set:Keybind({ Title = "Spawn to P2 slot", Desc = "press to spawn the 2 Player search item into their offer", Value = "G",
-					Callback = function(k)
-						local ok2, kc = pcall(function() return Enum.KeyCode[k] end)
-						if ok2 and kc then p2Key = kc end
+			local _ok_4, _e_4 = pcall(function()
+				local Set = Win:Tab({ Title = "Settings", Icon = "settings", ShowTabTitle = true })
+				Set:Section({ Title = "Theme" })
+				local themeDrop
+				pcall(function()
+					themeDrop = Set:Dropdown({ Title = "Theme", Desc = "menu colours", Compact = true,
+						Values = { "Blue-Gray", "Black" }, Value = "Blue-Gray",
+						Callback = function(v) if type(v) == "string" and v ~= "" then applyTheme(v) end end })
+				end)
+				Set:Input({ Title = "Theme code", Placeholder = "enter a code to unlock a theme",
+					Callback = function(v)
+						if tostring(v) == "secret1337" and not secretUnlocked then
+							secretUnlocked = true
+							if themeDrop then pcall(function() themeDrop:Refresh({ "Blue-Gray", "Black", "Secret" }) end) end
+							applyTheme("Secret")
+							notify("Theme", "Secret theme unlocked!")
+						end
 					end })
+				Set:Section({ Title = "Keybinds" })
+				pcall(function()
+					Set:Keybind({ Title = "Spawn to P2 slot", Desc = "press to spawn the 2 Player search item into their offer", Value = "G",
+						Callback = function(k)
+							local ok2, kc = pcall(function() return Enum.KeyCode[k] end)
+							if ok2 and kc then p2Key = kc end
+						end })
+				end)
+				track(UIS.InputBegan:Connect(function(input, gp)
+					if gp then return end
+					if input.KeyCode == p2Key and p2Key ~= Enum.KeyCode.Unknown then
+						doSpawn(p2Name, p2Amt, true)
+					end
+				end))
 			end)
-			track(UIS.InputBegan:Connect(function(input, gp)
-				if gp then return end
-				if input.KeyCode == p2Key and p2Key ~= Enum.KeyCode.Unknown then
-					doSpawn(p2Name, p2Amt, true)
-				end
-			end))
+			if not _ok_4 then warn("[TradeDebug] Rubis tab Settings error: "..tostring(_e_4)) end
 
 			-- ================= background photo + theme reskin =================
 			task.spawn(function()
