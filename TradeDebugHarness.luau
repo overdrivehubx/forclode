@@ -2346,7 +2346,12 @@ local function setSlotLabelText(slot, text)
 			or nameFrame:FindFirstChildWhichIsA("TextLabel")
 	end
 	label = label or resolve(slot, "ItemName.Label") or slot:FindFirstChild("Label", true)
-	if label and label:IsA("TextLabel") then pcall(function() label.Text = text end) end
+	if label and label:IsA("TextLabel") then
+		pcall(function() label.Text = text end)
+		-- Lighter weight — the cloned template's name font read as too bold.
+		pcall(function() label.FontFace = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Medium) end)
+		pcall(function() label.Font = Enum.Font.GothamMedium end)
+	end
 	return nameFrame, label
 end
 
@@ -2794,6 +2799,33 @@ end
 -- Flip to true to bring the Christmas/Halloween year badges back.
 local SHOW_HOLIDAY_TAGS = false
 
+-- The trade slot template has no FX badge frame, so build the game-style yellow
+-- "★ FX" badge and drop it into the slot's Tags list. Idempotent per slot.
+local function ensureFXBadge(tags)
+	local fx = tags:FindFirstChild("FX")
+	if fx then return fx end
+	local base = tags:FindFirstChild("Chroma") or tags:FindFirstChildWhichIsA("Frame")
+	fx = Instance.new("Frame")
+	fx.Name = "FX"
+	fx.BackgroundColor3 = Color3.fromRGB(245, 190, 30)
+	fx.BorderSizePixel = 0
+	if base then fx.Size = base.Size; pcall(function() fx.LayoutOrder = base.LayoutOrder + 1 end)
+	else fx.Size = UDim2.new(0, 34, 0, 16) end
+	local uc = Instance.new("UICorner"); uc.CornerRadius = UDim.new(0, 4); uc.Parent = fx
+	local lbl = Instance.new("TextLabel")
+	lbl.Name = "TagName"; lbl.BackgroundTransparency = 1; lbl.Size = UDim2.new(1, 0, 1, 0)
+	lbl.Text = "★ FX"; lbl.Font = Enum.Font.GothamBold; lbl.TextScaled = true
+	lbl.TextColor3 = Color3.fromRGB(120, 70, 0); lbl.Parent = fx
+	fx.Parent = tags
+	return fx
+end
+-- FX shows on effect / high-tier items (Godly and above) — a faithful proxy for
+-- MM2's FX badge, which marks effect skins.
+local function itemHasFX(data)
+	if data.FX ~= nil or data.Effect ~= nil or data.HasFX ~= nil then return true end
+	return (RarityValue[data.Rarity or ""] or 0) >= 6
+end
+
 -- Global so renderOffer (defined earlier) can reuse it for offer slots too.
 function applyTags(slot, data)
 	local tags = slot:FindFirstChild("Tags")
@@ -2808,9 +2840,8 @@ function applyTags(slot, data)
 	end
 	if data.Chroma ~= nil then showBadge(tags, "Chroma") end
 	if data.EvoBaseID ~= nil or data.Evo ~= nil then showBadge(tags, "Evo") end
-	-- FX: only reveal a REAL FX frame if the game's slot has one (no synthetic
-	-- badge). This build's trade slot has none, so nothing shows for now.
-	if data.FX ~= nil or data.Effect ~= nil or data.HasFX ~= nil then showBadge(tags, "FX") end
+	-- FX: synthesize the yellow ★FX badge (the template has no FX frame).
+	if itemHasFX(data) then ensureFXBadge(tags); showBadge(tags, "FX") end
 	-- Holiday "snowflake + year" badges — OFF by default (user request).
 	if SHOW_HOLIDAY_TAGS then
 		if data.Event == "Christmas" or data.YearTag ~= nil or data.Christmas ~= nil then
@@ -4255,13 +4286,14 @@ if true then
 			-- these option names; the image ones let you drop in BG_IMAGE. Unknown
 			-- fields are harmlessly ignored, so we pass a few likely aliases.
 			local Win = lib:CreateWindow({
-				Title = "MollyHub — trade sandbox",
+				Title = "MollyHub",
 				Icon = "box",
-				Author = "MollyHub",
-				Size = UDim2.fromOffset(470, 360),
+				Author = "trade sandbox",
+				Size = UDim2.fromOffset(380, 300),  -- smaller; trims the dead space
+				MinSize = UDim2.fromOffset(300, 230),
 				Theme = "Dark",
 				Resizable = true,
-				SideBarWidth = 200,
+				SideBarWidth = 118,                 -- narrow sidebar (was the empty gap)
 				Transparent = true,                 -- the whole menu is a bit see-through
 				BackgroundImageTransparency = 0.5,  -- photo at ~50%
 				BackgroundImage = BG_IMAGE,         -- your photo (BG_IMAGE up top)
@@ -4275,10 +4307,7 @@ if true then
 					Color = ColorSequence.new(Color3.fromRGB(108, 150, 210), Color3.fromRGB(60, 84, 128)),
 				},
 			})
-			local T = Win:Tab({ Title = "Trade", Icon = "box", ShowTabTitle = true })
-
-			T:Section({ Title = "Trade" })
-			-- Pick the second player from the server, or type a custom name.
+			-- ================= shared helpers + state =================
 			local function serverNames()
 				local out = {}
 				for _, pl in ipairs(Players:GetPlayers()) do
@@ -4287,70 +4316,93 @@ if true then
 				table.sort(out)
 				return out
 			end
-			local plDrop
-			pcall(function()
-				plDrop = T:Dropdown({ Title = "Choose player", Desc = "pick from the server ▼",
-					Values = serverNames(), Value = "", Compact = true, AllowNone = true,
-					Callback = function(v) if type(v) == "string" and v ~= "" then NameBox.Text = v end end })
-			end)
-			-- Keep the list fresh as players join/leave.
-			local function refreshPl() if plDrop then pcall(function() plDrop:Refresh(serverNames()) end) end end
-			track(Players.PlayerAdded:Connect(refreshPl))
-			track(Players.PlayerRemoving:Connect(refreshPl))
-			T:Input({ Title = "…or type a name", Placeholder = "name…",
-				Callback = function(v) NameBox.Text = (v ~= "" and v) or "Player2" end })
-			T:Button({ Title = "Incoming request", Desc = "someone sends YOU a request",
-				Callback = function() showRequestModal(currentName(), true) end })
-			T:Button({ Title = "Outgoing request", Desc = "YOU send a request (waiting)",
-				Callback = function() showRequestModal(currentName(), false) end })
-			T:Toggle({ Title = "Spawn to Player 2 side", Desc = "on = spawned items land in THEIR offer", Default = false,
-				Callback = function(on) OfferMode = on and "Player2" or "Player1" end })
-			T:Toggle({ Title = "Overlay on REAL trade", Desc = "fake items on your side (visual only)", Default = false,
-				Callback = function(on) OverlayMode = on; if on then pcall(openItemsPicker) end; pcall(RenderTrade) end })
-
-			-- SPAWN lives on its OWN tab: search box + full CATALOG dropdown (so any
-			-- item, incl. Chroma skins, can be picked without typing exactly).
-			local S = Win:Tab({ Title = "Spawn", Icon = "box", ShowTabTitle = true })
-			S:Section({ Title = "Spawn" })
-			local spName, spAmt = "", "1"
 			local function catalogNames()
 				local names = {}
 				for _, it in ipairs(spawnIndex) do names[#names + 1] = it.name end
 				return names
 			end
-			local catDrop
-			pcall(function()
-				catDrop = S:Dropdown({ Title = "Catalog", Desc = "matches for your search ▼",
-					Values = catalogNames(), Value = "", Compact = true, AllowNone = true,
-					Callback = function(v) if type(v) == "string" and v ~= "" then spName = v end end })
-			end)
-			-- Search box: typing filters the Catalog dropdown to matching items (by
-			-- name), so you pick from a SHORT list instead of scrolling the whole
-			-- catalog. rankMatches ranks exact/prefix/contains, chroma included.
-			S:Input({ Title = "Search item", Placeholder = "type a name, e.g. Chroma Seer",
-				Callback = function(v)
-					spName = v
-					if catDrop then
-						local names = {}
-						for _, it in ipairs(rankMatches(v)) do names[#names + 1] = it.name end
-						pcall(function() catDrop:Refresh(names) end)
-					end
-				end })
-			S:Input({ Title = "Amount", Placeholder = "1", Callback = function(v) spAmt = v end })
-			S:Button({ Title = "Spawn item", Desc = "spawns into trade inventory + game inventory",
-				Callback = function()
-					local it = rankMatches(spName)[1]
-					if not it then notify("Spawn", "no item matches \"" .. tostring(spName) .. "\"") return end
-					local total = spawnEntry(it, spAmt)
-					notify("Spawned", it.name .. "  (x" .. tostring(total) .. ")")
-				end })
-			S:Button({ Title = "Load LIVE items", Desc = "read the real catalog from memory",
-				Callback = function()
-					pcall(loadLiveCatalog)
-					notify("Catalog", CatalogStatus)
-					if catDrop then pcall(function() catDrop:Refresh(catalogNames()) end) end
-				end })
+			local spName, spAmt = "", "1"
+			local p2Name, p2Amt = "", "1"
+			-- Spawn the best match for a query; toP2 routes it into Player2's offer.
+			local function doSpawn(query, amount, toP2)
+				local it = rankMatches(query)[1]
+				if not it then notify("Spawn", "no item matches \"" .. tostring(query) .. "\"") return end
+				local prev = OfferMode
+				if toP2 then OfferMode = "Player2" end
+				local total = spawnEntry(it, amount)
+				OfferMode = prev
+				notify("Spawned", it.name .. " (x" .. tostring(total) .. ")" .. (toP2 and " -> P2 offer" or ""))
+			end
 
+			-- ================= THEME state =================
+			-- Per-theme background image. Blue-Gray uses BG_IMAGE (top of script).
+			-- vv PASTE the Black / Secret theme image ids here (rbxassetid://...) vv
+			local THEME_IMAGES = {
+				["Blue-Gray"] = BG_IMAGE,
+				["Black"]     = "rbxassetid://0",
+				["Secret"]    = "rbxassetid://0",
+			}
+			-- ^^ ---------------------------------------------------------------- ^^
+			local function themeTint(name, l)
+				if name == "Black" then return Color3.new(l * 0.15, l * 0.15, l * 0.17)
+				elseif name == "Secret" then return Color3.new(math.min(1, l * 0.85 + 0.05), l * 0.32, math.min(1, l * 0.95 + 0.08))
+				else return Color3.new(l * 0.80, l * 0.88, math.min(1, l * 1.06 + 0.03)) end
+			end
+			local function themeText(name)
+				if name == "Black" then return Color3.fromRGB(238, 238, 242)      -- not black, so it won't blend
+				elseif name == "Secret" then return Color3.fromRGB(255, 238, 255)
+				else return Color3.fromRGB(228, 234, 246) end
+			end
+			local currentTheme = "Blue-Gray"
+			local secretUnlocked = false
+			local function applyTheme(name)
+				currentTheme = name
+				for _, root in ipairs(guiRoots) do
+					for _, g in ipairs(root:GetChildren()) do
+						if g:IsA("ScreenGui") and not seenGui[g] then
+							for _, d in ipairs(g:GetDescendants()) do
+								pcall(function()
+									if d.Name == "__MHPhoto" and d:IsA("ImageLabel") then
+										d.Image = THEME_IMAGES[name] or BG_IMAGE
+									elseif (d:IsA("Frame") or d:IsA("ImageLabel") or d:IsA("ImageButton")) and d.BackgroundTransparency < 1 then
+										local l = d:GetAttribute("__MHorigL")
+										if not l then
+											local c = d.BackgroundColor3
+											l = (c.R + c.G + c.B) / 3
+											d:SetAttribute("__MHorigL", l)
+										end
+										d.BackgroundColor3 = themeTint(name, l)
+									elseif d:IsA("TextLabel") or d:IsA("TextButton") then
+										d.TextColor3 = themeText(name)
+									end
+								end)
+							end
+						end
+					end
+				end
+			end
+			local p2Key = Enum.KeyCode.G
+
+			-- ================= TAB 1: Trade =================
+			local T = Win:Tab({ Title = "Trade", Icon = "handshake", ShowTabTitle = true })
+			T:Section({ Title = "Trade" })
+			local plDrop
+			pcall(function()
+				plDrop = T:Dropdown({ Title = "Choose player", Desc = "pick from the server",
+					Values = serverNames(), Value = "", Compact = true, AllowNone = true,
+					Callback = function(v) if type(v) == "string" and v ~= "" then NameBox.Text = v end end })
+			end)
+			local function refreshPl() if plDrop then pcall(function() plDrop:Refresh(serverNames()) end) end end
+			track(Players.PlayerAdded:Connect(refreshPl))
+			track(Players.PlayerRemoving:Connect(refreshPl))
+			T:Input({ Title = "...or type a name", Placeholder = "name...",
+				Callback = function(v) NameBox.Text = (v ~= "" and v) or "Player2" end })
+			T:Button({ Title = "Incoming request", Desc = "someone sends YOU a request",
+				Callback = function() showRequestModal(currentName(), true) end })
+			T:Button({ Title = "Outgoing request", Desc = "YOU send a request (waiting)",
+				Callback = function() showRequestModal(currentName(), false) end })
+			T:Toggle({ Title = "Overlay on REAL trade", Desc = "fake items on your side (visual only)", Default = false,
+				Callback = function(on) OverlayMode = on; if on then pcall(openItemsPicker) end; pcall(RenderTrade) end })
 			T:Section({ Title = "Accept" })
 			T:Toggle({ Title = "You accepted (P1)", Desc = "YOU HAVE ACCEPTED.", Default = false,
 				Callback = function(on) setYourAcceptedUI(on) end })
@@ -4363,8 +4415,46 @@ if true then
 			T:Button({ Title = "Terminate + Wipe", Desc = "close & wipe the harness",
 				Callback = function() terminate(Panel) end })
 
-			-- MUSIC on its OWN tab. Reuse the "MollyHubMusic" Sound the built-in panel
-			-- created (in SoundService); make one if it isn't there yet.
+			-- ================= TAB 2: 2 Player =================
+			local P2 = Win:Tab({ Title = "2 Player", Icon = "user-plus", ShowTabTitle = true })
+			P2:Section({ Title = "Player 2 side" })
+			P2:Toggle({ Title = "Spawn to Player 2 side", Desc = "spawns land in THEIR offer (Spawner too)", Default = false,
+				Callback = function(on) OfferMode = on and "Player2" or "Player1" end })
+			P2:Input({ Title = "Search item", Placeholder = "e.g. Chroma Seer",
+				Callback = function(v) p2Name = v end })
+			P2:Input({ Title = "Amount", Placeholder = "1", Callback = function(v) p2Amt = v end })
+			P2:Button({ Title = "Spawn into P2 offer", Desc = "puts the item straight into their side",
+				Callback = function() doSpawn(p2Name, p2Amt, true) end })
+
+			-- ================= TAB 3: Spawner =================
+			local S = Win:Tab({ Title = "Spawner", Icon = "box", ShowTabTitle = true })
+			S:Section({ Title = "Spawn" })
+			local catDrop
+			pcall(function()
+				catDrop = S:Dropdown({ Title = "Catalog", Desc = "matches for your search",
+					Values = catalogNames(), Value = "", Compact = true, AllowNone = true,
+					Callback = function(v) if type(v) == "string" and v ~= "" then spName = v end end })
+			end)
+			S:Input({ Title = "Search item", Placeholder = "type a name, e.g. Chroma Seer",
+				Callback = function(v)
+					spName = v
+					if catDrop then
+						local names = {}
+						for _, it in ipairs(rankMatches(v)) do names[#names + 1] = it.name end
+						pcall(function() catDrop:Refresh(names) end)
+					end
+				end })
+			S:Input({ Title = "Amount", Placeholder = "1", Callback = function(v) spAmt = v end })
+			S:Button({ Title = "Spawn item", Desc = "into trade inventory + game inventory",
+				Callback = function() doSpawn(spName, spAmt, false) end })
+			S:Button({ Title = "Load LIVE items", Desc = "read the real catalog from memory",
+				Callback = function()
+					pcall(loadLiveCatalog)
+					notify("Catalog", CatalogStatus)
+					if catDrop then pcall(function() catDrop:Refresh(catalogNames()) end) end
+				end })
+
+			-- ================= TAB 4: Music =================
 			local music = game:GetService("SoundService"):FindFirstChild("MollyHubMusic")
 			if not music then
 				music = Instance.new("Sound")
@@ -4374,36 +4464,80 @@ if true then
 			end
 			local Mu = Win:Tab({ Title = "Music", Icon = "music", ShowTabTitle = true })
 			Mu:Section({ Title = "Music" })
-			Mu:Input({ Title = "Music ID", Placeholder = "rbxassetid://… or a number",
+			-- Popular tracks (Roblox audio ids). Roblox moderates audio, so if one
+			-- doesn't play it was taken down - pick another or paste your own id below.
+			local MUSIC_LIST = {
+				["Believer - Imagine Dragons"] = "rbxassetid://1725787491",
+				["Blinding Lights - The Weeknd"] = "rbxassetid://5555445124",
+				["Sunflower - Post Malone"]      = "rbxassetid://2531943421",
+				["Astronaut In The Ocean"]       = "rbxassetid://6403500775",
+				["STAY - Kid Laroi"]             = "rbxassetid://7317666452",
+				["Sweet Dreams"]                 = "rbxassetid://5843014871",
+			}
+			local musNames = {}
+			for k in pairs(MUSIC_LIST) do musNames[#musNames + 1] = k end
+			table.sort(musNames)
+			pcall(function()
+				Mu:Dropdown({ Title = "Popular tracks", Desc = "pick a song, then Play",
+					Values = musNames, Value = "", Compact = true, AllowNone = true,
+					Callback = function(v)
+						local id = MUSIC_LIST[v]
+						if id and id ~= "" then music.SoundId = id end
+					end })
+			end)
+			Mu:Input({ Title = "Custom music ID", Placeholder = "rbxassetid://... or a number",
 				Callback = function(v)
 					v = tostring(v)
-					if v ~= "" then
-						music.SoundId = v:find("rbxassetid") and v or ("rbxassetid://" .. v:gsub("%D", ""))
-					end
+					if v ~= "" then music.SoundId = v:find("rbxassetid") and v or ("rbxassetid://" .. v:gsub("%D", "")) end
 				end })
 			Mu:Toggle({ Title = "Play music", Default = false,
 				Callback = function(on) if on then pcall(function() music:Play() end) else pcall(function() music:Pause() end) end end })
 			Mu:Slider({ Title = "Volume", Value = { Min = 0, Max = 1, Default = 0.5 },
 				Callback = function(v) music.Volume = tonumber(v) or 0.5 end })
 
-			-- Blue-gray reskin: if the theme calls above didn't take, tint Rubis's own
-			-- ScreenGui toward blue-gray while KEEPING each element's brightness (so the
-			-- light/dark structure survives). Runs a few passes in case it renders late.
-			task.spawn(function()
-				local function blueTint(c)
-					local l = (c.R + c.G + c.B) / 3        -- brightness 0..1
-					return Color3.new(l * 0.80, l * 0.88, math.min(1, l * 1.06 + 0.03))
+			-- ================= TAB 5: Settings =================
+			local Set = Win:Tab({ Title = "Settings", Icon = "settings", ShowTabTitle = true })
+			Set:Section({ Title = "Theme" })
+			local themeDrop
+			pcall(function()
+				themeDrop = Set:Dropdown({ Title = "Theme", Desc = "menu colours", Compact = true,
+					Values = { "Blue-Gray", "Black" }, Value = "Blue-Gray",
+					Callback = function(v) if type(v) == "string" and v ~= "" then applyTheme(v) end end })
+			end)
+			Set:Input({ Title = "Theme code", Placeholder = "enter a code to unlock a theme",
+				Callback = function(v)
+					if tostring(v) == "secret1337" and not secretUnlocked then
+						secretUnlocked = true
+						if themeDrop then pcall(function() themeDrop:Refresh({ "Blue-Gray", "Black", "Secret" }) end) end
+						applyTheme("Secret")
+						notify("Theme", "Secret theme unlocked!")
+					end
+				end })
+			Set:Section({ Title = "Keybinds" })
+			pcall(function()
+				Set:Keybind({ Title = "Spawn to P2 slot", Desc = "press to spawn the 2 Player search item into their offer", Value = "G",
+					Callback = function(k)
+						local ok2, kc = pcall(function() return Enum.KeyCode[k] end)
+						if ok2 and kc then p2Key = kc end
+					end })
+			end)
+			track(UIS.InputBegan:Connect(function(input, gp)
+				if gp then return end
+				if input.KeyCode == p2Key and p2Key ~= Enum.KeyCode.Unknown then
+					doSpawn(p2Name, p2Amt, true)
 				end
-				-- Inject OUR background photo into Rubis's main window frame — the
-				-- CreateWindow image options weren't honoured, so we place the image
-				-- ourselves: lowest sibling ZIndex = behind every control, above the
-				-- window's flat fill. ~50% see-through + the window keeps its tint.
+			end))
+
+			-- ================= background photo + theme reskin =================
+			task.spawn(function()
 				local function injectPhoto(g)
-					if g:GetAttribute("__MHbg") or BG_IMAGE == "" then return end
+					if g:GetAttribute("__MHbg") then return end
+					local img0 = THEME_IMAGES[currentTheme] or BG_IMAGE
+					if img0 == "" or img0 == "rbxassetid://0" then return end
 					local win, area
 					for _, d in ipairs(g:GetDescendants()) do
 						if (d:IsA("Frame") or d:IsA("CanvasGroup")) and d.Visible
-							and d.AbsoluteSize.X > 260 and d.AbsoluteSize.Y > 180 then
+							and d.AbsoluteSize.X > 220 and d.AbsoluteSize.Y > 150 then
 							local a = d.AbsoluteSize.X * d.AbsoluteSize.Y
 							if not area or a > area then win, area = d, a end
 						end
@@ -4411,41 +4545,25 @@ if true then
 					if not win then return end
 					g:SetAttribute("__MHbg", true)
 					local img = Instance.new("ImageLabel")
-					img.Name = "__MHPhoto"
-					img.Size = UDim2.new(1, 0, 1, 0)
-					img.BackgroundTransparency = 1
-					img.Image = BG_IMAGE
-					img.ScaleType = Enum.ScaleType.Crop
-					img.ImageTransparency = 0.5
+					img.Name = "__MHPhoto"; img.Size = UDim2.new(1, 0, 1, 0)
+					img.BackgroundTransparency = 1; img.Image = img0
+					img.ScaleType = Enum.ScaleType.Crop; img.ImageTransparency = 0.5
 					local z = math.huge
 					for _, ch in ipairs(win:GetChildren()) do
 						if ch:IsA("GuiObject") then z = math.min(z, ch.ZIndex) end
 					end
 					img.ZIndex = (z == math.huge) and 0 or (z - 1)
-					local uc = Instance.new("UICorner")
-					uc.CornerRadius = UDim.new(0, 12); uc.Parent = img
+					local uc = Instance.new("UICorner"); uc.CornerRadius = UDim.new(0, 12); uc.Parent = img
 					img.Parent = win
 				end
-				for _ = 1, 8 do
+				for _ = 1, 10 do
 					task.wait(0.3)
 					for _, root in ipairs(guiRoots) do
 						for _, g in ipairs(root:GetChildren()) do
-							if g:IsA("ScreenGui") and not seenGui[g] then
-								pcall(injectPhoto, g)
-								for _, d in ipairs(g:GetDescendants()) do
-									if (d:IsA("Frame") or d:IsA("ImageLabel") or d:IsA("ImageButton"))
-										and d.BackgroundTransparency < 1 and not d:GetAttribute("__MHtint")
-										and d.Name ~= "__MHPhoto" then
-										-- once per element, else repeated passes would over-tint
-										pcall(function()
-											d:SetAttribute("__MHtint", true)
-											d.BackgroundColor3 = blueTint(d.BackgroundColor3)
-										end)
-									end
-								end
-							end
+							if g:IsA("ScreenGui") and not seenGui[g] then pcall(injectPhoto, g) end
 						end
 					end
+					applyTheme(currentTheme)
 				end
 			end)
 
