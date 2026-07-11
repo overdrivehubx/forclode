@@ -2824,11 +2824,19 @@ end
 -- FX only when the item's REAL data flags an effect — NOT by rarity (that showed
 -- FX on every Godly). The live catalog carries the true flags; the game itself
 -- renders FX for exactly these items, which is why the spawner path looks right.
-local FX_FIELDS = { "FX", "Effect", "HasFX", "Effects", "Godlys", "Exclusive", "Animated", "Particle", "GodlyFX" }
+local FX_FIELDS = { "FX", "Effect", "HasFX", "Effects", "Godlys", "Exclusive", "Animated",
+	"Particle", "GodlyFX", "Particles", "Trail", "Glow", "Shine" }
 local function itemHasFX(data)
 	for _, f in ipairs(FX_FIELDS) do
 		local v = data[f]
 		if v ~= nil and v ~= false then return true end
+	end
+	-- Also catch items that REFERENCE an effect/particle module in a string field.
+	for _, v in pairs(data) do
+		if type(v) == "string" then
+			local lv = v:lower()
+			if lv:find("effect", 1, true) or lv:find("particle", 1, true) then return true end
+		end
 	end
 	return false
 end
@@ -2865,6 +2873,40 @@ function applyTags(slot, data)
 		local owner = data.CustomAward or data.Leaderboard
 		if uniq and type(owner) == "string" then setProp(uniq, "PlayerName", "Text", owner) end
 	end
+end
+
+-- Draw guaranteed badge chips in the slot's top-left corner (Chroma / Evo / FX).
+-- Used ONLY for the Add-Items grid, whose cloned template's native badge frames
+-- don't render; the offer keeps the game's native badges.
+function addCornerBadges(slot, data)
+	local old = slot:FindFirstChild("__MHBadges")
+	if old then old:Destroy() end
+	local chips = {}
+	if data.Chroma ~= nil then chips[#chips + 1] = { "C", Color3.fromRGB(150, 110, 245) } end
+	if data.EvoBaseID ~= nil or data.Evo ~= nil then chips[#chips + 1] = { "E", Color3.fromRGB(90, 200, 120) } end
+	if itemHasFX(data) then chips[#chips + 1] = { "FX", Color3.fromRGB(245, 190, 30) } end
+	if #chips == 0 then return end
+	local holder = Instance.new("Frame")
+	holder.Name = "__MHBadges"
+	holder.Position = UDim2.new(0, 2, 0, 2)
+	holder.Size = UDim2.new(1, -4, 0, 14)
+	holder.BackgroundTransparency = 1
+	holder.ZIndex = 60
+	local ll = Instance.new("UIListLayout")
+	ll.FillDirection = Enum.FillDirection.Horizontal
+	ll.Padding = UDim.new(0, 2); ll.Parent = holder
+	for _, ch in ipairs(chips) do
+		local f = Instance.new("Frame")
+		f.Size = UDim2.new(0, (#ch[1] > 1) and 20 or 14, 0, 14)
+		f.BackgroundColor3 = ch[2]; f.BorderSizePixel = 0; f.ZIndex = 60
+		local uc = Instance.new("UICorner"); uc.CornerRadius = UDim.new(0, 3); uc.Parent = f
+		local l = Instance.new("TextLabel")
+		l.Size = UDim2.new(1, 0, 1, 0); l.BackgroundTransparency = 1
+		l.Text = ch[1]; l.Font = Enum.Font.GothamBold; l.TextScaled = true
+		l.TextColor3 = Color3.fromRGB(25, 25, 25); l.ZIndex = 61; l.Parent = f
+		f.Parent = holder
+	end
+	holder.Parent = slot
 end
 
 local function paintSlot(slot, data, amount)
@@ -2905,6 +2947,9 @@ local function paintSlot(slot, data, amount)
 	local amt = resolve(slot, "Container.Amount") or slot:FindFirstChild("Amount", true)
 	if amt and amt:IsA("TextLabel") then amt.Text = (amount and amount > 1) and ("x" .. amount) or "" end
 	applyTags(slot, data)
+	-- The cloned Add-Items template's own badge frames don't render reliably, so
+	-- draw guaranteed corner chips (Chroma / Evo / FX) on top of the slot.
+	addCornerBadges(slot, data)
 end
 
 -- Paint a slot straight from a scraped real-inventory visual (no catalog needed).
@@ -3984,6 +4029,18 @@ end)
 -- The inventory panel is NOT auto-opened here.
 local function spawnEntry(it, amount)
 	amount = math.max(1, math.floor(tonumber(amount) or 1))
+	-- DIAGNOSTIC: print the spawned item's real fields to the console (F9). Lets us
+	-- identify the exact flag the game uses for the FX badge. Remove once pinned.
+	pcall(function()
+		local db = (it.cat == "Pets") and PetDB or ItemDB
+		local d = db and db[it.key]
+		if type(d) == "table" then
+			local fs = {}
+			for k, v in pairs(d) do fs[#fs + 1] = tostring(k) .. "=" .. tostring(v) end
+			table.sort(fs)
+			print("[MHFields] " .. tostring(it.key) .. " | " .. table.concat(fs, ", "))
+		end
+	end)
 	if OfferMode == "Player2" and not OverlayMode then
 		local offer = DebugTradeTable.Player2.Offer
 		local entry
@@ -4305,7 +4362,7 @@ if true then
 			pcall(function()
 				Win = lib:CreateWindow({
 					Title = "MollyHub", Icon = "box", Author = "trade sandbox",
-					Size = UDim2.fromOffset(318, 250), Theme = "Dark", Resizable = true,
+					Size = UDim2.fromOffset(292, 224), Theme = "Dark", Resizable = true,
 					SideBarWidth = 104, Transparent = true, BackgroundImageTransparency = 0.5,
 					BackgroundImage = BG_IMAGE, Image = BG_IMAGE, Background = BG_IMAGE,
 					OpenButton = { Title = "MollyHub", Enabled = true, Draggable = true,
@@ -4313,7 +4370,7 @@ if true then
 				})
 			end)
 			if not Win then
-				pcall(function() Win = lib:CreateWindow({ Title = "MollyHub", Size = UDim2.fromOffset(318, 250), Theme = "Dark" }) end)
+				pcall(function() Win = lib:CreateWindow({ Title = "MollyHub", Size = UDim2.fromOffset(292, 224), Theme = "Dark" }) end)
 			end
 			assert(Win, "Rubis CreateWindow returned nil")
 			-- ================= shared helpers + state =================
