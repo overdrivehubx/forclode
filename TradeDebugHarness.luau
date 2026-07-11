@@ -4051,7 +4051,7 @@ end
 function MH_Presets()
 	-- A ready-made pack (built-in, always listed). Keys are catalog item keys.
 	return {
-		["\u{2605} Godly Pack"] = {
+		["Godly Pack (preset)"] = {
 			Weapons = { CSeer = 1, Gingerscope = 1, Harvester = 1, Nebula = 1, Prismatic = 1,
 				["Galaxy Blade"] = 1, Logchopper = 1, SharkSeeker = 1, ["Chroma Corrupt"] = 1,
 				Summerween = 1, ["Retro Sunset"] = 1, Whiteout = 1 },
@@ -4342,10 +4342,11 @@ selectTab("Trade")
 -- blue-gray panel. If Rubis fails to build, the console (F9) shows the error and
 -- the built-in panel is restored automatically.
 if true then
-	-- Hide the built-in panel; Rubis takes over. If Rubis can't load or build (e.g.
-	-- on some PC executors like Potassium), the built-in panel is brought BACK so
-	-- there is always a working menu.
-	pcall(function() Panel.Enabled = false end)
+	-- Leave the built-in panel VISIBLE for now. Rubis hides it ONLY after it has
+	-- fully built (below). This way, if Rubis's load hangs or fails silently — as
+	-- on some PC executors like Potassium — you still have a working menu instead
+	-- of a blank screen. On phone the built-in panel just flashes for a moment
+	-- before Rubis takes over.
 	task.spawn(function()
 		-- Retry the load a few times — the endpoint occasionally hiccups.
 		local lib
