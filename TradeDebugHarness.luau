@@ -2947,9 +2947,6 @@ local function paintSlot(slot, data, amount)
 	local amt = resolve(slot, "Container.Amount") or slot:FindFirstChild("Amount", true)
 	if amt and amt:IsA("TextLabel") then amt.Text = (amount and amount > 1) and ("x" .. amount) or "" end
 	applyTags(slot, data)
-	-- The cloned Add-Items template's own badge frames don't render reliably, so
-	-- draw guaranteed corner chips (Chroma / Evo / FX) on top of the slot.
-	addCornerBadges(slot, data)
 end
 
 -- Paint a slot straight from a scraped real-inventory visual (no catalog needed).
@@ -2989,7 +2986,22 @@ local function getInvCache(category)
 	if not (cache and cache.container and cache.template) then
 		local container, sample = findInventoryContainer(category)
 		if not container then return nil end
-		cache = { container = container, template = sample:Clone(), cell = sample.AbsoluteSize }
+		-- Prefer an OFFER slot as the template: its native badge frames (Chroma /
+		-- Evo / …) actually render when cloned, whereas the inventory slot's don't —
+		-- so the Add-Items grid gets the SAME real game badges as the offer.
+		local tmplSrc = sample
+		for _, off in ipairs({ Offer1, Offer2 }) do
+			if off then
+				for _, s in ipairs(off:GetDescendants()) do
+					if s:IsA("GuiObject") and (resolve(s, "Container.Icon") or s:FindFirstChild("Icon"))
+						and s:FindFirstChild("ItemName") and s:FindFirstChild("Tags") then
+						tmplSrc = s; break
+					end
+				end
+			end
+			if tmplSrc ~= sample then break end
+		end
+		cache = { container = container, template = tmplSrc:Clone(), cell = sample.AbsoluteSize }
 		InvCache[category] = cache
 	end
 	return cache
