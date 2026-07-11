@@ -2821,9 +2821,16 @@ local function ensureFXBadge(tags)
 end
 -- FX shows on effect / high-tier items (Godly and above) — a faithful proxy for
 -- MM2's FX badge, which marks effect skins.
+-- FX only when the item's REAL data flags an effect — NOT by rarity (that showed
+-- FX on every Godly). The live catalog carries the true flags; the game itself
+-- renders FX for exactly these items, which is why the spawner path looks right.
+local FX_FIELDS = { "FX", "Effect", "HasFX", "Effects", "Godlys", "Exclusive", "Animated", "Particle", "GodlyFX" }
 local function itemHasFX(data)
-	if data.FX ~= nil or data.Effect ~= nil or data.HasFX ~= nil then return true end
-	return (RarityValue[data.Rarity or ""] or 0) >= 6
+	for _, f in ipairs(FX_FIELDS) do
+		local v = data[f]
+		if v ~= nil and v ~= false then return true end
+	end
+	return false
 end
 
 -- Global so renderOffer (defined earlier) can reuse it for offer slots too.
