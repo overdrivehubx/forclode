@@ -4042,6 +4042,78 @@ local function spawnEntry(it, amount)
 	return list[it.key]
 end
 
+--==============================================================================
+-- CONFIGS — save the whole Add-Items inventory as a named preset and spawn it
+-- back with one press. Persisted to a file (executor file API) + an in-session
+-- global so they survive re-runs; a built-in preset is always available.
+-- All GLOBAL so both the Rubis menu and the built-in panel can call them.
+--==============================================================================
+function MH_Presets()
+	-- A ready-made pack (built-in, always listed). Keys are catalog item keys.
+	return {
+		["\u{2605} Godly Pack"] = {
+			Weapons = { CSeer = 1, Gingerscope = 1, Harvester = 1, Nebula = 1, Prismatic = 1,
+				["Galaxy Blade"] = 1, Logchopper = 1, SharkSeeker = 1, ["Chroma Corrupt"] = 1,
+				Summerween = 1, ["Retro Sunset"] = 1, Whiteout = 1 },
+			Pets = {},
+		},
+	}
+end
+function MH_LoadConfigs()
+	local out = {}
+	for k, v in pairs(MH_Presets()) do out[k] = v end               -- presets first
+	pcall(function()
+		if isfile and isfile("MollyHub_configs.json") and readfile then
+			local d = game:GetService("HttpService"):JSONDecode(readfile("MollyHub_configs.json"))
+			if type(d) == "table" then for k, v in pairs(d) do out[k] = v end end
+		end
+	end)
+	local g = (getgenv and getgenv()) or _G                          -- in-session copy
+	if type(g.MollyHubConfigs) == "table" then for k, v in pairs(g.MollyHubConfigs) do out[k] = v end end
+	return out
+end
+function MH_SaveConfigs(t)
+	local presets = MH_Presets()
+	local save = {}
+	for k, v in pairs(t) do if presets[k] == nil then save[k] = v end end  -- don't persist presets
+	local g = (getgenv and getgenv()) or _G
+	g.MollyHubConfigs = save
+	pcall(function() writefile("MollyHub_configs.json", game:GetService("HttpService"):JSONEncode(save)) end)
+end
+function MH_ConfigNames()
+	local names = {}
+	for k in pairs(MH_LoadConfigs()) do names[#names + 1] = k end
+	table.sort(names)
+	return names
+end
+function MH_SaveCurrent(name)
+	if not name or name == "" then return false end
+	local cfgs = MH_LoadConfigs()
+	local w, p = {}, {}
+	for k, a in pairs(SpawnedWeapons) do if k ~= "DefaultKnife" and k ~= "DefaultGun" then w[k] = a end end
+	for k, a in pairs(SpawnedPets) do p[k] = a end
+	cfgs[name] = { Weapons = w, Pets = p }
+	MH_SaveConfigs(cfgs)
+	return true
+end
+function MH_DeleteConfig(name)
+	if MH_Presets()[name] ~= nil then return false end               -- can't delete a preset
+	local cfgs = MH_LoadConfigs()
+	cfgs[name] = nil
+	MH_SaveConfigs(cfgs)
+	return true
+end
+function MH_ApplyConfig(name)
+	local c = MH_LoadConfigs()[name]
+	if type(c) ~= "table" then return false end
+	local prev = OfferMode
+	OfferMode = "Player1"  -- config items go into YOUR inventory, not P2's offer
+	for k, a in pairs(c.Weapons or {}) do pcall(spawnEntry, { key = k, cat = "Weapons", name = k }, a) end
+	for k, a in pairs(c.Pets or {}) do pcall(spawnEntry, { key = k, cat = "Pets", name = k }, a) end
+	OfferMode = prev
+	return true
+end
+
 -- Rank catalog matches for a typed name: exact key/name > prefix > contains.
 -- This is the "scanner" — you type what you want, it figures out the item.
 local function rankMatches(query)
@@ -4588,6 +4660,44 @@ if true then
 					end))
 				end)
 				if not _ok_kb then warn("[TradeDebug] Rubis tab Keybinds error: "..tostring(_e_kb)) end
+
+				-- ================= TAB 7: Configs =================
+				-- Save the whole Add-Items inventory as a named config and spawn it back with
+				-- one press. Includes a built-in preset pack.
+				local _ok_cf, _e_cf = pcall(function()
+					local CF = Win:Tab({ Title = "Configs", Icon = "box", ShowTabTitle = true })
+					CF:Section({ Title = "Inventory configs" })
+					local cfgSel, cfgName = "", ""
+					local cfgDrop
+					pcall(function()
+						cfgDrop = CF:Dropdown({ Title = "Saved configs", Desc = "pick one, then Load", Compact = true,
+							Values = MH_ConfigNames(), Value = "", AllowNone = true,
+							Callback = function(v) if type(v) == "string" then cfgSel = v end end })
+					end)
+					CF:Button({ Title = "Load config (spawn all)", Desc = "spawns the whole saved inventory",
+						Callback = function()
+							if cfgSel == "" then notify("Configs", "pick a config first") return end
+							if MH_ApplyConfig(cfgSel) then notify("Configs", "Loaded: " .. cfgSel)
+							else notify("Configs", "load failed") end
+						end })
+					CF:Input({ Title = "New config name", Placeholder = "my loadout",
+						Callback = function(v) cfgName = v end })
+					CF:Button({ Title = "Save current inventory", Desc = "saves everything in Add Items",
+						Callback = function()
+							if cfgName == "" then notify("Configs", "enter a name") return end
+							MH_SaveCurrent(cfgName)
+							if cfgDrop then pcall(function() cfgDrop:Refresh(MH_ConfigNames()) end) end
+							notify("Configs", "Saved: " .. cfgName)
+						end })
+					CF:Button({ Title = "Delete selected config", Desc = "presets can't be deleted",
+						Callback = function()
+							if cfgSel ~= "" and MH_DeleteConfig(cfgSel) then
+								if cfgDrop then pcall(function() cfgDrop:Refresh(MH_ConfigNames()) end) end
+								notify("Configs", "Deleted: " .. cfgSel)
+							else notify("Configs", "can't delete that") end
+						end })
+				end)
+				if not _ok_cf then warn("[TradeDebug] Rubis tab Configs error: "..tostring(_e_cf)) end
 
 			-- ================= background photo + theme reskin =================
 			task.spawn(function()
