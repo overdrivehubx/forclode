@@ -2108,6 +2108,27 @@ local ItemsPicker = (TradeGUI and resolve(TradeGUI, "Container.Items"))
 local InventoryFrame = TradeGUI and resolve(TradeGUI, "Container.Items.Main.Weapons.Items.Container.Current.Container")
 local PetsFrame      = TradeGUI and resolve(TradeGUI, "Container.Items.Main.Pets.Items.Container.Current.Container")
 
+-- Snapshot the trade GUI's authored transparency (Container + whole subtree) at
+-- load, while it's still in its clean closed state. The close/complete animation
+-- (ours in `terminate`, plus the game's own trade-finished fade) tweens frames to
+-- BackgroundTransparency = 1; without a restore, the SECOND trade re-opens fully
+-- see-through. `restoreTradeTransparency` (below) plays this snapshot back on open.
+-- Stored on Runtime (keyed by instance) so it costs no top-level local.
+Runtime.OrigTransparency = {}
+if Container then
+	local snap = { Container }
+	for _, d in ipairs(Container:GetDescendants()) do
+		if d:IsA("GuiObject") then snap[#snap + 1] = d end
+	end
+	for _, inst in ipairs(snap) do
+		local rec = {}
+		pcall(function() rec.bg = inst.BackgroundTransparency end)
+		pcall(function() rec.img = inst.ImageTransparency end)
+		pcall(function() rec.grp = inst.GroupTransparency end)
+		Runtime.OrigTransparency[inst] = rec
+	end
+end
+
 -- The request modal lives on the main leaderboard GUI, not the Trade GUI.
 -- A recursive search for anything named "TradeRequest" is the most robust find
 -- across the PC / Phone / Xbox / legacy layouts.
@@ -3238,6 +3259,24 @@ local function setYourAcceptedUI(accepted)
 	end
 end
 
+-- Replay the load-time transparency snapshot so a trade re-opens fully opaque.
+-- The close/complete fade leaves Container (and its subtree) at transparency 1;
+-- this puts every captured frame back to its authored value. Only instances that
+-- still exist are touched, and harness-added children (never snapshotted) are
+-- left alone. GLOBAL to stay within the top-level local budget.
+function restoreTradeTransparency()
+	local snap = Runtime and Runtime.OrigTransparency
+	if not snap then return end
+	for inst, rec in pairs(snap) do
+		pcall(function()
+			if inst.Parent == nil then return end
+			if rec.bg  ~= nil then inst.BackgroundTransparency = rec.bg end
+			if rec.img ~= nil then inst.ImageTransparency      = rec.img end
+			if rec.grp ~= nil then inst.GroupTransparency      = rec.grp end
+		end)
+	end
+end
+
 -- Begin the offline trade: hide the request, reset offers, open the Trade panel.
 -- Invoked by the native MM2 Accept button, mirroring the real
 -- AcceptRequest -> StartTrade -> UpdateTrade lifecycle.
@@ -3260,6 +3299,8 @@ function startTrade(player2Name)
 	revealAncestors(Offer1 or TradeRoot or Container)
 	if Container then Container.Visible = true end
 	if TradeRoot then TradeRoot.Visible = true end
+	-- Undo any leftover fade from the previous trade's close so this one is opaque.
+	restoreTradeTransparency()
 	-- Desktop shows the inventory beside the offers (screenshot layout); phone
 	-- keeps it hidden behind the native "Add Items" button until tapped.
 	if ItemsPicker then
