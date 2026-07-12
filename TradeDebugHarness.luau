@@ -2347,10 +2347,9 @@ local function setSlotLabelText(slot, text)
 	end
 	label = label or resolve(slot, "ItemName.Label") or slot:FindFirstChild("Label", true)
 	if label and label:IsA("TextLabel") then
+		-- Only set the text — keep the template's OWN font (it's the game's real
+		-- item-name font now that Add-Items clones an offer slot), so it matches.
 		pcall(function() label.Text = text end)
-		-- Lighter weight — the cloned template's name font read as too bold.
-		pcall(function() label.FontFace = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Medium) end)
-		pcall(function() label.Font = Enum.Font.GothamMedium end)
 	end
 	return nameFrame, label
 end
@@ -4342,11 +4341,17 @@ selectTab("Trade")
 -- blue-gray panel. If Rubis fails to build, the console (F9) shows the error and
 -- the built-in panel is restored automatically.
 if true then
-	-- Leave the built-in panel VISIBLE for now. Rubis hides it ONLY after it has
-	-- fully built (below). This way, if Rubis's load hangs or fails silently — as
-	-- on some PC executors like Potassium — you still have a working menu instead
-	-- of a blank screen. On phone the built-in panel just flashes for a moment
-	-- before Rubis takes over.
+	-- Hide the built-in panel immediately so it never flashes — Rubis is the menu.
+	pcall(function() Panel.Enabled = false end)
+	-- WATCHDOG (separate thread, so a hung HttpGet can't block it): if Rubis hasn't
+	-- reported ready within the timeout, bring the built-in panel back so you are
+	-- never left with a blank screen (e.g. Rubis hanging on Potassium).
+	task.spawn(function()
+		task.wait(9)
+		if not Panel:GetAttribute("__RubisReady") then
+			pcall(function() Panel.Enabled = true end)
+		end
+	end)
 	task.spawn(function()
 		-- Retry the load a few times — the endpoint occasionally hiccups.
 		local lib
@@ -4739,7 +4744,9 @@ if true then
 				end
 			end)
 
-			-- Rubis is fully up: retire the built-in panel.
+			-- Rubis is fully up: mark ready (so the watchdog leaves it alone) and
+			-- retire the built-in panel.
+			pcall(function() Panel:SetAttribute("__RubisReady", true) end)
 			pcall(function() Panel.Enabled = false end)
 		end)
 		if not built then
