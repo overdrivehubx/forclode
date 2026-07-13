@@ -2537,6 +2537,9 @@ function RenderTrade()
 
 	renderOffer("Player1", Offer1)
 	renderOffer("Player2", Offer2)
+
+	-- Grey the ACCEPT button on an empty trade, green once something is staged.
+	updateAcceptButtonUI()
 end
 
 -- Start / restart the 6s "Please wait before accepting" cooldown, mirroring the
@@ -2671,6 +2674,59 @@ function unofferOne(sideKey, index)
 	renderInventory()
 	RenderTrade()
 	if not OverlayMode and startAcceptCooldown then startAcceptCooldown() end
+end
+
+-- Return every staged item on a side back to the inventory pool it came from and
+-- empty that side's offer. Used when a trade is ABANDONED (declined / a fresh
+-- trade replaces an incomplete one) so the items you staged aren't lost — a
+-- completed trade consumes them instead (see completeTradeIfBothAccepted).
+-- GLOBAL so the request-Decline handler (defined far below) can call it without
+-- spending a top-level local.
+function returnOfferToInventory(sideKey)
+	local side = DebugTradeTable and DebugTradeTable[sideKey]
+	if not (side and side.Offer) then return end
+	for _, entry in ipairs(side.Offer) do
+		if not isDefaultItem(entry[1]) then
+			local pool = invPool(entry[3])
+			pool[entry[1]] = (pool[entry[1]] or 0) + (entry[2] or 1)
+		end
+	end
+	side.Offer = {}
+end
+
+-- Grey the native ACCEPT button while the trade is empty (nothing to trade), and
+-- restore its authored green once at least one item is staged on either side —
+-- matching MM2, which won't let you accept an empty trade. Original colours are
+-- cached per node on first run (while the button is still its native green).
+-- GLOBAL (called from RenderTrade) to stay within the top-level local budget.
+function updateAcceptButtonUI()
+	if not TradeRoot then return end
+	local acc = resolve(TradeRoot, "Actions.Accept")
+	if not acc then return end
+	local btn = resolve(acc, "ActionButton") or acc
+	local total = #DebugTradeTable.Player1.Offer + #DebugTradeTable.Player2.Offer
+	Runtime.AcceptOrig = Runtime.AcceptOrig or {}
+	local grey = Color3.fromRGB(112, 116, 122)
+	for _, node in ipairs({ acc, btn }) do
+		if node then
+			if Runtime.AcceptOrig[node] == nil then
+				local rec = {}
+				pcall(function() rec.bg = node.BackgroundColor3 end)
+				pcall(function() rec.img = node.ImageColor3 end)
+				Runtime.AcceptOrig[node] = rec
+			end
+			local rec = Runtime.AcceptOrig[node]
+			if total <= 0 then
+				pcall(function() node.BackgroundColor3 = grey end)
+				pcall(function() node.ImageColor3 = grey end)
+			else
+				if rec.bg  then pcall(function() node.BackgroundColor3 = rec.bg end) end
+				if rec.img then pcall(function() node.ImageColor3 = rec.img end) end
+			end
+		end
+	end
+	pcall(function() btn.Active = total > 0 end)
+	pcall(function() btn.AutoButtonColor = total > 0 end)
 end
 
 -- Sorting helper reused for both inventory panes.
@@ -3237,6 +3293,10 @@ local function completeTradeIfBothAccepted()
 			-- Reset accepted state so the NEXT trade starts clean.
 			DebugTradeTable.Player1.Accepted = false
 			DebugTradeTable.Player2.Accepted = false
+			-- Trade SUCCEEDED: the staged items were traded away, so drop them (do
+			-- NOT return to inventory). An ABANDONED trade returns them instead.
+			DebugTradeTable.Player1.Offer = {}
+			DebugTradeTable.Player2.Offer = {}
 			HarnessTradeActive = false  -- disarm; re-shown request re-arms it
 			showAcceptedBadge("your", false); showAcceptedBadge("their", false)
 			for _, f in ipairs(onNewTrade) do pcall(f) end
@@ -3283,6 +3343,10 @@ end
 function startTrade(player2Name)
 	completeToken = completeToken + 1  -- cancel any pending "trade complete" close
 	DebugTradeTable.Player2.Player = { Name = player2Name, __fake = true }
+	-- If the PREVIOUS trade was abandoned (offer still holds staged items because it
+	-- never completed), give YOUR items back to the inventory before wiping — so
+	-- starting a new trade never eats them.
+	returnOfferToInventory("Player1")
 	DebugTradeTable.Player1.Offer = {}
 	DebugTradeTable.Player2.Offer = {}
 	DebugTradeTable.Player1.Accepted = false
@@ -4853,6 +4917,11 @@ if RequestFrame then
 	local function onDecline()
 		HarnessTradeActive = false
 		if RequestFrame then pcall(function() RequestFrame.Visible = false end) end
+		-- Declining abandons the trade: hand any items you staged back to your
+		-- inventory (they'd otherwise vanish), then refresh the counts + offer slots.
+		returnOfferToInventory("Player1")
+		pcall(renderInventory)
+		pcall(RenderTrade)
 	end
 	local function findRequestDecline()
 		if not RequestFrame then return nil end
@@ -4955,6 +5024,8 @@ do
 	if acceptBtn then
 		track(acceptBtn.MouseButton1Click:Connect(function()
 			if CooldownRunning then return end                   -- blocked during 6s cooldown
+			-- Empty trade: the button is greyed, so accepting does nothing (like MM2).
+			if (#DebugTradeTable.Player1.Offer + #DebugTradeTable.Player2.Offer) <= 0 then return end
 			if DebugTradeTable.Player1.Accepted then return end  -- already accepted (Cancel showing)
 			revealSubtree(resolve(TradeRoot, "Actions.Accept.Confirm"))
 			setVisible(TradeRoot, "Actions.Accept.Confirm", true)
