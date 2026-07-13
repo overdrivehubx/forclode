@@ -3157,6 +3157,17 @@ function renderInventory()
 	pcall(renderPaneInventory, "Pets", SpawnedPets, PetDB, CurrentQuery)
 end
 
+-- Default the Add-Items picker to the WEAPONS tab: show Weapons, HIDE Pets. Both
+-- panes share the same slot and are revealed together for rendering, so leaving
+-- Pets visible parks it ON TOP of Weapons — swallowing the clicks (inventory felt
+-- dead until you toggled tabs) and hiding refunded items after a decline. GLOBAL
+-- (no top-level local); mirrors the Weapons tab button handler.
+function MH_showWeaponsTab()
+	setVisible(TradeGUI, "Container.Items.Main.Weapons", true)
+	setVisible(TradeGUI, "Container.Items.Main.Pets", false)
+	if InventoryFrame then revealAncestors(InventoryFrame) end
+end
+
 -- Wire the trade's native search box (once) so typing filters the Add Items grid.
 local function wireSearchBox()
 	local root = ItemsPicker or (TradeGUI and resolve(TradeGUI, "Container.Items"))
@@ -3288,6 +3299,7 @@ local function openItemsPicker()
 	renderInventory()  -- fill the Add Items grid from the full catalog
 	if InvContainer then revealAncestors(InvContainer) end
 	if InventoryFrame then revealAncestors(InventoryFrame) end
+	MH_showWeaponsTab()  -- park on Weapons so Pets can't overlay + swallow clicks
 end
 
 -- Close the picker and return to the Trade panel.
@@ -3412,6 +3424,7 @@ function startTrade(player2Name)
 
 	RenderTrade()
 	pcall(renderInventory)  -- hook the real inventory slots + append spawned items
+	MH_showWeaponsTab()     -- park on Weapons so Pets can't overlay + eat the clicks
 end
 
 -- Light the remote client's green acceptance flag (Player2 accepted), and
