@@ -2211,15 +2211,20 @@ function MH_Dump()
 				if d.ImageTransparency < 1 then p[#p + 1] = "img=" .. col3(d.ImageColor3) end
 			end
 		end)
-		pcall(function()
-			if d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") then
+		local isText = false
+		pcall(function() isText = d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") end)
+		if isText then
+			pcall(function()
 				local t = tostring(d.Text)
 				if #t > 20 then t = t:sub(1, 20) .. "~" end
 				p[#p + 1] = 'txt="' .. t .. '"'
-				local fnt = tostring(d.FontFace and d.FontFace.Family or d.Font)
-				p[#p + 1] = "font=" .. fnt
-			end
-		end)
+			end)
+			-- Font in its OWN pcall so a FontFace getter error can't suppress it.
+			pcall(function() p[#p + 1] = "font=" .. tostring(d.Font) end)
+			pcall(function()
+				if d.FontFace then p[#p + 1] = "face=" .. tostring(d.FontFace.Family) end
+			end)
+		end
 		pcall(function() if d:IsA("UIGradient") then p[#p + 1] = "GRADIENT" end end)
 		pcall(function()
 			if d:IsA("UIStroke") then
@@ -2848,10 +2853,12 @@ function updateAcceptButtonUI()
 	local nodes = { acc }
 	for _, d in ipairs(acc:GetDescendants()) do nodes[#nodes + 1] = d end
 	for _, node in ipairs(nodes) do
+		local isImg = node:IsA("ImageLabel") or node:IsA("ImageButton")
 		if Runtime.AcceptOrig[node] == nil then
 			local rec = {}
 			pcall(function() rec.bg  = node.BackgroundColor3 end)
 			pcall(function() rec.img = node.ImageColor3 end)
+			if isImg then pcall(function() rec.imgtr = node.ImageTransparency end) end
 			if node:IsA("UIGradient") then pcall(function() rec.grad = node.Color end) end
 			if node:IsA("UIStroke") then pcall(function() rec.stroke = node.Color end) end
 			Runtime.AcceptOrig[node] = rec
@@ -2860,11 +2867,16 @@ function updateAcceptButtonUI()
 		if empty then
 			pcall(function() node.BackgroundColor3 = grey end)
 			pcall(function() node.ImageColor3 = grey end)
+			-- HIDE the image entirely: tinting a green gradient texture grey still
+			-- multiplies to a muddy-green edge (the "green outline" bug). Hiding it
+			-- leaves only the flat grey background.
+			if rec.imgtr ~= nil then pcall(function() node.ImageTransparency = 1 end) end
 			if rec.grad   then pcall(function() node.Color = greySeq end) end
-			if rec.stroke then pcall(function() node.Color = grey end) end   -- green outline -> grey
+			if rec.stroke then pcall(function() node.Color = grey end) end
 		else
 			if rec.bg     then pcall(function() node.BackgroundColor3 = rec.bg end) end
 			if rec.img    then pcall(function() node.ImageColor3 = rec.img end) end
+			if rec.imgtr ~= nil then pcall(function() node.ImageTransparency = rec.imgtr end) end
 			if rec.grad   then pcall(function() node.Color = rec.grad end) end
 			if rec.stroke then pcall(function() node.Color = rec.stroke end) end
 		end
