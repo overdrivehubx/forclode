@@ -3848,6 +3848,11 @@ end
 local pTrade = makeTab("Trade")
 makeSection(pTrade, "Trade")
 
+-- Diagnostic: dump the live trade-GUI tree (on-screen panel + clipboard + file).
+makeRowButton(pTrade, "Dump GUI tree", "on-screen + clipboard + MollyHub_dump.txt", "Dump", C_ACCENT, function()
+	pcall(MH_Dump)
+end)
+
 -- Name input (a full-width row with a TextBox).
 local nameRow = makeRow(pTrade, "Second player", "pick from server ▼ or type")
 local NameBox = Instance.new("TextBox")
@@ -5250,6 +5255,15 @@ end)
 
 print("[TradeDebug] Harness loaded. Layout: " .. (TradeGUI and TradeGUI.Name or "NOT FOUND") ..
 	" | Use the TradeDebugPanel to drive the offline trade.")
+
+-- GUARANTEED diagnostic: pop the GUI-tree dump on-screen a few seconds after load
+-- (no menu / no trade / no console needed). Runs once; the "Dump GUI tree" buttons
+-- can re-trigger it. Remove this block once the layout is captured.
+task.delay(6, function()
+	if Runtime.__dumped then return end
+	Runtime.__dumped = true
+	pcall(MH_Dump)
+end)
 
 end, function(e)
 	local tb = ""
