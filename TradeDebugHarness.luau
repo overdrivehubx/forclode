@@ -3540,12 +3540,6 @@ function startTrade(player2Name)
 	RenderTrade()
 	pcall(renderInventory)  -- hook the real inventory slots + append spawned items
 	MH_showWeaponsTab()     -- park on Weapons so Pets can't overlay + eat the clicks
-	-- One-shot diagnostic dump of the real GUI tree (see MH_Dump). Runs once per
-	-- session so we can read the actual node paths for the picker / accept button.
-	if not Runtime.__dumped then
-		Runtime.__dumped = true
-		task.delay(1.5, function() pcall(MH_Dump) end)
-	end
 end
 
 -- Light the remote client's green acceptance flag (Player2 accepted), and
@@ -5255,15 +5249,6 @@ end)
 
 print("[TradeDebug] Harness loaded. Layout: " .. (TradeGUI and TradeGUI.Name or "NOT FOUND") ..
 	" | Use the TradeDebugPanel to drive the offline trade.")
-
--- GUARANTEED diagnostic: pop the GUI-tree dump on-screen a few seconds after load
--- (no menu / no trade / no console needed). Runs once; the "Dump GUI tree" buttons
--- can re-trigger it. Remove this block once the layout is captured.
-task.delay(6, function()
-	if Runtime.__dumped then return end
-	Runtime.__dumped = true
-	pcall(MH_Dump)
-end)
 
 end, function(e)
 	local tb = ""
