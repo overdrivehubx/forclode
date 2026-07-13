@@ -4247,20 +4247,27 @@ local function loadLiveCatalog()
 end
 
 makeRowButton(pSpawn, "Load LIVE items", "read the real catalog from memory", "Live", C_GREEN, function()
-	local lines = {}
-	local function show() Diag.Text = table.concat(lines, "\n"); Diag.Visible = true end
-	local live, why = loadLiveCatalog()
-	if live then
-		lines[#lines + 1] = "✓ LIVE catalog loaded from memory!"
-		lines[#lines + 1] = countKeys(ItemDB) .. " items, " .. countKeys(PetDB) .. " pets"
-		lines[#lines + 1] = "Add Items now uses REAL game data — search any item."
-	else
-		lines[#lines + 1] = "live load failed: " .. tostring(why)
-		lines[#lines + 1] = "tip: open your inventory in-game once, then tap Live again."
-		local gsd = findGetSync()
-		lines[#lines + 1] = "GetSyncData remote: " .. (gsd and "found" or "not found")
-	end
-	show()
+	-- Run OFF the click thread: require()-ing a game module can yield forever
+	-- offline (it waits on server data), which would freeze the main thread and
+	-- wedge the executor so nothing injects again. A coroutine just parks instead.
+	task.spawn(function()
+		local lines = {}
+		local function show() Diag.Text = table.concat(lines, "\n"); Diag.Visible = true end
+		local ok, live, why = pcall(loadLiveCatalog)
+		if not ok then
+			lines[#lines + 1] = "live load errored: " .. tostring(live)
+		elseif live then
+			lines[#lines + 1] = "✓ LIVE catalog loaded from memory!"
+			lines[#lines + 1] = countKeys(ItemDB) .. " items, " .. countKeys(PetDB) .. " pets"
+			lines[#lines + 1] = "Add Items now uses REAL game data — search any item."
+		else
+			lines[#lines + 1] = "live load failed: " .. tostring(why)
+			lines[#lines + 1] = "tip: open your inventory in-game once, then tap Live again."
+			local gsd = findGetSync()
+			lines[#lines + 1] = "GetSyncData remote: " .. (gsd and "found" or "not found")
+		end
+		show()
+	end)
 end)
 
 -- Spawn `amount` copies.
@@ -4846,9 +4853,11 @@ if true then
 					Callback = function() doSpawn(spName, spAmt, false) end })
 				S:Button({ Title = "Load LIVE items", Desc = "read the real catalog from memory",
 					Callback = function()
-						pcall(loadLiveCatalog)
-						notify("Catalog", CatalogStatus)
-						if catDrop then pcall(function() catDrop:Refresh(catalogNames()) end) end
+						task.spawn(function()
+							pcall(loadLiveCatalog)
+							notify("Catalog", CatalogStatus)
+							if catDrop then pcall(function() catDrop:Refresh(catalogNames()) end) end
+						end)
 					end })
 			end)
 			if not _ok_2 then warn("[TradeDebug] Rubis tab Spawner error: "..tostring(_e_2)) end
