@@ -2179,6 +2179,121 @@ print("  Offer1/Offer2 = " .. fn(Offer1) .. "  |  " .. fn(Offer2))
 print("  ItemsPicker   = " .. fn(ItemsPicker))
 print("  RequestFrame  = " .. fn(RequestFrame) .. (RequestFrame and "" or "  (NOT FOUND — request cannot show)"))
 
+-- DIAGNOSTIC DUMP — writes the live trade-GUI tree (the Items picker, the Accept
+-- action subtree and an offer frame) to `MollyHub_dump.txt` AND prints it, with
+-- per-node props (Visible / ZIndex / AbsoluteSize / colours). Child lists are
+-- capped so the ~200-slot grids stay short. Auto-runs shortly after a trade opens
+-- (see startTrade) and is also exposed as _G.MHDump() for a manual re-dump.
+-- GLOBAL so it can be called from anywhere without a top-level local.
+function MH_Dump()
+	local out = {}
+	local function w(s) out[#out + 1] = s end
+	local function col3(c)
+		local ok, s = pcall(function()
+			return string.format("#%02X%02X%02X",
+				math.floor(c.R * 255 + 0.5), math.floor(c.G * 255 + 0.5), math.floor(c.B * 255 + 0.5))
+		end)
+		return ok and s or "?"
+	end
+	local function propsOf(d)
+		local p = {}
+		pcall(function()
+			if d:IsA("GuiObject") then
+				p[#p + 1] = "vis=" .. tostring(d.Visible)
+				p[#p + 1] = "z=" .. tostring(d.ZIndex)
+				local sz = d.AbsoluteSize
+				p[#p + 1] = string.format("abs=%dx%d", math.floor(sz.X), math.floor(sz.Y))
+				if d.BackgroundTransparency < 1 then p[#p + 1] = "bg=" .. col3(d.BackgroundColor3) end
+			end
+		end)
+		pcall(function()
+			if d:IsA("ImageLabel") or d:IsA("ImageButton") then
+				if d.ImageTransparency < 1 then p[#p + 1] = "img=" .. col3(d.ImageColor3) end
+			end
+		end)
+		pcall(function()
+			if d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") then
+				local t = tostring(d.Text)
+				if #t > 20 then t = t:sub(1, 20) .. "~" end
+				p[#p + 1] = 'txt="' .. t .. '"'
+			end
+		end)
+		pcall(function() if d:IsA("UIGradient") then p[#p + 1] = "GRADIENT" end end)
+		return (#p > 0) and ("  [" .. table.concat(p, ", ") .. "]") or ""
+	end
+	local function dump(node, depth, maxDepth, cap)
+		if not node then w(string.rep("  ", depth) .. "<nil>") return end
+		local ok, cn = pcall(function() return node.ClassName end)
+		w(string.rep("  ", depth) .. (ok and cn or "?") .. ' "' .. tostring(node.Name) .. '"' .. propsOf(node))
+		if depth >= maxDepth then return end
+		local kids = {}
+		pcall(function() kids = node:GetChildren() end)
+		local n = #kids
+		local lim = math.min(n, cap)
+		for i = 1, lim do dump(kids[i], depth + 1, maxDepth, cap) end
+		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
+	end
+	w("===== MollyHub DUMP =====")
+	w("TradeGUI       = " .. fn(TradeGUI))
+	w("TradeRoot      = " .. fn(TradeRoot))
+	w("ItemsPicker    = " .. fn(ItemsPicker))
+	w("Weapons grid   = " .. fn(InventoryFrame))
+	w("Pets grid      = " .. fn(PetsFrame))
+	w("-- Container.Items subtree (picker) --")
+	dump(ItemsPicker or (TradeGUI and resolve(TradeGUI, "Container.Items")), 0, 7, 6)
+	w("-- Actions subtree (Accept button) --")
+	dump(resolve(TradeRoot, "Actions"), 0, 6, 8)
+	w("-- YourOffer subtree --")
+	dump(Offer1, 0, 4, 6)
+	w("===== END DUMP =====")
+	local text = table.concat(out, "\n")
+	-- Three ways to get the dump off the device (no console needed):
+	pcall(function() writefile("MollyHub_dump.txt", text) end)   -- (1) file in workspace
+	pcall(function() setclipboard(text) end)                     -- (2) clipboard -> paste it
+	pcall(function() for _, line in ipairs(out) do print(line) end end) -- (3) console if any
+	-- (4) ON-SCREEN scrollable panel so it can just be screenshotted.
+	pcall(function()
+		local old = PlayerGui:FindFirstChild("MollyHubDump")
+		if old then old:Destroy() end
+		local g = Instance.new("ScreenGui")
+		g.Name = "MollyHubDump"; g.ResetOnSpawn = false; g.IgnoreGuiInset = true
+		g.DisplayOrder = 999999; g.Parent = PlayerGui
+		local panel = Instance.new("Frame")
+		panel.Size = UDim2.new(0.86, 0, 0.82, 0); panel.Position = UDim2.new(0.07, 0, 0.09, 0)
+		panel.BackgroundColor3 = Color3.fromRGB(16, 18, 24); panel.BorderSizePixel = 0
+		panel.Parent = g
+		Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 8)
+		local head = Instance.new("TextLabel")
+		head.Size = UDim2.new(1, -70, 0, 26); head.Position = UDim2.new(0, 10, 0, 6)
+		head.BackgroundTransparency = 1; head.TextColor3 = Color3.fromRGB(150, 210, 255)
+		head.Font = Enum.Font.GothamBold; head.TextSize = 14; head.TextXAlignment = Enum.TextXAlignment.Left
+		head.Text = "MollyHub dump — copied to clipboard + MollyHub_dump.txt. Paste it to Claude."
+		head.TextWrapped = true; head.Parent = panel
+		local close = Instance.new("TextButton")
+		close.Size = UDim2.new(0, 52, 0, 26); close.Position = UDim2.new(1, -58, 0, 6)
+		close.BackgroundColor3 = Color3.fromRGB(120, 60, 66); close.BorderSizePixel = 0
+		close.TextColor3 = Color3.new(1, 1, 1); close.Font = Enum.Font.GothamBold; close.TextSize = 13
+		close.Text = "Close"; close.Parent = panel
+		Instance.new("UICorner", close).CornerRadius = UDim.new(0, 6)
+		close.MouseButton1Click:Connect(function() g:Destroy() end)
+		local scroll = Instance.new("ScrollingFrame")
+		scroll.Size = UDim2.new(1, -16, 1, -44); scroll.Position = UDim2.new(0, 8, 0, 38)
+		scroll.BackgroundColor3 = Color3.fromRGB(10, 11, 15); scroll.BorderSizePixel = 0
+		scroll.ScrollBarThickness = 8; scroll.CanvasSize = UDim2.new(0, 0, 0, #out * 15 + 40)
+		scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y; scroll.Parent = panel
+		Instance.new("UICorner", scroll).CornerRadius = UDim.new(0, 6)
+		local body = Instance.new("TextLabel")
+		body.Size = UDim2.new(1, -12, 0, 0); body.Position = UDim2.new(0, 6, 0, 4)
+		body.AutomaticSize = Enum.AutomaticSize.Y; body.BackgroundTransparency = 1
+		body.TextColor3 = Color3.fromRGB(215, 220, 230); body.Font = Enum.Font.Code
+		body.TextSize = 12; body.TextXAlignment = Enum.TextXAlignment.Left
+		body.TextYAlignment = Enum.TextYAlignment.Top; body.TextWrapped = true
+		body.Text = text; body.Parent = scroll
+	end)
+	return text
+end
+_G.MHDump = MH_Dump
+
 --==============================================================================
 -- 5. THE LOCAL TRADE STATE  (replaces the entire server backend)
 --==============================================================================
@@ -3425,6 +3540,12 @@ function startTrade(player2Name)
 	RenderTrade()
 	pcall(renderInventory)  -- hook the real inventory slots + append spawned items
 	MH_showWeaponsTab()     -- park on Weapons so Pets can't overlay + eat the clicks
+	-- One-shot diagnostic dump of the real GUI tree (see MH_Dump). Runs once per
+	-- session so we can read the actual node paths for the picker / accept button.
+	if not Runtime.__dumped then
+		Runtime.__dumped = true
+		task.delay(1.5, function() pcall(MH_Dump) end)
+	end
 end
 
 -- Light the remote client's green acceptance flag (Player2 accepted), and
