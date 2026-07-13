@@ -4898,6 +4898,12 @@ if true then
 							notify("Theme", "Secret theme unlocked!")
 						end
 					end })
+				Set:Section({ Title = "Debug" })
+				Set:Button({ Title = "Dump GUI tree", Desc = "on-screen panel + clipboard + MollyHub_dump.txt",
+					Callback = function()
+						local ok = pcall(MH_Dump)
+						notify("Dump", ok and "shown on screen + copied to clipboard" or "dump failed")
+					end })
 			end)
 			if not _ok_4 then warn("[TradeDebug] Rubis tab Settings error: "..tostring(_e_4)) end
 
