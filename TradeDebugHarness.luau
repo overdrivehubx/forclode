@@ -2216,9 +2216,17 @@ function MH_Dump()
 				local t = tostring(d.Text)
 				if #t > 20 then t = t:sub(1, 20) .. "~" end
 				p[#p + 1] = 'txt="' .. t .. '"'
+				local fnt = tostring(d.FontFace and d.FontFace.Family or d.Font)
+				p[#p + 1] = "font=" .. fnt
 			end
 		end)
 		pcall(function() if d:IsA("UIGradient") then p[#p + 1] = "GRADIENT" end end)
+		pcall(function()
+			if d:IsA("UIStroke") then
+				p[#p + 1] = "STROKE col=" .. col3(d.Color) .. " th=" .. tostring(d.Thickness)
+					.. " on=" .. tostring(d.Enabled)
+			end
+		end)
 		return (#p > 0) and ("  [" .. table.concat(p, ", ") .. "]") or ""
 	end
 	local function dump(node, depth, maxDepth, cap)
@@ -2716,16 +2724,12 @@ local function invPool(category)
 	return (category == "Pets") and SpawnedPets or SpawnedWeapons
 end
 
--- Poke the game's own inventory-refresh event so the NATIVE inventory GUI
--- re-renders after we change a Spawned* count. The per-frame ProfileData pin
--- already writes the live count, but the game only repaints its inventory when
--- InventoryDataChanged fires — without this, an item handed back on decline sat
--- in ProfileData yet never reappeared on screen. GLOBAL (no top-level local).
-function MH_pokeInventory()
-	pcall(function()
-		game:GetService("ReplicatedStorage").Remotes.Inventory.InventoryDataChanged:Fire()
-	end)
-end
+-- NO-OP. Firing InventoryDataChanged made the GAME re-render the trade inventory
+-- from its own data ON TOP of our clones, so offered counts snapped back and given
+-- items never disappeared. Our renderInventory() already repaints the Add-Items
+-- grid from the Spawned* pools, so no game poke is needed. Kept as a no-op so the
+-- existing call sites stay valid. GLOBAL (no top-level local).
+function MH_pokeInventory() end
 
 -- Default starter items are never tradeable and never consumed (like the game).
 local function isDefaultItem(key)
@@ -2849,17 +2853,20 @@ function updateAcceptButtonUI()
 			pcall(function() rec.bg  = node.BackgroundColor3 end)
 			pcall(function() rec.img = node.ImageColor3 end)
 			if node:IsA("UIGradient") then pcall(function() rec.grad = node.Color end) end
+			if node:IsA("UIStroke") then pcall(function() rec.stroke = node.Color end) end
 			Runtime.AcceptOrig[node] = rec
 		end
 		local rec = Runtime.AcceptOrig[node]
 		if empty then
 			pcall(function() node.BackgroundColor3 = grey end)
 			pcall(function() node.ImageColor3 = grey end)
-			if rec.grad then pcall(function() node.Color = greySeq end) end
+			if rec.grad   then pcall(function() node.Color = greySeq end) end
+			if rec.stroke then pcall(function() node.Color = grey end) end   -- green outline -> grey
 		else
-			if rec.bg   then pcall(function() node.BackgroundColor3 = rec.bg end) end
-			if rec.img  then pcall(function() node.ImageColor3 = rec.img end) end
-			if rec.grad then pcall(function() node.Color = rec.grad end) end
+			if rec.bg     then pcall(function() node.BackgroundColor3 = rec.bg end) end
+			if rec.img    then pcall(function() node.ImageColor3 = rec.img end) end
+			if rec.grad   then pcall(function() node.Color = rec.grad end) end
+			if rec.stroke then pcall(function() node.Color = rec.stroke end) end
 		end
 	end
 	-- Block the click while empty (belt-and-braces with setYourAcceptedUI's guard).
