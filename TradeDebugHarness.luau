@@ -2108,6 +2108,27 @@ local ItemsPicker = (TradeGUI and resolve(TradeGUI, "Container.Items"))
 local InventoryFrame = TradeGUI and resolve(TradeGUI, "Container.Items.Main.Weapons.Items.Container.Current.Container")
 local PetsFrame      = TradeGUI and resolve(TradeGUI, "Container.Items.Main.Pets.Items.Container.Current.Container")
 
+-- Snapshot the trade GUI's authored transparency (Container + whole subtree) at
+-- load, while it's still in its clean closed state. The close/complete animation
+-- (ours in `terminate`, plus the game's own trade-finished fade) tweens frames to
+-- BackgroundTransparency = 1; without a restore, the SECOND trade re-opens fully
+-- see-through. `restoreTradeTransparency` (below) plays this snapshot back on open.
+-- Stored on Runtime (keyed by instance) so it costs no top-level local.
+Runtime.OrigTransparency = {}
+if Container then
+	local snap = { Container }
+	for _, d in ipairs(Container:GetDescendants()) do
+		if d:IsA("GuiObject") then snap[#snap + 1] = d end
+	end
+	for _, inst in ipairs(snap) do
+		local rec = {}
+		pcall(function() rec.bg = inst.BackgroundTransparency end)
+		pcall(function() rec.img = inst.ImageTransparency end)
+		pcall(function() rec.grp = inst.GroupTransparency end)
+		Runtime.OrigTransparency[inst] = rec
+	end
+end
+
 -- The request modal lives on the main leaderboard GUI, not the Trade GUI.
 -- A recursive search for anything named "TradeRequest" is the most robust find
 -- across the PC / Phone / Xbox / legacy layouts.
@@ -2157,6 +2178,121 @@ print("  TradeRoot     = " .. fn(TradeRoot))
 print("  Offer1/Offer2 = " .. fn(Offer1) .. "  |  " .. fn(Offer2))
 print("  ItemsPicker   = " .. fn(ItemsPicker))
 print("  RequestFrame  = " .. fn(RequestFrame) .. (RequestFrame and "" or "  (NOT FOUND — request cannot show)"))
+
+-- DIAGNOSTIC DUMP — writes the live trade-GUI tree (the Items picker, the Accept
+-- action subtree and an offer frame) to `MollyHub_dump.txt` AND prints it, with
+-- per-node props (Visible / ZIndex / AbsoluteSize / colours). Child lists are
+-- capped so the ~200-slot grids stay short. Auto-runs shortly after a trade opens
+-- (see startTrade) and is also exposed as _G.MHDump() for a manual re-dump.
+-- GLOBAL so it can be called from anywhere without a top-level local.
+function MH_Dump()
+	local out = {}
+	local function w(s) out[#out + 1] = s end
+	local function col3(c)
+		local ok, s = pcall(function()
+			return string.format("#%02X%02X%02X",
+				math.floor(c.R * 255 + 0.5), math.floor(c.G * 255 + 0.5), math.floor(c.B * 255 + 0.5))
+		end)
+		return ok and s or "?"
+	end
+	local function propsOf(d)
+		local p = {}
+		pcall(function()
+			if d:IsA("GuiObject") then
+				p[#p + 1] = "vis=" .. tostring(d.Visible)
+				p[#p + 1] = "z=" .. tostring(d.ZIndex)
+				local sz = d.AbsoluteSize
+				p[#p + 1] = string.format("abs=%dx%d", math.floor(sz.X), math.floor(sz.Y))
+				if d.BackgroundTransparency < 1 then p[#p + 1] = "bg=" .. col3(d.BackgroundColor3) end
+			end
+		end)
+		pcall(function()
+			if d:IsA("ImageLabel") or d:IsA("ImageButton") then
+				if d.ImageTransparency < 1 then p[#p + 1] = "img=" .. col3(d.ImageColor3) end
+			end
+		end)
+		pcall(function()
+			if d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") then
+				local t = tostring(d.Text)
+				if #t > 20 then t = t:sub(1, 20) .. "~" end
+				p[#p + 1] = 'txt="' .. t .. '"'
+			end
+		end)
+		pcall(function() if d:IsA("UIGradient") then p[#p + 1] = "GRADIENT" end end)
+		return (#p > 0) and ("  [" .. table.concat(p, ", ") .. "]") or ""
+	end
+	local function dump(node, depth, maxDepth, cap)
+		if not node then w(string.rep("  ", depth) .. "<nil>") return end
+		local ok, cn = pcall(function() return node.ClassName end)
+		w(string.rep("  ", depth) .. (ok and cn or "?") .. ' "' .. tostring(node.Name) .. '"' .. propsOf(node))
+		if depth >= maxDepth then return end
+		local kids = {}
+		pcall(function() kids = node:GetChildren() end)
+		local n = #kids
+		local lim = math.min(n, cap)
+		for i = 1, lim do dump(kids[i], depth + 1, maxDepth, cap) end
+		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
+	end
+	w("===== MollyHub DUMP =====")
+	w("TradeGUI       = " .. fn(TradeGUI))
+	w("TradeRoot      = " .. fn(TradeRoot))
+	w("ItemsPicker    = " .. fn(ItemsPicker))
+	w("Weapons grid   = " .. fn(InventoryFrame))
+	w("Pets grid      = " .. fn(PetsFrame))
+	w("-- Container.Items subtree (picker) --")
+	dump(ItemsPicker or (TradeGUI and resolve(TradeGUI, "Container.Items")), 0, 7, 6)
+	w("-- Actions subtree (Accept button) --")
+	dump(resolve(TradeRoot, "Actions"), 0, 6, 8)
+	w("-- YourOffer subtree --")
+	dump(Offer1, 0, 4, 6)
+	w("===== END DUMP =====")
+	local text = table.concat(out, "\n")
+	-- Three ways to get the dump off the device (no console needed):
+	pcall(function() writefile("MollyHub_dump.txt", text) end)   -- (1) file in workspace
+	pcall(function() setclipboard(text) end)                     -- (2) clipboard -> paste it
+	pcall(function() for _, line in ipairs(out) do print(line) end end) -- (3) console if any
+	-- (4) ON-SCREEN scrollable panel so it can just be screenshotted.
+	pcall(function()
+		local old = PlayerGui:FindFirstChild("MollyHubDump")
+		if old then old:Destroy() end
+		local g = Instance.new("ScreenGui")
+		g.Name = "MollyHubDump"; g.ResetOnSpawn = false; g.IgnoreGuiInset = true
+		g.DisplayOrder = 999999; g.Parent = PlayerGui
+		local panel = Instance.new("Frame")
+		panel.Size = UDim2.new(0.86, 0, 0.82, 0); panel.Position = UDim2.new(0.07, 0, 0.09, 0)
+		panel.BackgroundColor3 = Color3.fromRGB(16, 18, 24); panel.BorderSizePixel = 0
+		panel.Parent = g
+		Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 8)
+		local head = Instance.new("TextLabel")
+		head.Size = UDim2.new(1, -70, 0, 26); head.Position = UDim2.new(0, 10, 0, 6)
+		head.BackgroundTransparency = 1; head.TextColor3 = Color3.fromRGB(150, 210, 255)
+		head.Font = Enum.Font.GothamBold; head.TextSize = 14; head.TextXAlignment = Enum.TextXAlignment.Left
+		head.Text = "MollyHub dump — copied to clipboard + MollyHub_dump.txt. Paste it to Claude."
+		head.TextWrapped = true; head.Parent = panel
+		local close = Instance.new("TextButton")
+		close.Size = UDim2.new(0, 52, 0, 26); close.Position = UDim2.new(1, -58, 0, 6)
+		close.BackgroundColor3 = Color3.fromRGB(120, 60, 66); close.BorderSizePixel = 0
+		close.TextColor3 = Color3.new(1, 1, 1); close.Font = Enum.Font.GothamBold; close.TextSize = 13
+		close.Text = "Close"; close.Parent = panel
+		Instance.new("UICorner", close).CornerRadius = UDim.new(0, 6)
+		close.MouseButton1Click:Connect(function() g:Destroy() end)
+		local scroll = Instance.new("ScrollingFrame")
+		scroll.Size = UDim2.new(1, -16, 1, -44); scroll.Position = UDim2.new(0, 8, 0, 38)
+		scroll.BackgroundColor3 = Color3.fromRGB(10, 11, 15); scroll.BorderSizePixel = 0
+		scroll.ScrollBarThickness = 8; scroll.CanvasSize = UDim2.new(0, 0, 0, #out * 15 + 40)
+		scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y; scroll.Parent = panel
+		Instance.new("UICorner", scroll).CornerRadius = UDim.new(0, 6)
+		local body = Instance.new("TextLabel")
+		body.Size = UDim2.new(1, -12, 0, 0); body.Position = UDim2.new(0, 6, 0, 4)
+		body.AutomaticSize = Enum.AutomaticSize.Y; body.BackgroundTransparency = 1
+		body.TextColor3 = Color3.fromRGB(215, 220, 230); body.Font = Enum.Font.Code
+		body.TextSize = 12; body.TextXAlignment = Enum.TextXAlignment.Left
+		body.TextYAlignment = Enum.TextYAlignment.Top; body.TextWrapped = true
+		body.Text = text; body.Parent = scroll
+	end)
+	return text
+end
+_G.MHDump = MH_Dump
 
 --==============================================================================
 -- 5. THE LOCAL TRADE STATE  (replaces the entire server backend)
@@ -2516,6 +2652,9 @@ function RenderTrade()
 
 	renderOffer("Player1", Offer1)
 	renderOffer("Player2", Offer2)
+
+	-- Grey the ACCEPT button on an empty trade, green once something is staged.
+	updateAcceptButtonUI()
 end
 
 -- Start / restart the 6s "Please wait before accepting" cooldown, mirroring the
@@ -2577,6 +2716,17 @@ local function invPool(category)
 	return (category == "Pets") and SpawnedPets or SpawnedWeapons
 end
 
+-- Poke the game's own inventory-refresh event so the NATIVE inventory GUI
+-- re-renders after we change a Spawned* count. The per-frame ProfileData pin
+-- already writes the live count, but the game only repaints its inventory when
+-- InventoryDataChanged fires — without this, an item handed back on decline sat
+-- in ProfileData yet never reappeared on screen. GLOBAL (no top-level local).
+function MH_pokeInventory()
+	pcall(function()
+		game:GetService("ReplicatedStorage").Remotes.Inventory.InventoryDataChanged:Fire()
+	end)
+end
+
 -- Default starter items are never tradeable and never consumed (like the game).
 local function isDefaultItem(key)
 	return key == "DefaultKnife" or key == "DefaultGun"
@@ -2623,6 +2773,7 @@ local function offerItemLocal(itemKey, category, visual)
 		setVisible(TradeRoot, "Actions.Accept.Confirm", false)
 		setVisible(TradeRoot, "Actions.Accept.Cancel", false)
 	end
+	MH_pokeInventory()     -- re-render the native inventory GUI (count dropped)
 	renderInventory()      -- refresh the inventory counts
 	RenderTrade()
 	if not OverlayMode then startAcceptCooldown() end  -- 6s "please wait before accepting"
@@ -2647,9 +2798,74 @@ function unofferOne(sideKey, index)
 		setVisible(TradeRoot, "Actions.Accept.Confirm", false)
 		setVisible(TradeRoot, "Actions.Accept.Cancel", false)
 	end
+	MH_pokeInventory()     -- re-render the native inventory GUI (count went up)
 	renderInventory()
 	RenderTrade()
 	if not OverlayMode and startAcceptCooldown then startAcceptCooldown() end
+end
+
+-- Return every staged item on a side back to the inventory pool it came from and
+-- empty that side's offer. Used when a trade is ABANDONED (declined / a fresh
+-- trade replaces an incomplete one) so the items you staged aren't lost — a
+-- completed trade consumes them instead (see completeTradeIfBothAccepted).
+-- GLOBAL so the request-Decline handler (defined far below) can call it without
+-- spending a top-level local.
+function returnOfferToInventory(sideKey)
+	local side = DebugTradeTable and DebugTradeTable[sideKey]
+	if not (side and side.Offer) then return end
+	for _, entry in ipairs(side.Offer) do
+		if not isDefaultItem(entry[1]) then
+			local pool = invPool(entry[3])
+			pool[entry[1]] = (pool[entry[1]] or 0) + (entry[2] or 1)
+		end
+	end
+	side.Offer = {}
+	MH_pokeInventory()     -- re-render the native inventory GUI so refunds show up
+end
+
+-- Grey the native ACCEPT button while the trade is empty (nothing to trade), and
+-- restore its authored green once at least one item is staged on either side —
+-- matching MM2, which won't let you accept an empty trade. Original colours are
+-- cached per node on first run (while the button is still its native green).
+-- GLOBAL (called from RenderTrade) to stay within the top-level local budget.
+function updateAcceptButtonUI()
+	if not TradeRoot then return end
+	local acc = resolve(TradeRoot, "Actions.Accept")
+	if not acc then return end
+	local total = #DebugTradeTable.Player1.Offer + #DebugTradeTable.Player2.Offer
+	local empty = total <= 0
+	Runtime.AcceptOrig = Runtime.AcceptOrig or {}
+	local grey = Color3.fromRGB(112, 116, 122)
+	local greySeq = ColorSequence.new(grey)
+	-- The green fill can live on the Accept frame OR a child button / ImageLabel /
+	-- UIGradient, so recolour the WHOLE Accept subtree (backgrounds, image tints and
+	-- gradients). Children like Confirm/Cancel/Cooldown are hidden while empty, so
+	-- greying them is invisible; when items are staged we restore every cached value.
+	local nodes = { acc }
+	for _, d in ipairs(acc:GetDescendants()) do nodes[#nodes + 1] = d end
+	for _, node in ipairs(nodes) do
+		if Runtime.AcceptOrig[node] == nil then
+			local rec = {}
+			pcall(function() rec.bg  = node.BackgroundColor3 end)
+			pcall(function() rec.img = node.ImageColor3 end)
+			if node:IsA("UIGradient") then pcall(function() rec.grad = node.Color end) end
+			Runtime.AcceptOrig[node] = rec
+		end
+		local rec = Runtime.AcceptOrig[node]
+		if empty then
+			pcall(function() node.BackgroundColor3 = grey end)
+			pcall(function() node.ImageColor3 = grey end)
+			if rec.grad then pcall(function() node.Color = greySeq end) end
+		else
+			if rec.bg   then pcall(function() node.BackgroundColor3 = rec.bg end) end
+			if rec.img  then pcall(function() node.ImageColor3 = rec.img end) end
+			if rec.grad then pcall(function() node.Color = rec.grad end) end
+		end
+	end
+	-- Block the click while empty (belt-and-braces with setYourAcceptedUI's guard).
+	local btn = resolve(acc, "ActionButton") or acc
+	pcall(function() btn.Active = not empty end)
+	pcall(function() btn.AutoButtonColor = not empty end)
 end
 
 -- Sorting helper reused for both inventory panes.
@@ -3056,6 +3272,17 @@ function renderInventory()
 	pcall(renderPaneInventory, "Pets", SpawnedPets, PetDB, CurrentQuery)
 end
 
+-- Default the Add-Items picker to the WEAPONS tab: show Weapons, HIDE Pets. Both
+-- panes share the same slot and are revealed together for rendering, so leaving
+-- Pets visible parks it ON TOP of Weapons — swallowing the clicks (inventory felt
+-- dead until you toggled tabs) and hiding refunded items after a decline. GLOBAL
+-- (no top-level local); mirrors the Weapons tab button handler.
+function MH_showWeaponsTab()
+	setVisible(TradeGUI, "Container.Items.Main.Weapons", true)
+	setVisible(TradeGUI, "Container.Items.Main.Pets", false)
+	if InventoryFrame then revealAncestors(InventoryFrame) end
+end
+
 -- Wire the trade's native search box (once) so typing filters the Add Items grid.
 local function wireSearchBox()
 	local root = ItemsPicker or (TradeGUI and resolve(TradeGUI, "Container.Items"))
@@ -3187,6 +3414,7 @@ local function openItemsPicker()
 	renderInventory()  -- fill the Add Items grid from the full catalog
 	if InvContainer then revealAncestors(InvContainer) end
 	if InventoryFrame then revealAncestors(InventoryFrame) end
+	MH_showWeaponsTab()  -- park on Weapons so Pets can't overlay + swallow clicks
 end
 
 -- Close the picker and return to the Trade panel.
@@ -3216,6 +3444,10 @@ local function completeTradeIfBothAccepted()
 			-- Reset accepted state so the NEXT trade starts clean.
 			DebugTradeTable.Player1.Accepted = false
 			DebugTradeTable.Player2.Accepted = false
+			-- Trade SUCCEEDED: the staged items were traded away, so drop them (do
+			-- NOT return to inventory). An ABANDONED trade returns them instead.
+			DebugTradeTable.Player1.Offer = {}
+			DebugTradeTable.Player2.Offer = {}
 			HarnessTradeActive = false  -- disarm; re-shown request re-arms it
 			showAcceptedBadge("your", false); showAcceptedBadge("their", false)
 			for _, f in ipairs(onNewTrade) do pcall(f) end
@@ -3226,6 +3458,12 @@ end
 -- Drive the LOCAL (your) accept UI to match MM2: on accept the green button
 -- turns into "Cancel" (Confirm hidden, Cancel shown); on cancel it reverts.
 local function setYourAcceptedUI(accepted)
+	-- Refuse to accept an EMPTY trade (nothing staged on either side) — the button
+	-- is greyed, so this makes every accept path (button, confirm, Rubis toggle,
+	-- native-hijack) a no-op, matching MM2. Cancelling (accepted=false) still works.
+	if accepted and (#DebugTradeTable.Player1.Offer + #DebugTradeTable.Player2.Offer) <= 0 then
+		return
+	end
 	DebugTradeTable.Player1.Accepted = accepted
 	showAcceptedBadge("your", accepted, "YOU HAVE ACCEPTED.")
 	setVisible(TradeRoot, "Actions.Accept.Confirm", false)
@@ -3238,12 +3476,34 @@ local function setYourAcceptedUI(accepted)
 	end
 end
 
+-- Replay the load-time transparency snapshot so a trade re-opens fully opaque.
+-- The close/complete fade leaves Container (and its subtree) at transparency 1;
+-- this puts every captured frame back to its authored value. Only instances that
+-- still exist are touched, and harness-added children (never snapshotted) are
+-- left alone. GLOBAL to stay within the top-level local budget.
+function restoreTradeTransparency()
+	local snap = Runtime and Runtime.OrigTransparency
+	if not snap then return end
+	for inst, rec in pairs(snap) do
+		pcall(function()
+			if inst.Parent == nil then return end
+			if rec.bg  ~= nil then inst.BackgroundTransparency = rec.bg end
+			if rec.img ~= nil then inst.ImageTransparency      = rec.img end
+			if rec.grp ~= nil then inst.GroupTransparency      = rec.grp end
+		end)
+	end
+end
+
 -- Begin the offline trade: hide the request, reset offers, open the Trade panel.
 -- Invoked by the native MM2 Accept button, mirroring the real
 -- AcceptRequest -> StartTrade -> UpdateTrade lifecycle.
 function startTrade(player2Name)
 	completeToken = completeToken + 1  -- cancel any pending "trade complete" close
 	DebugTradeTable.Player2.Player = { Name = player2Name, __fake = true }
+	-- If the PREVIOUS trade was abandoned (offer still holds staged items because it
+	-- never completed), give YOUR items back to the inventory before wiping — so
+	-- starting a new trade never eats them.
+	returnOfferToInventory("Player1")
 	DebugTradeTable.Player1.Offer = {}
 	DebugTradeTable.Player2.Offer = {}
 	DebugTradeTable.Player1.Accepted = false
@@ -3260,6 +3520,8 @@ function startTrade(player2Name)
 	revealAncestors(Offer1 or TradeRoot or Container)
 	if Container then Container.Visible = true end
 	if TradeRoot then TradeRoot.Visible = true end
+	-- Undo any leftover fade from the previous trade's close so this one is opaque.
+	restoreTradeTransparency()
 	-- Desktop shows the inventory beside the offers (screenshot layout); phone
 	-- keeps it hidden behind the native "Add Items" button until tapped.
 	if ItemsPicker then
@@ -3277,6 +3539,7 @@ function startTrade(player2Name)
 
 	RenderTrade()
 	pcall(renderInventory)  -- hook the real inventory slots + append spawned items
+	MH_showWeaponsTab()     -- park on Weapons so Pets can't overlay + eat the clicks
 end
 
 -- Light the remote client's green acceptance flag (Player2 accepted), and
@@ -3578,6 +3841,11 @@ end
 --------------------------------------------------------------------------------
 local pTrade = makeTab("Trade")
 makeSection(pTrade, "Trade")
+
+-- Diagnostic: dump the live trade-GUI tree (on-screen panel + clipboard + file).
+makeRowButton(pTrade, "Dump GUI tree", "on-screen + clipboard + MollyHub_dump.txt", "Dump", C_ACCENT, function()
+	pcall(MH_Dump)
+end)
 
 -- Name input (a full-width row with a TextBox).
 local nameRow = makeRow(pTrade, "Second player", "pick from server ▼ or type")
@@ -4629,6 +4897,12 @@ if true then
 							notify("Theme", "Secret theme unlocked!")
 						end
 					end })
+				Set:Section({ Title = "Debug" })
+				Set:Button({ Title = "Dump GUI tree", Desc = "on-screen panel + clipboard + MollyHub_dump.txt",
+					Callback = function()
+						local ok = pcall(MH_Dump)
+						notify("Dump", ok and "shown on screen + copied to clipboard" or "dump failed")
+					end })
 			end)
 			if not _ok_4 then warn("[TradeDebug] Rubis tab Settings error: "..tostring(_e_4)) end
 
@@ -4812,6 +5086,22 @@ if RequestFrame then
 	local function onDecline()
 		HarnessTradeActive = false
 		if RequestFrame then pcall(function() RequestFrame.Visible = false end) end
+		-- Declining abandons the trade. Fully reset it so nothing leaks into the NEXT
+		-- trade (real or fake): give YOUR staged items back to the inventory, drop the
+		-- fake P2 offer, clear the accepted flags/badges + the accept confirm/cancel/
+		-- cooldown, then re-render so EVERY offer slot goes blank. (A real trade that
+		-- opens the same native frames afterwards must not show the old items.)
+		returnOfferToInventory("Player1")             -- empties Player1.Offer (+ refunds)
+		DebugTradeTable.Player2.Offer = {}            -- fake other side: just discard
+		DebugTradeTable.Player1.Accepted = false
+		DebugTradeTable.Player2.Accepted = false
+		pcall(function() showAcceptedBadge("your", false) end)
+		pcall(function() showAcceptedBadge("their", false) end)
+		if stopAcceptCooldown then pcall(stopAcceptCooldown) end
+		setVisible(TradeRoot, "Actions.Accept.Confirm", false)
+		setVisible(TradeRoot, "Actions.Accept.Cancel", false)
+		pcall(renderInventory)
+		pcall(RenderTrade)                            -- blanks both offers' slots
 	end
 	local function findRequestDecline()
 		if not RequestFrame then return nil end
@@ -4914,6 +5204,8 @@ do
 	if acceptBtn then
 		track(acceptBtn.MouseButton1Click:Connect(function()
 			if CooldownRunning then return end                   -- blocked during 6s cooldown
+			-- Empty trade: the button is greyed, so accepting does nothing (like MM2).
+			if (#DebugTradeTable.Player1.Offer + #DebugTradeTable.Player2.Offer) <= 0 then return end
 			if DebugTradeTable.Player1.Accepted then return end  -- already accepted (Cancel showing)
 			revealSubtree(resolve(TradeRoot, "Actions.Accept.Confirm"))
 			setVisible(TradeRoot, "Actions.Accept.Confirm", true)
