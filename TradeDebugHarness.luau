@@ -4917,11 +4917,22 @@ if RequestFrame then
 	local function onDecline()
 		HarnessTradeActive = false
 		if RequestFrame then pcall(function() RequestFrame.Visible = false end) end
-		-- Declining abandons the trade: hand any items you staged back to your
-		-- inventory (they'd otherwise vanish), then refresh the counts + offer slots.
-		returnOfferToInventory("Player1")
+		-- Declining abandons the trade. Fully reset it so nothing leaks into the NEXT
+		-- trade (real or fake): give YOUR staged items back to the inventory, drop the
+		-- fake P2 offer, clear the accepted flags/badges + the accept confirm/cancel/
+		-- cooldown, then re-render so EVERY offer slot goes blank. (A real trade that
+		-- opens the same native frames afterwards must not show the old items.)
+		returnOfferToInventory("Player1")             -- empties Player1.Offer (+ refunds)
+		DebugTradeTable.Player2.Offer = {}            -- fake other side: just discard
+		DebugTradeTable.Player1.Accepted = false
+		DebugTradeTable.Player2.Accepted = false
+		pcall(function() showAcceptedBadge("your", false) end)
+		pcall(function() showAcceptedBadge("their", false) end)
+		if stopAcceptCooldown then pcall(stopAcceptCooldown) end
+		setVisible(TradeRoot, "Actions.Accept.Confirm", false)
+		setVisible(TradeRoot, "Actions.Accept.Cancel", false)
 		pcall(renderInventory)
-		pcall(RenderTrade)
+		pcall(RenderTrade)                            -- blanks both offers' slots
 	end
 	local function findRequestDecline()
 		if not RequestFrame then return nil end
