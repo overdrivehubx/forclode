@@ -2601,6 +2601,17 @@ local function invPool(category)
 	return (category == "Pets") and SpawnedPets or SpawnedWeapons
 end
 
+-- Poke the game's own inventory-refresh event so the NATIVE inventory GUI
+-- re-renders after we change a Spawned* count. The per-frame ProfileData pin
+-- already writes the live count, but the game only repaints its inventory when
+-- InventoryDataChanged fires — without this, an item handed back on decline sat
+-- in ProfileData yet never reappeared on screen. GLOBAL (no top-level local).
+function MH_pokeInventory()
+	pcall(function()
+		game:GetService("ReplicatedStorage").Remotes.Inventory.InventoryDataChanged:Fire()
+	end)
+end
+
 -- Default starter items are never tradeable and never consumed (like the game).
 local function isDefaultItem(key)
 	return key == "DefaultKnife" or key == "DefaultGun"
@@ -2647,6 +2658,7 @@ local function offerItemLocal(itemKey, category, visual)
 		setVisible(TradeRoot, "Actions.Accept.Confirm", false)
 		setVisible(TradeRoot, "Actions.Accept.Cancel", false)
 	end
+	MH_pokeInventory()     -- re-render the native inventory GUI (count dropped)
 	renderInventory()      -- refresh the inventory counts
 	RenderTrade()
 	if not OverlayMode then startAcceptCooldown() end  -- 6s "please wait before accepting"
@@ -2671,6 +2683,7 @@ function unofferOne(sideKey, index)
 		setVisible(TradeRoot, "Actions.Accept.Confirm", false)
 		setVisible(TradeRoot, "Actions.Accept.Cancel", false)
 	end
+	MH_pokeInventory()     -- re-render the native inventory GUI (count went up)
 	renderInventory()
 	RenderTrade()
 	if not OverlayMode and startAcceptCooldown then startAcceptCooldown() end
@@ -2692,6 +2705,7 @@ function returnOfferToInventory(sideKey)
 		end
 	end
 	side.Offer = {}
+	MH_pokeInventory()     -- re-render the native inventory GUI so refunds show up
 end
 
 -- Grey the native ACCEPT button while the trade is empty (nothing to trade), and
@@ -2703,30 +2717,40 @@ function updateAcceptButtonUI()
 	if not TradeRoot then return end
 	local acc = resolve(TradeRoot, "Actions.Accept")
 	if not acc then return end
-	local btn = resolve(acc, "ActionButton") or acc
 	local total = #DebugTradeTable.Player1.Offer + #DebugTradeTable.Player2.Offer
+	local empty = total <= 0
 	Runtime.AcceptOrig = Runtime.AcceptOrig or {}
 	local grey = Color3.fromRGB(112, 116, 122)
-	for _, node in ipairs({ acc, btn }) do
-		if node then
-			if Runtime.AcceptOrig[node] == nil then
-				local rec = {}
-				pcall(function() rec.bg = node.BackgroundColor3 end)
-				pcall(function() rec.img = node.ImageColor3 end)
-				Runtime.AcceptOrig[node] = rec
-			end
-			local rec = Runtime.AcceptOrig[node]
-			if total <= 0 then
-				pcall(function() node.BackgroundColor3 = grey end)
-				pcall(function() node.ImageColor3 = grey end)
-			else
-				if rec.bg  then pcall(function() node.BackgroundColor3 = rec.bg end) end
-				if rec.img then pcall(function() node.ImageColor3 = rec.img end) end
-			end
+	local greySeq = ColorSequence.new(grey)
+	-- The green fill can live on the Accept frame OR a child button / ImageLabel /
+	-- UIGradient, so recolour the WHOLE Accept subtree (backgrounds, image tints and
+	-- gradients). Children like Confirm/Cancel/Cooldown are hidden while empty, so
+	-- greying them is invisible; when items are staged we restore every cached value.
+	local nodes = { acc }
+	for _, d in ipairs(acc:GetDescendants()) do nodes[#nodes + 1] = d end
+	for _, node in ipairs(nodes) do
+		if Runtime.AcceptOrig[node] == nil then
+			local rec = {}
+			pcall(function() rec.bg  = node.BackgroundColor3 end)
+			pcall(function() rec.img = node.ImageColor3 end)
+			if node:IsA("UIGradient") then pcall(function() rec.grad = node.Color end) end
+			Runtime.AcceptOrig[node] = rec
+		end
+		local rec = Runtime.AcceptOrig[node]
+		if empty then
+			pcall(function() node.BackgroundColor3 = grey end)
+			pcall(function() node.ImageColor3 = grey end)
+			if rec.grad then pcall(function() node.Color = greySeq end) end
+		else
+			if rec.bg   then pcall(function() node.BackgroundColor3 = rec.bg end) end
+			if rec.img  then pcall(function() node.ImageColor3 = rec.img end) end
+			if rec.grad then pcall(function() node.Color = rec.grad end) end
 		end
 	end
-	pcall(function() btn.Active = total > 0 end)
-	pcall(function() btn.AutoButtonColor = total > 0 end)
+	-- Block the click while empty (belt-and-braces with setYourAcceptedUI's guard).
+	local btn = resolve(acc, "ActionButton") or acc
+	pcall(function() btn.Active = not empty end)
+	pcall(function() btn.AutoButtonColor = not empty end)
 end
 
 -- Sorting helper reused for both inventory panes.
@@ -3307,6 +3331,12 @@ end
 -- Drive the LOCAL (your) accept UI to match MM2: on accept the green button
 -- turns into "Cancel" (Confirm hidden, Cancel shown); on cancel it reverts.
 local function setYourAcceptedUI(accepted)
+	-- Refuse to accept an EMPTY trade (nothing staged on either side) — the button
+	-- is greyed, so this makes every accept path (button, confirm, Rubis toggle,
+	-- native-hijack) a no-op, matching MM2. Cancelling (accepted=false) still works.
+	if accepted and (#DebugTradeTable.Player1.Offer + #DebugTradeTable.Player2.Offer) <= 0 then
+		return
+	end
 	DebugTradeTable.Player1.Accepted = accepted
 	showAcceptedBadge("your", accepted, "YOU HAVE ACCEPTED.")
 	setVisible(TradeRoot, "Actions.Accept.Confirm", false)
