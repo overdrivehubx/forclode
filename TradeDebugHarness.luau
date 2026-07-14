@@ -2258,6 +2258,8 @@ function MH_Dump()
 	dump(resolve(TradeRoot, "Actions"), 0, 6, 8)
 	w("-- YourOffer subtree --")
 	dump(Offer1, 0, 4, 6)
+	w("-- TheirOffer subtree --")
+	dump(Offer2, 0, 4, 6)
 	w("===== END DUMP =====")
 	local text = table.concat(out, "\n")
 	-- Three ways to get the dump off the device (no console needed):
@@ -2843,48 +2845,39 @@ end
 function updateAcceptButtonUI()
 	if not TradeRoot then return end
 	local acc = resolve(TradeRoot, "Actions.Accept")
-	if not acc then return end
+	if not (acc and acc:IsA("GuiObject")) then return end
 	local total = #DebugTradeTable.Player1.Offer + #DebugTradeTable.Player2.Offer
 	local empty = total <= 0
-	Runtime.AcceptOrig = Runtime.AcceptOrig or {}
-	local grey = Color3.fromRGB(112, 116, 122)
-	local greySeq = ColorSequence.new(grey)
-	-- The green fill can live on the Accept frame OR a child button / ImageLabel /
-	-- UIGradient, so recolour the WHOLE Accept subtree (backgrounds, image tints and
-	-- gradients). Children like Confirm/Cancel/Cooldown are hidden while empty, so
-	-- greying them is invisible; when items are staged we restore every cached value.
-	local nodes = { acc }
-	for _, d in ipairs(acc:GetDescendants()) do nodes[#nodes + 1] = d end
-	for _, node in ipairs(nodes) do
-		local isImg = node:IsA("ImageLabel") or node:IsA("ImageButton")
-		if Runtime.AcceptOrig[node] == nil then
-			local rec = {}
-			pcall(function() rec.bg  = node.BackgroundColor3 end)
-			pcall(function() rec.img = node.ImageColor3 end)
-			if isImg then pcall(function() rec.imgtr = node.ImageTransparency end) end
-			if node:IsA("UIGradient") then pcall(function() rec.grad = node.Color end) end
-			if node:IsA("UIStroke") then pcall(function() rec.stroke = node.Color end) end
-			Runtime.AcceptOrig[node] = rec
+	-- The green "outline" is the button's Gradient TEXTURE, and the game re-asserts
+	-- the native colour every frame — recolouring it is a race we lose. Instead lay
+	-- OUR OWN opaque grey button on top while the trade is empty; the game never
+	-- touches it, so it stays grey. Hide it the moment something is staged.
+	local cover = acc:FindFirstChild("__MHacceptGrey")
+	if empty then
+		if not cover then
+			cover = Instance.new("Frame")
+			cover.Name = "__MHacceptGrey"
+			cover.Size = UDim2.new(1, 8, 1, 8)          -- cover the slight border overhang
+			cover.Position = UDim2.new(0.5, 0, 0.5, 0)
+			cover.AnchorPoint = Vector2.new(0.5, 0.5)
+			cover.BackgroundColor3 = Color3.fromRGB(112, 116, 122)
+			cover.BorderSizePixel = 0
+			cover.ZIndex = 40
+			local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 6); c.Parent = cover
+			local lbl = Instance.new("TextLabel")
+			lbl.Name = "Label"; lbl.Size = UDim2.new(1, 0, 1, 0)
+			lbl.BackgroundTransparency = 1; lbl.Text = "ACCEPT"
+			lbl.TextColor3 = Color3.fromRGB(205, 209, 216)
+			lbl.Font = Enum.Font.SourceSansBold; lbl.TextSize = 20
+			lbl.ZIndex = 41; lbl.Parent = cover
+			cover.Parent = acc
 		end
-		local rec = Runtime.AcceptOrig[node]
-		if empty then
-			pcall(function() node.BackgroundColor3 = grey end)
-			pcall(function() node.ImageColor3 = grey end)
-			-- HIDE the image entirely: tinting a green gradient texture grey still
-			-- multiplies to a muddy-green edge (the "green outline" bug). Hiding it
-			-- leaves only the flat grey background.
-			if rec.imgtr ~= nil then pcall(function() node.ImageTransparency = 1 end) end
-			if rec.grad   then pcall(function() node.Color = greySeq end) end
-			if rec.stroke then pcall(function() node.Color = grey end) end
-		else
-			if rec.bg     then pcall(function() node.BackgroundColor3 = rec.bg end) end
-			if rec.img    then pcall(function() node.ImageColor3 = rec.img end) end
-			if rec.imgtr ~= nil then pcall(function() node.ImageTransparency = rec.imgtr end) end
-			if rec.grad   then pcall(function() node.Color = rec.grad end) end
-			if rec.stroke then pcall(function() node.Color = rec.stroke end) end
-		end
+		cover.Visible = true
+	elseif cover then
+		cover.Visible = false
 	end
-	-- Block the click while empty (belt-and-braces with setYourAcceptedUI's guard).
+	-- Block the click while empty (a plain Frame doesn't eat clicks, so also disable
+	-- the native button so accepting an empty trade does nothing).
 	local btn = resolve(acc, "ActionButton") or acc
 	pcall(function() btn.Active = not empty end)
 	pcall(function() btn.AutoButtonColor = not empty end)
@@ -3535,6 +3528,10 @@ function startTrade(player2Name)
 	-- Clear any leftover accepted badges + reset panel toggles for a fresh trade.
 	showAcceptedBadge("your", false); showAcceptedBadge("their", false)
 	stopAcceptCooldown()
+	-- Reset the Accept button to its base state: a leftover "ARE YOU SURE?" (Confirm)
+	-- or Cancel from a trade you declined mid-confirm must not carry into this one.
+	setVisible(TradeRoot, "Actions.Accept.Confirm", false)
+	setVisible(TradeRoot, "Actions.Accept.Cancel", false)
 	for _, f in ipairs(onNewTrade) do pcall(f) end
 
 	-- Open the Trade panel. Bring the trade ScreenGui + ancestor chain on-screen.
