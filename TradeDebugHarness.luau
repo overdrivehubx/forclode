@@ -3986,13 +3986,25 @@ end
 -- blue-gray panel. If Rubis fails to build, the console (F9) shows the error and
 -- the built-in panel is restored automatically.
 if true then
-	-- WATCHDOG (separate thread, so a hung HttpGet can't block it): if Rubis hasn't
-	-- reported ready within the timeout, show an on-screen error so you are never
-	-- left silently with no menu (e.g. Rubis hanging on Potassium).
+	-- WATCHDOG (separate thread, so a hung HttpGet can't block it). Rubis on a slow
+	-- executor (e.g. Potassium PC) can take a while to fetch, so give it a long
+	-- grace period before warning — and if it DOES come up late, auto-remove the
+	-- warning so you're not left staring at a false error.
 	task.spawn(function()
-		task.wait(12)
+		task.wait(30)
 		if not Runtime.RubisReady then
-			__showFatal("Rubis UI did not load in time — check your connection / executor and re-run.")
+			__showFatal("Rubis is slow to load (executor/connection). It may still appear shortly — if not, re-run.")
+			-- Keep watching: clear the notice the moment Rubis reports ready.
+			for _ = 1, 60 do
+				task.wait(1)
+				if Runtime.RubisReady then
+					pcall(function()
+						local g = PlayerGui:FindFirstChild("TradeDebugError")
+						if g then g:Destroy() end
+					end)
+					break
+				end
+			end
 		end
 	end)
 	task.spawn(function()
