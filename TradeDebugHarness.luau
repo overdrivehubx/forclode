@@ -2354,6 +2354,10 @@ local completeToken = 0
 -- accepting a REAL trade with a real player is left completely untouched — the
 -- harness never wipes or steals items from a genuine game trade.
 local HarnessTradeActive = false
+-- True only while OUR fake request modal is pending. The native request Accept is
+-- hijacked (→ our fake startTrade) ONLY when this is set, and it is CONSUMED the
+-- instant we hijack — so a real trade request accepted later is never stolen.
+local HarnessRequestArmed = false
 -- Forward decls so the request modal can (re)hook the native Accept button —
 -- the game may rebuild that button between trades, so a one-time hook goes stale
 -- (this is the "can't start a second trade" bug). We re-hook on every show.
@@ -2846,6 +2850,17 @@ function updateAcceptButtonUI()
 	if not TradeRoot then return end
 	local acc = resolve(TradeRoot, "Actions.Accept")
 	if not (acc and acc:IsA("GuiObject")) then return end
+	local abtn0 = resolve(acc, "ActionButton") or acc
+	-- NEVER touch a real trade: only manage the button during a HARNESS fake trade.
+	-- Otherwise remove our cover and re-enable the native button so a real trade's
+	-- Accept works normally (this was greying/disabling real trades).
+	if not HarnessTradeActive then
+		local c = acc:FindFirstChild("__MHacceptGrey")
+		if c then c.Visible = false end
+		pcall(function() abtn0.Active = true end)
+		pcall(function() abtn0.AutoButtonColor = true end)
+		return
+	end
 	local total = #DebugTradeTable.Player1.Offer + #DebugTradeTable.Player2.Offer
 	local empty = total <= 0
 	-- The green "outline" is the button's Gradient TEXTURE, and the game re-asserts
@@ -3378,7 +3393,7 @@ end
 local function showRequestModal(player2Name, isIncoming)
 	if isIncoming == nil then isIncoming = true end
 	PendingP2Name = player2Name
-	HarnessTradeActive = true  -- arm the native-Accept hijack for OUR fake flow
+	HarnessRequestArmed = true  -- arm the native-request-Accept hijack for OUR fake flow
 	-- Re-resolve the request frame every time: after a trade the game can REBUILD
 	-- its TradeRequest UI, leaving our cached reference pointing at a destroyed
 	-- frame — which is why the SECOND request wouldn't show. Take the fresh one.
@@ -3463,7 +3478,7 @@ local function completeTradeIfBothAccepted()
 			-- NOT return to inventory). An ABANDONED trade returns them instead.
 			DebugTradeTable.Player1.Offer = {}
 			DebugTradeTable.Player2.Offer = {}
-			HarnessTradeActive = false  -- disarm; re-shown request re-arms it
+			HarnessTradeActive = false; HarnessRequestArmed = false  -- disarm; re-shown request re-arms it
 			showAcceptedBadge("your", false); showAcceptedBadge("their", false)
 			for _, f in ipairs(onNewTrade) do pcall(f) end
 		end)
@@ -3514,6 +3529,7 @@ end
 -- AcceptRequest -> StartTrade -> UpdateTrade lifecycle.
 function startTrade(player2Name)
 	completeToken = completeToken + 1  -- cancel any pending "trade complete" close
+	HarnessTradeActive = true          -- a fake trade is now open (gates Accept-button UI)
 	DebugTradeTable.Player2.Player = { Name = player2Name, __fake = true }
 	-- If the PREVIOUS trade was abandoned (offer still holds staged items because it
 	-- never completed), give YOUR items back to the inventory before wiping — so
@@ -3571,7 +3587,7 @@ end
 
 -- Clean close: play the fade, wipe the tables, drop the panel.
 local function terminate(panel)
-	HarnessTradeActive = false  -- disarm the native-Accept hijack
+	HarnessTradeActive = false; HarnessRequestArmed = false  -- disarm the native-Accept hijack
 	OverlayMode = false         -- idle the overlay refresh loop
 	-- Unpin the real-inventory render-step bindings created by the spawner.
 	pcall(function()
@@ -3661,17 +3677,10 @@ task.spawn(function()
 		task.wait(0.4)
 	end
 end)
--- Keep the ACCEPT button greyed while the trade is empty: the game re-asserts its
--- green on its own, so a one-shot recolour (in RenderTrade) can flicker back.
--- Re-run the grey/restore a few times a second whenever the trade GUI is open.
-task.spawn(function()
-	while true do
-		if TradeGUI and TradeGUI:IsA("ScreenGui") and TradeGUI.Enabled and not OverlayMode then
-			pcall(updateAcceptButtonUI)
-		end
-		task.wait(0.2)
-	end
-end)
+-- (No continuous Accept-button loop: it ran on EVERY trade — including real ones —
+-- and greyed/disabled the native button. The grey cover is an opaque frame the game
+-- never touches, so RenderTrade setting it once is enough; and updateAcceptButtonUI
+-- now no-ops unless a HARNESS fake trade is active, so real trades are left alone.)
 -- Flat, name-sorted index of the whole catalog (weapons + pets), rebuildable
 -- when the real catalog finishes loading in the background.
 local spawnIndex = {}
@@ -4466,18 +4475,20 @@ if RequestFrame then
 	-- guarding against a double-open with a short debounce.
 	local lastOpen = 0
 	local function onAccept()
-		-- Only hijack the native Accept when WE armed a fake request. A real trade
-		-- the player accepts normally must pass straight through, untouched.
-		if not HarnessTradeActive then return end
+		-- Only hijack the native request-Accept when WE armed a fake request, and
+		-- CONSUME the arm immediately so a real trade request accepted afterwards
+		-- passes straight through, untouched.
+		if not HarnessRequestArmed then return end
 		if os.clock() - lastOpen < 0.3 then return end
 		lastOpen = os.clock()
+		HarnessRequestArmed = false
 		startTrade(PendingP2Name or currentName())
 	end
 	-- Decline hides the modal and disarms the fake flow. Bound the same
 	-- re-hooking way as Accept — the old one-time, PC-only-path bind was why
 	-- Decline did nothing on phone.
 	local function onDecline()
-		HarnessTradeActive = false
+		HarnessTradeActive = false; HarnessRequestArmed = false
 		if RequestFrame then pcall(function() RequestFrame.Visible = false end) end
 		-- Declining abandons the trade. Fully reset it so nothing leaks into the NEXT
 		-- trade (real or fake): give YOUR staged items back to the inventory, drop the
