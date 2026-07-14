@@ -2795,7 +2795,10 @@ function unofferOne(sideKey, index)
 	local offer = DebugTradeTable[sideKey].Offer
 	local entry = offer[index]
 	if not entry then return end
-	if not isDefaultItem(entry[1]) then
+	-- Only YOUR (Player1) items came out of your inventory, so only those return to
+	-- it. Player2's items are the fake other player's — removing them just discards
+	-- (they must NOT drop into your pack).
+	if sideKey == "Player1" and not isDefaultItem(entry[1]) then
 		local pool = invPool(entry[3])
 		pool[entry[1]] = (pool[entry[1]] or 0) + 1
 	end
@@ -3875,15 +3878,11 @@ end
 -- All GLOBAL so both the Rubis menu and the built-in panel can call them.
 --==============================================================================
 function MH_Presets()
-	-- A ready-made pack (built-in, always listed). Keys are catalog item keys.
-	return {
-		["Godly Pack (preset)"] = {
-			Weapons = { CSeer = 1, Gingerscope = 1, Harvester = 1, Nebula = 1, Prismatic = 1,
-				["Galaxy Blade"] = 1, Logchopper = 1, SharkSeeker = 1, ["Chroma Corrupt"] = 1,
-				Summerween = 1, ["Retro Sunset"] = 1, Whiteout = 1 },
-			Pets = {},
-		},
-	}
+	-- No built-in preset: the old "Godly Pack" used display NAMES as keys (e.g.
+	-- SharkSeeker, whose real catalog key is NERFGUN), so its items rendered without
+	-- icons and never spawned into the real inventory. Configs now contain ONLY what
+	-- you save yourself (real spawned keys), which apply correctly.
+	return {}
 end
 function MH_LoadConfigs()
 	local out = {}
