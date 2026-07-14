@@ -3664,6 +3664,17 @@ task.spawn(function()
 		task.wait(0.4)
 	end
 end)
+-- Keep the ACCEPT button greyed while the trade is empty: the game re-asserts its
+-- green on its own, so a one-shot recolour (in RenderTrade) can flicker back.
+-- Re-run the grey/restore a few times a second whenever the trade GUI is open.
+task.spawn(function()
+	while true do
+		if TradeGUI and TradeGUI:IsA("ScreenGui") and TradeGUI.Enabled and not OverlayMode then
+			pcall(updateAcceptButtonUI)
+		end
+		task.wait(0.2)
+	end
+end)
 -- Flat, name-sorted index of the whole catalog (weapons + pets), rebuildable
 -- when the real catalog finishes loading in the background.
 local spawnIndex = {}
