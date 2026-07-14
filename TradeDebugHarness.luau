@@ -3644,321 +3644,15 @@ local function pad(inst, px)
 	p.Parent = inst; return p
 end
 
-local Panel = Instance.new("ScreenGui")
-Panel.Name = "TradeDebugPanel"
-Panel.ResetOnSpawn = false
-Panel.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-Panel.IgnoreGuiInset = true
-Panel.DisplayOrder = 1000
-Panel.Parent = PlayerGui
-
--- Floating OPEN button (always present) — toggles the window.
-local OpenBtn = Instance.new("TextButton")
-OpenBtn.Name = "OpenButton"
-OpenBtn.Size = UDim2.new(0, 118, 0, 40)
-OpenBtn.Position = UDim2.new(0, 16, 0, 90)
-OpenBtn.BackgroundColor3 = C_SIDE
-OpenBtn.Text = "☰  MollyHub"
-OpenBtn.TextColor3 = C_TXT
-OpenBtn.Font = Enum.Font.GothamBold
-OpenBtn.TextSize = 14
-OpenBtn.BorderSizePixel = 0
-OpenBtn.Active = true
-OpenBtn.Parent = Panel
-corner(OpenBtn, 10)
-local ObStroke = Instance.new("UIStroke")
-ObStroke.Color = C_ACCENT; ObStroke.Thickness = 1.5; ObStroke.Transparency = 0.2; ObStroke.Parent = OpenBtn
-
-local Window = Instance.new("Frame")
-Window.Name = "Window"
-Window.Size = UDim2.new(0, 430, 0, 300)
-Window.Position = UDim2.new(0.5, -215, 0.5, -150)
-Window.BackgroundColor3 = C_BG
-Window.BorderSizePixel = 0
-Window.ClipsDescendants = true
-Window.Parent = Panel
-corner(Window, 16)
-local WStroke = Instance.new("UIStroke")
-WStroke.Color = C_ACCENT; WStroke.Thickness = 1.5; WStroke.Transparency = 0.25; WStroke.Parent = Window
-
--- Background image + overlay for readability. The image sits at ~50% transparency
--- (half see-through) with a slight dark scrim on top so the menu stays legible.
-local Bg = Instance.new("ImageLabel")
-Bg.Name = "Bg"; Bg.Size = UDim2.new(1, 0, 1, 0); Bg.BackgroundTransparency = 1
-Bg.Image = BG_IMAGE; Bg.ScaleType = Enum.ScaleType.Crop
-Bg.ImageTransparency = 0.5; Bg.ZIndex = 0; Bg.Parent = Window
--- Dark tint over the image so it reads a bit darker ("чуть потемнее"). Lower the
--- transparency for MORE darkening, raise it for a brighter image.
-local Overlay = Instance.new("Frame")
-Overlay.Size = UDim2.new(1, 0, 1, 0); Overlay.BackgroundColor3 = Color3.fromRGB(12, 16, 24)
-Overlay.BackgroundTransparency = 0.3; Overlay.BorderSizePixel = 0; Overlay.ZIndex = 0; Overlay.Parent = Window
-
--- Sidebar (left).
-local Side = Instance.new("Frame")
-Side.Name = "Sidebar"; Side.Size = UDim2.new(0, 122, 1, 0)
-Side.BackgroundColor3 = C_SIDE; Side.BackgroundTransparency = 0.35
-Side.BorderSizePixel = 0; Side.ZIndex = 2; Side.Parent = Window
-local Brand = Instance.new("TextLabel")
-Brand.Size = UDim2.new(1, -16, 0, 26); Brand.Position = UDim2.new(0, 12, 0, 12)
-Brand.BackgroundTransparency = 1; Brand.Text = "MollyHub"; Brand.TextColor3 = C_TXT
-Brand.Font = Enum.Font.GothamBold; Brand.TextSize = 18; Brand.TextXAlignment = Enum.TextXAlignment.Left
-Brand.ZIndex = 3; Brand.Parent = Side
-local BrandSub = Instance.new("TextLabel")
-BrandSub.Size = UDim2.new(1, -16, 0, 12); BrandSub.Position = UDim2.new(0, 12, 0, 34)
-BrandSub.BackgroundTransparency = 1; BrandSub.Text = "trade sandbox"; BrandSub.TextColor3 = C_DIM
-BrandSub.Font = Enum.Font.Gotham; BrandSub.TextSize = 10; BrandSub.TextXAlignment = Enum.TextXAlignment.Left
-BrandSub.ZIndex = 3; BrandSub.Parent = Side
-local TabHolder = Instance.new("Frame")
-TabHolder.Size = UDim2.new(1, -16, 1, -104); TabHolder.Position = UDim2.new(0, 8, 0, 56)
-TabHolder.BackgroundTransparency = 1; TabHolder.ZIndex = 3; TabHolder.Parent = Side
-local TabLayout = Instance.new("UIListLayout")
-TabLayout.Padding = UDim.new(0, 6); TabLayout.SortOrder = Enum.SortOrder.LayoutOrder; TabLayout.Parent = TabHolder
--- Close button pinned to bottom of the sidebar.
-local CloseBtn = Instance.new("TextButton")
-CloseBtn.Size = UDim2.new(1, -16, 0, 32); CloseBtn.Position = UDim2.new(0, 8, 1, -40)
-CloseBtn.BackgroundColor3 = C_ROW; CloseBtn.Text = "✕ Close"; CloseBtn.TextColor3 = C_DIM
-CloseBtn.Font = Enum.Font.GothamMedium; CloseBtn.TextSize = 12; CloseBtn.BorderSizePixel = 0
-CloseBtn.ZIndex = 3; CloseBtn.Parent = Side; corner(CloseBtn, 8)
-
--- Content area (right).
-local Content = Instance.new("Frame")
-Content.Name = "Content"; Content.Size = UDim2.new(1, -122, 1, 0); Content.Position = UDim2.new(0, 122, 0, 0)
-Content.BackgroundTransparency = 1; Content.ZIndex = 2; Content.Parent = Window
-
--- Draggable via the sidebar brand area.
-Side.Active = true
-do
-	local dragging, dragStart, startPos
-	track(Side.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1
-			or input.UserInputType == Enum.UserInputType.Touch then
-			dragging = true; dragStart = input.Position; startPos = Window.Position
-		end
-	end))
-	track(UIS.InputChanged:Connect(function(input)
-		if dragging and Window.Parent and (input.UserInputType == Enum.UserInputType.MouseMovement
-			or input.UserInputType == Enum.UserInputType.Touch) then
-			local d = input.Position - dragStart
-			Window.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X,
-				startPos.Y.Scale, startPos.Y.Offset + d.Y)
-		end
-	end))
-	track(UIS.InputEnded:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1
-			or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
-	end))
-end
-
--- Open/close wiring.
-track(OpenBtn.MouseButton1Click:Connect(function() Window.Visible = not Window.Visible end))
-track(CloseBtn.MouseButton1Click:Connect(function() Window.Visible = false end))
-
---------------------------------------------------------------------------------
--- Tab + page system
---------------------------------------------------------------------------------
-local pages, tabs = {}, {}
-local tabOrder = 0
-local function selectTab(name)
-	for n, page in pairs(pages) do page.Visible = (n == name) end
-	for n, btn in pairs(tabs) do
-		btn.BackgroundColor3 = (n == name) and C_ACCENT or C_ROW
-		btn.TextColor3 = (n == name) and Color3.fromRGB(255,255,255) or C_DIM
-	end
-end
-local function makeTab(name)
-	tabOrder = tabOrder + 1
-	local btn = Instance.new("TextButton")
-	btn.Size = UDim2.new(1, 0, 0, 34); btn.BackgroundColor3 = C_ROW
-	btn.Text = name; btn.TextColor3 = C_DIM; btn.Font = Enum.Font.GothamMedium; btn.TextSize = 13
-	btn.BorderSizePixel = 0; btn.ZIndex = 3; btn.LayoutOrder = tabOrder; btn.Parent = TabHolder
-	corner(btn, 8)
-	local page = Instance.new("ScrollingFrame")
-	page.Name = name; page.Size = UDim2.new(1, 0, 1, 0); page.BackgroundTransparency = 1
-	page.BorderSizePixel = 0; page.ScrollBarThickness = 4; page.ScrollBarImageColor3 = C_ACCENT
-	page.CanvasSize = UDim2.new(0,0,0,0); page.AutomaticCanvasSize = Enum.AutomaticSize.Y
-	page.ZIndex = 2; page.Visible = false; page.Parent = Content
-	local ll = Instance.new("UIListLayout")
-	ll.Padding = UDim.new(0, 8); ll.SortOrder = Enum.SortOrder.LayoutOrder
-	ll.HorizontalAlignment = Enum.HorizontalAlignment.Center; ll.Parent = page
-	pad(page, 12)
-	pages[name] = page; tabs[name] = btn
-	track(btn.MouseButton1Click:Connect(function() selectTab(name) end))
-	return page
-end
-
--- A settings-style row: title + description on the left, a control on the right.
-local rowOrder = 0
-local function makeRow(page, title, desc)
-	rowOrder = rowOrder + 1
-	local rowF = Instance.new("Frame")
-	rowF.Size = UDim2.new(1, 0, 0, 52); rowF.BackgroundColor3 = C_ROW
-	rowF.BorderSizePixel = 0; rowF.ZIndex = 2; rowF.LayoutOrder = rowOrder; rowF.Parent = page
-	corner(rowF, 10)
-	local t = Instance.new("TextLabel")
-	t.Size = UDim2.new(1, -96, 0, 18); t.Position = UDim2.new(0, 12, 0, 8)
-	t.BackgroundTransparency = 1; t.Text = title; t.TextColor3 = C_TXT
-	t.Font = Enum.Font.GothamMedium; t.TextSize = 13; t.TextXAlignment = Enum.TextXAlignment.Left
-	t.ZIndex = 3; t.Parent = rowF
-	local d = Instance.new("TextLabel")
-	d.Size = UDim2.new(1, -96, 0, 16); d.Position = UDim2.new(0, 12, 0, 27)
-	d.BackgroundTransparency = 1; d.Text = desc or ""; d.TextColor3 = C_DIM
-	d.Font = Enum.Font.Gotham; d.TextSize = 11; d.TextXAlignment = Enum.TextXAlignment.Left
-	d.TextTruncate = Enum.TextTruncate.AtEnd; d.ZIndex = 3; d.Parent = rowF
-	return rowF
-end
-
--- A slim section header (organizes the single Trade tab into labelled groups).
-local function makeSection(page, title)
-	rowOrder = rowOrder + 1
-	local h = Instance.new("TextLabel")
-	h.Size = UDim2.new(1, 0, 0, 22); h.BackgroundTransparency = 1
-	h.Text = "— " .. title:upper() .. " —"; h.TextColor3 = C_ACCENT
-	h.Font = Enum.Font.GothamBold; h.TextSize = 12
-	h.TextXAlignment = Enum.TextXAlignment.Left
-	h.ZIndex = 3; h.LayoutOrder = rowOrder; h.Parent = page
-	return h
-end
-
--- Pill toggle placed on the right of a row. cb(state) fires on change.
-local function makeRowToggle(page, title, desc, initial, cb)
-	local rowF = makeRow(page, title, desc)
-	local state = initial and true or false
-	local track_ = Instance.new("TextButton")
-	track_.Size = UDim2.new(0, 46, 0, 24); track_.Position = UDim2.new(1, -58, 0.5, -12)
-	track_.AutoButtonColor = false; track_.Text = ""; track_.BorderSizePixel = 0
-	track_.BackgroundColor3 = state and C_ACCENT or Color3.fromRGB(60, 68, 88)
-	track_.ZIndex = 4; track_.Parent = rowF; corner(track_, 12)
-	local knob = Instance.new("Frame")
-	knob.Size = UDim2.new(0, 20, 0, 20); knob.BorderSizePixel = 0
-	knob.BackgroundColor3 = Color3.fromRGB(255,255,255); knob.ZIndex = 5; knob.Parent = track_
-	corner(knob, 10)
-	local function paint()
-		track_.BackgroundColor3 = state and C_ACCENT or Color3.fromRGB(60, 68, 88)
-		knob.Position = state and UDim2.new(1, -22, 0.5, -10) or UDim2.new(0, 2, 0.5, -10)
-	end
-	paint()
-	track(track_.MouseButton1Click:Connect(function()
-		state = not state; paint(); cb(state)
-	end))
-	return function() return state end, function(v) state = v; paint() end
-end
-
--- A button placed on the right of a row. cb() fires on click.
-local function makeRowButton(page, title, desc, btnText, color, cb)
-	local rowF = makeRow(page, title, desc)
-	local b = Instance.new("TextButton")
-	b.Size = UDim2.new(0, 74, 0, 30); b.Position = UDim2.new(1, -86, 0.5, -15)
-	b.BackgroundColor3 = color or C_BTN; b.Text = btnText; b.TextColor3 = C_TXT
-	b.Font = Enum.Font.GothamMedium; b.TextSize = 12; b.BorderSizePixel = 0
-	b.ZIndex = 4; b.Parent = rowF; corner(b, 8)
-	track(b.MouseButton1Click:Connect(cb))
-	return b
-end
-
---------------------------------------------------------------------------------
--- PAGE 1 — Trade
---------------------------------------------------------------------------------
-local pTrade = makeTab("Trade")
-makeSection(pTrade, "Trade")
-
--- Diagnostic: dump the live trade-GUI tree (on-screen panel + clipboard + file).
-makeRowButton(pTrade, "Dump GUI tree", "on-screen + clipboard + MollyHub_dump.txt", "Dump", C_ACCENT, function()
-	pcall(MH_Dump)
-end)
-
--- Name input (a full-width row with a TextBox).
-local nameRow = makeRow(pTrade, "Second player", "pick from server ▼ or type")
-local NameBox = Instance.new("TextBox")
-NameBox.Size = UDim2.new(0, 118, 0, 30); NameBox.Position = UDim2.new(1, -130, 0.5, -15)
-NameBox.BackgroundColor3 = C_BG; NameBox.Text = "Player2"
-NameBox.PlaceholderText = "name…"; NameBox.PlaceholderColor3 = C_DIM
-NameBox.TextColor3 = C_TXT; NameBox.Font = Enum.Font.Gotham; NameBox.TextSize = 12
-NameBox.ClearTextOnFocus = false; NameBox.BorderSizePixel = 0; NameBox.ClipsDescendants = true
-NameBox.ZIndex = 4; NameBox.Parent = nameRow; corner(NameBox, 8); pad(NameBox, 6)
-
+-- The built-in fallback panel was removed; Rubis is the only menu now. These are
+-- the few shared bits the Rubis widgets / native-accept wiring still reference.
+local NameBox = { Text = "Player2" }   -- plain holder: Rubis sets .Text, currentName reads it
 local function currentName()
-	local n = tostring(NameBox.Text)
-	if n == "" then n = "Player2" end
+	local n = tostring(NameBox and NameBox.Text)
+	if n == "" or n == "nil" then n = "Player2" end
 	return n
 end
-
--- Player picker: a collapsible list of the players currently on the server.
-local pickRow = makeRow(pTrade, "Choose player", "tap to select from server")
-local PickBtn = Instance.new("TextButton")
-PickBtn.Size = UDim2.new(0, 74, 0, 30); PickBtn.Position = UDim2.new(1, -86, 0.5, -15)
-PickBtn.BackgroundColor3 = C_ACCENT; PickBtn.Text = "Players ▼"; PickBtn.TextColor3 = C_TXT
-PickBtn.Font = Enum.Font.GothamMedium; PickBtn.TextSize = 12; PickBtn.BorderSizePixel = 0
-PickBtn.ZIndex = 4; PickBtn.Parent = pickRow; corner(PickBtn, 8)
-
-rowOrder = rowOrder + 1
-local PlayerList = Instance.new("Frame")
-PlayerList.Size = UDim2.new(1, 0, 0, 0); PlayerList.AutomaticSize = Enum.AutomaticSize.Y
-PlayerList.BackgroundColor3 = C_BG; PlayerList.BorderSizePixel = 0; PlayerList.ZIndex = 2
-PlayerList.LayoutOrder = rowOrder; PlayerList.Visible = false; PlayerList.Parent = pTrade
-corner(PlayerList, 10)
-local pll = Instance.new("UIListLayout")
-pll.Padding = UDim.new(0, 4); pll.SortOrder = Enum.SortOrder.LayoutOrder; pll.Parent = PlayerList
-pad(PlayerList, 6)
-
-local function refreshPlayers()
-	for _, c in ipairs(PlayerList:GetChildren()) do
-		if c:IsA("TextButton") then c:Destroy() end
-	end
-	local n = 0
-	for _, pl in ipairs(Players:GetPlayers()) do
-		if pl ~= LocalPlayer then
-			n = n + 1
-			local b = Instance.new("TextButton")
-			b.Size = UDim2.new(1, 0, 0, 28); b.BackgroundColor3 = C_BTN
-			b.Text = pl.Name; b.TextColor3 = C_TXT; b.Font = Enum.Font.Gotham; b.TextSize = 12
-			b.BorderSizePixel = 0; b.ZIndex = 3; b.LayoutOrder = n; b.Parent = PlayerList
-			corner(b, 6)
-			b.MouseButton1Click:Connect(function()
-				NameBox.Text = pl.Name
-				PlayerList.Visible = false
-				PickBtn.Text = "Players ▼"
-			end)
-		end
-	end
-	if n == 0 then
-		local e = Instance.new("TextLabel")
-		e.Size = UDim2.new(1, 0, 0, 24); e.BackgroundTransparency = 1
-		e.Text = "no other players"; e.TextColor3 = C_DIM; e.Font = Enum.Font.Gotham
-		e.TextSize = 12; e.ZIndex = 3; e.Parent = PlayerList
-	end
-end
-track(PickBtn.MouseButton1Click:Connect(function()
-	PlayerList.Visible = not PlayerList.Visible
-	PickBtn.Text = PlayerList.Visible and "Players ▲" or "Players ▼"
-	if PlayerList.Visible then refreshPlayers() end
-end))
-
-makeRowButton(pTrade, "Incoming request", "someone sends YOU a request", "Show", C_ACCENT, function()
-	showRequestModal(currentName(), true)
-end)
-makeRowButton(pTrade, "Outgoing request", "YOU send a request (waiting)", "Show", C_BTN, function()
-	showRequestModal(currentName(), false)
-end)
-
-local _, setP2Side = makeRowToggle(pTrade, "Spawn to Player 2 side", "on = spawned items land in THEIR offer", false, function(on)
-	OfferMode = on and "Player2" or "Player1"
-end)
--- Every fresh trade starts on YOUR side again (fixes: a "fake" P2-side trade
--- left the toggle on, so the next real trade still filled the P2 side).
-table.insert(onNewTrade, function() OfferMode = "Player1"; setP2Side(false) end)
-
--- OVERLAY toggle: use the fake inventory + fake slots ON TOP of a REAL trade.
--- Turn it on WHILE you're in a genuine game trade: the Add Items grid becomes the
--- fake inventory, tapping paints fake items onto YOUR side only (visual, nothing
--- sent, the other player never sees it), and the real player's offer is left
--- alone. A background loop re-asserts your fake side so the game can't wipe it.
-makeRowToggle(pTrade, "Overlay on REAL trade", "fake items on your side (visual only)", false, function(on)
-	OverlayMode = on
-	if on then
-		pcall(openItemsPicker)  -- reveal + fill the fake Add Items grid
-	end
-	pcall(RenderTrade)
-end)
+table.insert(onNewTrade, function() OfferMode = "Player1" end)
 -- Re-paint your fake side a few times a second so the real game's own trade
 -- render can't overwrite the fake items while Overlay is on.
 task.spawn(function()
@@ -3967,31 +3661,6 @@ task.spawn(function()
 		task.wait(0.4)
 	end
 end)
-
--- Background MUSIC: paste your audio asset id on the marked line below, then use
--- the "Music" toggle to play/stop it (loops). Wrapped in a do-block so it adds no
--- lasting local (the harness is close to Luau's 200-local-per-function limit).
-do
-	local music = Instance.new("Sound")
-	music.Name = "MollyHubMusic"
-	--  ▼▼▼  PASTE YOUR MUSIC ID HERE (keep the rbxassetid:// prefix)  ▼▼▼
-	music.SoundId = "rbxassetid://0"
-	--  ▲▲▲  ---------------------------------------------------------  ▲▲▲
-	music.Looped = true
-	music.Volume = 0.5
-	pcall(function() music.Parent = game:GetService("SoundService") end)
-	makeRowToggle(pTrade, "Music", "play background music (set id in script)", false, function(on)
-		if on then pcall(function() music:Play() end) else pcall(function() music:Pause() end) end
-	end)
-end
-
---------------------------------------------------------------------------------
--- PAGE 2 — Spawn (add game items into your inventory)
---------------------------------------------------------------------------------
--- Two tabs: Trade and Spawn. The spawner gets its own tab; Accept + Info fold
--- into the Trade tab (they alias pTrade below).
-local pSpawn = makeTab("Spawn")
-
 -- Flat, name-sorted index of the whole catalog (weapons + pets), rebuildable
 -- when the real catalog finishes loading in the background.
 local spawnIndex = {}
@@ -4018,119 +3687,6 @@ local function buildSpawnIndex()
 	table.sort(spawnIndex, function(a, b) return a.name:lower() < b.name:lower() end)
 end
 buildSpawnIndex()
-
--- Catalog status line (real vs fallback).
-rowOrder = rowOrder + 1
-local CatLabel = Instance.new("TextLabel")
-CatLabel.Size = UDim2.new(1, 0, 0, 16); CatLabel.BackgroundTransparency = 1
-CatLabel.Text = CatalogStatus; CatLabel.TextColor3 = C_DIM; CatLabel.Font = Enum.Font.Gotham
-CatLabel.TextSize = 11; CatLabel.TextXAlignment = Enum.TextXAlignment.Left
-CatLabel.TextWrapped = true; CatLabel.ZIndex = 2; CatLabel.LayoutOrder = rowOrder; CatLabel.Parent = pSpawn
-
--- Data diagnostic: shows why the catalog is/ isn't real (tap to run).
-local Diag = Instance.new("TextLabel")
-Diag.Size = UDim2.new(1, 0, 0, 10); Diag.AutomaticSize = Enum.AutomaticSize.Y
-Diag.BackgroundColor3 = C_BG; Diag.BorderSizePixel = 0; Diag.ZIndex = 2
-Diag.Text = ""; Diag.TextColor3 = C_DIM; Diag.Font = Enum.Font.Code; Diag.TextSize = 11
-Diag.TextWrapped = true; Diag.TextYAlignment = Enum.TextYAlignment.Top
-Diag.TextXAlignment = Enum.TextXAlignment.Left; Diag.Visible = false
-rowOrder = rowOrder + 1; Diag.LayoutOrder = rowOrder; Diag.Parent = pSpawn
-pad(Diag, 8); corner(Diag, 8)
-
-makeRowButton(pSpawn, "Diagnose data", "why catalog is real / fallback", "Diag", C_ACCENT, function()
-	local rs = game:GetService("ReplicatedStorage")
-	local gsd = findGetSync()
-	local pd = rawget(_G, "PlayerData")
-	local lines = {}
-	table.insert(lines, "GetSyncData: " .. (gsd and gsd:GetFullName() or "NOT FOUND"))
-	table.insert(lines, "_G.PlayerData: " .. (type(pd) == "table" and "yes" or "no")
-		.. (type(pd) == "table" and pd.Weapons and pd.Weapons.Owned and (" (" .. countKeys(pd.Weapons.Owned) .. " weapons)") or ""))
-	table.insert(lines, "catalog: " .. CatalogStatus)
-	table.insert(lines, "lastError: " .. tostring(lastSyncError))
-	table.insert(lines, "ItemDB=" .. countKeys(ItemDB) .. " PetDB=" .. countKeys(PetDB))
-	local samp = {}
-	for _, e in ipairs(spawnIndex) do if #samp < 6 then table.insert(samp, e.name) end end
-	table.insert(lines, "sample: " .. table.concat(samp, ", "))
-	local rfs = {}
-	for _, c in ipairs(rs:GetChildren()) do
-		if c:IsA("RemoteFunction") and #rfs < 18 then table.insert(rfs, c.Name) end
-	end
-	table.insert(lines, "RS RemoteFunctions: " .. table.concat(rfs, ", "))
-	-- Count hookable inventory slots currently in the picker.
-	local nslots = 0
-	if ItemsPicker then
-		for _, s in ipairs(ItemsPicker:GetDescendants()) do
-			local icon = s:FindFirstChild("Icon") or resolve(s, "Container.Icon")
-			local btn = resolve(s, "Container.Button") or resolve(s, "Container.ActionButton") or s:FindFirstChild("Button")
-			if icon and icon:IsA("ImageLabel") and btn and btn:IsA("GuiButton") then nslots = nslots + 1 end
-		end
-	end
-	table.insert(lines, "ItemsPicker: " .. (ItemsPicker and ItemsPicker:GetFullName() or "nil") .. " | slots=" .. nslots)
-	Diag.Text = table.concat(lines, "\n")
-	Diag.Visible = true
-end)
-
--- Dump the STRUCTURE of the first few detected WEAPON slots so the real slot
--- layout is visible (screenshot it). This is how we stop guessing the tree.
-makeRowButton(pSpawn, "Dump slots", "show inventory container + slot", "Dump", C_ACCENT, function()
-	local lines = {}
-	local function kidsOf(node)
-		local ch = {}
-		for _, c in ipairs(node:GetChildren()) do
-			local t = (c:IsA("TextLabel") or c:IsA("TextButton") or c:IsA("TextBox"))
-				and ("'" .. tostring(c.Text):sub(1, 10) .. "'") or ""
-			table.insert(ch, c.Name .. "(" .. c.ClassName .. ")" .. t)
-		end
-		return table.concat(ch, ", ")
-	end
-	-- The container we actually render the inventory into.
-	local cont = InvContainer
-	if cont then
-		local sz = cont.AbsoluteSize
-		table.insert(lines, "InvContainer: " .. cont:GetFullName():gsub("Players%.[^.]+%.PlayerGui%.", ""))
-		table.insert(lines, ("  <%s>  size=%dx%d"):format(cont.ClassName, math.floor(sz.X), math.floor(sz.Y)))
-		local lay
-		for _, c in ipairs(cont:GetChildren()) do
-			if c:IsA("UIGridLayout") or c:IsA("UIListLayout") then lay = c break end
-		end
-		if lay then
-			local cs = lay:IsA("UIGridLayout") and lay.CellSize or nil
-			table.insert(lines, "  layout=" .. lay.ClassName .. (cs and (" cell=" .. math.floor(cs.X.Offset) .. "x" .. math.floor(cs.Y.Offset)) or ""))
-		else
-			table.insert(lines, "  layout= NONE")
-		end
-		-- first rendered slot's structure (for the rarity plate)
-		for _, s in ipairs(cont:GetChildren()) do
-			if s:IsA("GuiObject") and s:GetAttribute("__MHSpawn") then
-				table.insert(lines, "slot=" .. s.Name .. "<" .. s.ClassName .. ">")
-				table.insert(lines, "  kids:" .. kidsOf(s))
-				local inm = s:FindFirstChild("ItemName")
-				if inm then
-					table.insert(lines, "  ItemName<" .. inm.ClassName .. ">:" .. kidsOf(inm))
-				end
-				local tg = s:FindFirstChild("Tags")
-				if tg then
-					table.insert(lines, "  Tags:" .. kidsOf(tg))
-					-- Full per-badge detail (class + Visible) so we can see if an FX
-					-- badge frame exists in this build and whether it's showing.
-					for _, b in ipairs(tg:GetChildren()) do
-						if b:IsA("GuiObject") then
-							table.insert(lines, ("   • %s(%s) vis=%s kids[%s]"):format(
-								b.Name, b.ClassName, tostring(b.Visible), kidsOf(b)))
-						end
-					end
-				end
-				break
-			end
-		end
-	else
-		table.insert(lines, "InvContainer nil — open Add Items first")
-	end
-	table.insert(lines, "Rarity['Godly']=" .. tostring(Rarity["Godly"]))
-	Diag.Text = table.concat(lines, "\n")
-	Diag.Visible = true
-end)
-
 -- Look like an item DB? (a table whose values carry ItemType / Rarity).
 local function looksLikeItemDB(t)
 	if type(t) ~= "table" then return false end
@@ -4246,29 +3802,6 @@ local function loadLiveCatalog()
 	return nil, "item DB not found (require + getgc both failed) — open inventory once, retry"
 end
 
-makeRowButton(pSpawn, "Load LIVE items", "read the real catalog from memory", "Live", C_GREEN, function()
-	-- Run OFF the click thread: require()-ing a game module can yield forever
-	-- offline (it waits on server data), which would freeze the main thread and
-	-- wedge the executor so nothing injects again. A coroutine just parks instead.
-	task.spawn(function()
-		local lines = {}
-		local function show() Diag.Text = table.concat(lines, "\n"); Diag.Visible = true end
-		local ok, live, why = pcall(loadLiveCatalog)
-		if not ok then
-			lines[#lines + 1] = "live load errored: " .. tostring(live)
-		elseif live then
-			lines[#lines + 1] = "✓ LIVE catalog loaded from memory!"
-			lines[#lines + 1] = countKeys(ItemDB) .. " items, " .. countKeys(PetDB) .. " pets"
-			lines[#lines + 1] = "Add Items now uses REAL game data — search any item."
-		else
-			lines[#lines + 1] = "live load failed: " .. tostring(why)
-			lines[#lines + 1] = "tip: open your inventory in-game once, then tap Live again."
-			local gsd = findGetSync()
-			lines[#lines + 1] = "GetSyncData remote: " .. (gsd and "found" or "not found")
-		end
-		show()
-	end)
-end)
 
 -- Spawn `amount` copies.
 --  · Normal mode: into the trade's Add Items inventory AND the game's own
@@ -4435,193 +3968,11 @@ local function rankMatches(query)
 	for i = 1, math.min(50, #scored) do out[i] = scored[i].it end
 	return out
 end
-
--- Row: item-name box + amount box + Spawn button (spawns the top match).
-local spawnRow = makeRow(pSpawn, "Spawn item", "type a name · pick amount · Spawn")
-local SpawnNameBox = Instance.new("TextBox")
-SpawnNameBox.Size = UDim2.new(0, 132, 0, 30); SpawnNameBox.Position = UDim2.new(1, -222, 0.5, -15)
-SpawnNameBox.BackgroundColor3 = C_BG; SpawnNameBox.Text = ""
-SpawnNameBox.PlaceholderText = "item name…"; SpawnNameBox.PlaceholderColor3 = C_DIM
-SpawnNameBox.TextColor3 = C_TXT; SpawnNameBox.Font = Enum.Font.Gotham; SpawnNameBox.TextSize = 12
-SpawnNameBox.TextXAlignment = Enum.TextXAlignment.Left
-SpawnNameBox.ClearTextOnFocus = false; SpawnNameBox.BorderSizePixel = 0; SpawnNameBox.ClipsDescendants = true
-SpawnNameBox.ZIndex = 4; SpawnNameBox.Parent = spawnRow; corner(SpawnNameBox, 8); pad(SpawnNameBox, 6)
-
-local AmountBox = Instance.new("TextBox")
-AmountBox.Size = UDim2.new(0, 40, 0, 30); AmountBox.Position = UDim2.new(1, -84, 0.5, -15)
-AmountBox.BackgroundColor3 = C_BG; AmountBox.Text = "1"
-AmountBox.PlaceholderText = "x1"; AmountBox.PlaceholderColor3 = C_DIM
-AmountBox.TextColor3 = C_TXT; AmountBox.Font = Enum.Font.GothamMedium; AmountBox.TextSize = 12
-AmountBox.TextXAlignment = Enum.TextXAlignment.Center
-AmountBox.ClearTextOnFocus = false; AmountBox.BorderSizePixel = 0
-AmountBox.ZIndex = 4; AmountBox.Parent = spawnRow; corner(AmountBox, 8)
-
-local SpawnBtn = Instance.new("TextButton")
-SpawnBtn.Size = UDim2.new(0, 36, 0, 30); SpawnBtn.Position = UDim2.new(1, -42, 0.5, -15)
-SpawnBtn.BackgroundColor3 = C_GREEN; SpawnBtn.Text = "＋"; SpawnBtn.TextColor3 = C_TXT
-SpawnBtn.Font = Enum.Font.GothamBold; SpawnBtn.TextSize = 16; SpawnBtn.BorderSizePixel = 0
-SpawnBtn.ZIndex = 4; SpawnBtn.Parent = spawnRow; corner(SpawnBtn, 8)
-
--- Feedback line (what got spawned / not found), coloured by rarity.
-rowOrder = rowOrder + 1
-local SpawnMsg = Instance.new("TextLabel")
-SpawnMsg.Size = UDim2.new(1, 0, 0, 16); SpawnMsg.BackgroundTransparency = 1
-SpawnMsg.Text = ""; SpawnMsg.TextColor3 = C_DIM; SpawnMsg.Font = Enum.Font.GothamMedium
-SpawnMsg.TextSize = 12; SpawnMsg.TextXAlignment = Enum.TextXAlignment.Left
-SpawnMsg.ZIndex = 2; SpawnMsg.LayoutOrder = rowOrder; SpawnMsg.Parent = pSpawn
-
-rowOrder = rowOrder + 1
-local SpawnList = Instance.new("Frame")
-SpawnList.Size = UDim2.new(1, 0, 0, 0); SpawnList.AutomaticSize = Enum.AutomaticSize.Y
-SpawnList.BackgroundColor3 = C_BG; SpawnList.BorderSizePixel = 0; SpawnList.ZIndex = 2
-SpawnList.LayoutOrder = rowOrder; SpawnList.Parent = pSpawn
-corner(SpawnList, 10)
-local sll = Instance.new("UIListLayout")
-sll.Padding = UDim.new(0, 4); sll.SortOrder = Enum.SortOrder.LayoutOrder; sll.Parent = SpawnList
-pad(SpawnList, 6)
-
-local function announceSpawn(it, total)
-	SpawnMsg.Text = ("✓ %s  [%s]  → in trade inventory (x%d) — tap it in Add Items"):format(it.name, tostring(it.rarity or "?"), total)
-	SpawnMsg.TextColor3 = (it.rarity == "Common") and C_TXT or (Rarity[it.rarity] or C_TXT)
-end
-
--- Live results list: each match is a rarity-coloured button; tap = spawn `amount`.
-local function refreshSpawn(query)
-	for _, c in ipairs(SpawnList:GetChildren()) do
-		if c:IsA("TextButton") or c:IsA("TextLabel") then c:Destroy() end
-	end
-	local matches = rankMatches(query)
-	for i, it in ipairs(matches) do
-		local b = Instance.new("TextButton")
-		b.Size = UDim2.new(1, 0, 0, 28); b.BackgroundColor3 = C_BTN
-		b.Text = "  " .. it.name .. "   " .. tostring(it.rarity or "") .. "   ＋"
-		b.TextXAlignment = Enum.TextXAlignment.Left
-		b.TextColor3 = (it.rarity == "Common") and C_TXT or (Rarity[it.rarity] or C_TXT)
-		b.Font = Enum.Font.Gotham; b.TextSize = 12; b.BorderSizePixel = 0
-		b.ZIndex = 3; b.LayoutOrder = i; b.Parent = SpawnList; corner(b, 6)
-		track(b.MouseButton1Click:Connect(function()
-			local total = spawnEntry(it, AmountBox.Text)
-			announceSpawn(it, total)
-		end))
-	end
-	if #matches == 0 then
-		local e = Instance.new("TextLabel")
-		e.Size = UDim2.new(1, 0, 0, 24); e.BackgroundTransparency = 1
-		e.Text = "no matches"; e.TextColor3 = C_DIM; e.Font = Enum.Font.Gotham
-		e.TextSize = 12; e.ZIndex = 3; e.Parent = SpawnList
-	end
-end
-
--- Spawn button: resolve the typed name to its best match and spawn `amount`.
-track(SpawnBtn.MouseButton1Click:Connect(function()
-	local matches = rankMatches(SpawnNameBox.Text)
-	local it = matches[1]
-	if not it then
-		SpawnMsg.Text = "✗ no item matches \"" .. tostring(SpawnNameBox.Text) .. "\""
-		SpawnMsg.TextColor3 = C_RED
-		return
-	end
-	local total = spawnEntry(it, AmountBox.Text)
-	announceSpawn(it, total)
-end))
-
-track(SpawnNameBox:GetPropertyChangedSignal("Text"):Connect(function()
-	refreshSpawn(SpawnNameBox.Text)
-end))
-refreshSpawn("")
-
 -- When the real catalog/inventory finishes loading in the background, rebuild.
 onCatalogLoaded = function()
 	buildSpawnIndex()
-	refreshSpawn(SpawnNameBox.Text)
-	renderInventory()
-	CatLabel.Text = CatalogStatus
+	pcall(renderInventory)
 end
-
---------------------------------------------------------------------------------
--- PAGE 3 — Accept
---------------------------------------------------------------------------------
-local pAccept = pTrade
-makeSection(pAccept, "Accept")
-
-local _, setAccP1 = makeRowToggle(pAccept, "You accepted (P1)", "YOU HAVE ACCEPTED.", false, function(on)
-	setYourAcceptedUI(on)  -- also flips the green Accept button to Cancel
-end)
-local _, setAccP2 = makeRowToggle(pAccept, "Other accepted (P2)", "OTHER PLAYER HAS ACCEPTED.", false, function(on)
-	DebugTradeTable.Player2.Accepted = on
-	showAcceptedBadge("their", on, "OTHER PLAYER HAS ACCEPTED.")
-	if on then completeTradeIfBothAccepted() end
-end)
--- Reset both accept toggles whenever a fresh trade starts.
-table.insert(onNewTrade, function() setAccP1(false); setAccP2(false) end)
-makeRowButton(pAccept, "Terminate", "close & wipe the harness", "Wipe", C_RED, function()
-	terminate(Panel)
-end)
-
---------------------------------------------------------------------------------
--- PAGE 3 — Info
---------------------------------------------------------------------------------
-local pInfo = pTrade
-makeSection(pInfo, "Info")
-local function ok(x) return x and "OK" or "nil" end
-local Status = Instance.new("TextLabel")
-Status.Size = UDim2.new(1, 0, 0, 140); Status.AutomaticSize = Enum.AutomaticSize.Y; Status.BackgroundColor3 = C_ROW
-Status.BorderSizePixel = 0; Status.ZIndex = 2; Status.LayoutOrder = 1; Status.Parent = pInfo
-Status.Text = ("  layout: %s (%s)\n  trade GUIs: %s\n  Req %s · Trade %s · Cont %s\n  Items %s · Inv %s · Pets %s\n\n  offline • no server calls"):format(
-	(TradeGUI and TradeGUI.Name or "NOT FOUND"), IsPhone and "phone" or "pc",
-	TradeCandidatesInfo,
-	ok(RequestFrame), ok(TradeRoot), ok(Container), ok(ItemsPicker), ok(InventoryFrame), ok(PetsFrame))
-Status.TextColor3 = C_DIM; Status.Font = Enum.Font.Gotham; Status.TextSize = 12
-Status.TextWrapped = true; Status.TextYAlignment = Enum.TextYAlignment.Top
-Status.TextXAlignment = Enum.TextXAlignment.Left
-corner(Status, 10)
-
--- Diagnostic: list the real child names of every Offer1/Offer2 frame, so we can
--- see whether "Accepted" / "Username" exist and their exact names.
-local Dump = Instance.new("TextLabel")
-Dump.Size = UDim2.new(1, 0, 0, 10); Dump.AutomaticSize = Enum.AutomaticSize.Y
-Dump.BackgroundColor3 = C_BG; Dump.BorderSizePixel = 0; Dump.ZIndex = 2; Dump.LayoutOrder = 3
-Dump.Text = ""; Dump.TextColor3 = C_DIM; Dump.Font = Enum.Font.Code; Dump.TextSize = 11
-Dump.TextWrapped = true; Dump.TextYAlignment = Enum.TextYAlignment.Top
-Dump.TextXAlignment = Enum.TextXAlignment.Left; Dump.Visible = false; Dump.Parent = pInfo
-pad(Dump, 8); corner(Dump, 8)
-
-makeRowButton(pInfo, "Trade tree", "dump the real node names", "Dump", C_ACCENT, function()
-	local lines = {}
-	local count = 0
-	local function walk(inst, depth)
-		if depth > 3 or count > 140 then return end
-		for _, c in ipairs(inst:GetChildren()) do
-			count = count + 1
-			if count > 140 then table.insert(lines, "  …(truncated)"); return end
-			local extra = ""
-			if c:IsA("TextLabel") or c:IsA("TextButton") then
-				extra = ' "' .. string.sub(tostring(c.Text), 1, 22) .. '"'
-			end
-			table.insert(lines, string.rep(" ", depth * 2) .. c.Name .. " [" .. c.ClassName .. "]" .. extra)
-			walk(c, depth + 1)
-		end
-	end
-	local root = TradeRoot or Container or TradeGUI
-	if root then
-		table.insert(lines, "TRADE " .. root:GetFullName())
-		walk(root, 0)
-	else
-		table.insert(lines, "no trade root resolved")
-	end
-	if RequestFrame then
-		table.insert(lines, "")
-		table.insert(lines, "REQUEST " .. RequestFrame:GetFullName())
-		count = 0
-		walk(RequestFrame, 0)
-	end
-	Dump.Text = table.concat(lines, "\n")
-	Dump.Visible = true
-	Dump.Size = UDim2.new(1, 0, 0, 10)
-end)
-
-selectTab("Trade")
-
 --==============================================================================
 -- 9b. OPTIONAL EXTERNAL UI  —  Rubis library front-end (user requested)
 --==============================================================================
@@ -4635,15 +3986,13 @@ selectTab("Trade")
 -- blue-gray panel. If Rubis fails to build, the console (F9) shows the error and
 -- the built-in panel is restored automatically.
 if true then
-	-- Hide the built-in panel immediately so it never flashes — Rubis is the menu.
-	pcall(function() Panel.Enabled = false end)
 	-- WATCHDOG (separate thread, so a hung HttpGet can't block it): if Rubis hasn't
-	-- reported ready within the timeout, bring the built-in panel back so you are
-	-- never left with a blank screen (e.g. Rubis hanging on Potassium).
+	-- reported ready within the timeout, show an on-screen error so you are never
+	-- left silently with no menu (e.g. Rubis hanging on Potassium).
 	task.spawn(function()
-		task.wait(9)
-		if not Panel:GetAttribute("__RubisReady") then
-			pcall(function() Panel.Enabled = true end)
+		task.wait(12)
+		if not Runtime.RubisReady then
+			__showFatal("Rubis UI did not load in time — check your connection / executor and re-run.")
 		end
 	end)
 	task.spawn(function()
@@ -4658,8 +4007,8 @@ if true then
 			task.wait(1.5)
 		end
 		if type(lib) ~= "table" then
-			warn("[TradeDebug] Rubis UI could not load — showing the built-in panel.")
-			pcall(function() Panel.Enabled = true end)   -- fallback so there IS a menu
+			warn("[TradeDebug] Rubis UI could not load.")
+			__showFatal("Rubis UI could not load (HttpGet/loadstring failed) — re-run the script.")
 			return
 		end
 		local built, builtErr = pcall(function()
@@ -4811,7 +4160,7 @@ if true then
 						if on then completeTradeIfBothAccepted() end
 					end })
 				T:Button({ Title = "Terminate + Wipe", Desc = "close & wipe the harness",
-					Callback = function() terminate(Panel) end })
+					Callback = function() terminate() end })
 			end)
 			if not _ok_0 then warn("[TradeDebug] Rubis tab Trade error: "..tostring(_e_0)) end
 
@@ -5046,16 +4395,13 @@ if true then
 				end
 			end)
 
-			-- Rubis is fully up: mark ready (so the watchdog leaves it alone) and
-			-- retire the built-in panel.
-			pcall(function() Panel:SetAttribute("__RubisReady", true) end)
-			pcall(function() Panel.Enabled = false end)
+			-- Rubis is fully up: mark ready so the watchdog leaves it alone.
+			Runtime.RubisReady = true
 		end)
 		if not built then
-			-- The Rubis build errored (common on some PC executors) — bring the
-			-- built-in panel BACK so there is always a usable menu, and log why.
-			warn("[TradeDebug] Rubis build failed — showing the built-in panel: " .. tostring(builtErr))
-			pcall(function() Panel.Enabled = true end)
+			-- The Rubis build errored — show the error on screen (no fallback panel).
+			warn("[TradeDebug] Rubis build failed: " .. tostring(builtErr))
+			__showFatal("Rubis menu failed to build: " .. tostring(builtErr))
 			return
 		end
 	end)
