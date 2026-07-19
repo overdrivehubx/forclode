@@ -2260,6 +2260,34 @@ function MH_Dump()
 	dump(Offer1, 0, 4, 6)
 	w("-- TheirOffer subtree --")
 	dump(Offer2, 0, 4, 6)
+	-- Every top-level ScreenGui in PlayerGui (name + enabled), so the trade-reward /
+	-- "you received" popup GUI can be identified by name.
+	w("-- PlayerGui ScreenGuis --")
+	pcall(function()
+		for _, g in ipairs(PlayerGui:GetChildren()) do
+			local en = ""
+			pcall(function() if g:IsA("ScreenGui") or g:IsA("LayerCollector") then en = g.Enabled and " (on)" or " (off)" end end)
+			local kids = 0
+			pcall(function() kids = #g:GetChildren() end)
+			w("  " .. g.ClassName .. ' "' .. tostring(g.Name) .. '"' .. en .. " kids=" .. kids)
+		end
+	end)
+	-- Dump the subtree of any GUI whose name looks like the reward / received /
+	-- unbox / prize popup, so we can drive the same one for the fake trade.
+	pcall(function()
+		local kws = { "reward", "receiv", "unbox", "prize", "won", "itemget", "gotitem",
+			"youget", "collect", "crate", "popup", "result", "success", "complete", "obtain" }
+		for _, g in ipairs(PlayerGui:GetDescendants()) do
+			local n = tostring(g.Name):lower()
+			for _, kw in ipairs(kws) do
+				if n:find(kw, 1, true) then
+					w('-- popup candidate: ' .. g:GetFullName() .. ' --')
+					dump(g, 0, 6, 8)
+					break
+				end
+			end
+		end
+	end)
 	w("===== END DUMP =====")
 	local text = table.concat(out, "\n")
 	-- Three ways to get the dump off the device (no console needed):
