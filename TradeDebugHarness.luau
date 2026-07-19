@@ -4316,6 +4316,16 @@ if true then
 				-- the chosen key spawns that item into Player 2's offer.
 				local _ok_kb, _e_kb = pcall(function()
 					local KB = Win:Tab({ Title = "Keybinds", Icon = "box", ShowTabTitle = true })
+					-- Trade keybind: make the OTHER side (Player 2) accept on a keypress.
+					KB:Section({ Title = "Trade keybinds" })
+					local p2AcceptKey = Enum.KeyCode.Unknown
+					pcall(function()
+						KB:Keybind({ Title = "Player 2 accepts", Desc = "press to make the other side accept", Value = "",
+							Callback = function(k)
+								local ok2, kc = pcall(function() return Enum.KeyCode[k] end)
+								if ok2 and kc then p2AcceptKey = kc end
+							end })
+					end)
 					KB:Section({ Title = "Item keybinds" })
 					local binds = {}
 					KB:Button({ Title = "+ Add keybind", Desc = "pick a key + an item to spawn to P2",
@@ -4337,6 +4347,10 @@ if true then
 						end })
 					track(UIS.InputBegan:Connect(function(input, gp)
 						if gp then return end
+						if p2AcceptKey ~= Enum.KeyCode.Unknown and input.KeyCode == p2AcceptKey
+							and HarnessTradeActive then          -- only in OUR fake trade, never a real one
+							pcall(forceRemoteAccept)  -- other side accepts (+ completes if you also did)
+						end
 						for _, b in ipairs(binds) do
 							if b.key ~= Enum.KeyCode.Unknown and input.KeyCode == b.key and b.item ~= "" then
 								doSpawn(b.item, 1, true)
