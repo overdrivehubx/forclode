@@ -2247,7 +2247,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v3 (EquipService API + EquippedChanged)")
+	w("BUILD          = equip-v4 (EquipService.EquipItem, spawn+equip)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -4200,60 +4200,47 @@ function MH_fireReceived(list)
 	showNext()
 end
 
--- Equip a spawned item on YOUR character (client-side, visible to you) via the
--- game's own Inventory.Equip RemoteEvent. GLOBAL.
+-- Equip a spawned item on YOUR character (client-side, visible to you). Fakes
+-- ownership + equipped state, then calls the game's OWN client EquipService
+-- (ReplicatedStorage.ClientServices.EquipService) whose EquipItem rebuilds the
+-- held-weapon display locally. Returns (ok, detail). GLOBAL.
 function MH_equipItem(key)
-	if not key or key == "" then return false end
-	local ok = false
+	if not key or key == "" then return false, "no key" end
+	local ok, detail = false, "no EquipService"
 	pcall(function()
 		local rs = game:GetService("ReplicatedStorage")
 		local mods = rs:FindFirstChild("Modules")
-		local pd = mods and mods:FindFirstChild("ProfileData")
-		pd = pd and require(pd)
-		if type(pd) ~= "table" or type(pd.Weapons) ~= "table" then return end
+		local pdM = mods and mods:FindFirstChild("ProfileData")
+		local okPd, pd = pcall(require, pdM)
 		local d = ItemDB[key]
 		local isGun = d and d.ItemType == "Gun"
-		-- Mark it owned so the display builder accepts it (client-side only).
-		if type(pd.Weapons.Owned) == "table" then
-			pd.Weapons.Owned[key] = pd.Weapons.Owned[key] or 1
-		end
-		-- Equipped is a dict { Knife = key, Gun = key } in this build.
-		local eq = pd.Weapons.Equipped
-		if type(eq) == "table" then
-			if eq.Knife ~= nil or eq.Gun ~= nil or (next(eq) == nil) then
-				if isGun then eq.Gun = key else eq.Knife = key end
-			else
-				eq[isGun and 2 or 1] = key                 -- array fallback
+		-- 1) Fake client-side ownership + equipped state so the game accepts it.
+		if okPd and type(pd) == "table" and type(pd.Weapons) == "table" then
+			if type(pd.Weapons.Owned) == "table" then
+				pd.Weapons.Owned[key] = pd.Weapons.Owned[key] or 1
 			end
-			ok = true
+			local eq = pd.Weapons.Equipped
+			if type(eq) == "table" then
+				if isGun then eq.Gun = key else eq.Knife = key end
+			end
 		end
-		-- Trigger the game's OWN display rebuild. The right signal is the client
-		-- EquipService's EquippedChanged bindable (not ProfileDataChanged). Also try
-		-- the service's own equip method if requiring it exposes one.
+		-- 2) Call the game's own EquipService.EquipItem to build the display.
+		--    Signature unknown (plain vs method) — try both; the wrong one no-ops.
 		local cs = rs:FindFirstChild("ClientServices")
 		local esM = cs and cs:FindFirstChild("EquipService")
 		if esM then
-			pcall(function()
-				local okReq, ES = pcall(require, esM)
-				if okReq and type(ES) == "table" then
-					for _, fn in ipairs({ "Equip", "EquipItem", "SetEquipped", "UpdateDisplay", "Refresh" }) do
-						if type(ES[fn]) == "function" then
-							pcall(function() ES[fn](ES, isGun and "Gun" or "Knife", key) end)
-							pcall(function() ES[fn](ES, key) end)
-							pcall(function() ES[fn](key) end)
-						end
-					end
-				end
-			end)
-			local ec = esM:FindFirstChild("EquippedChanged")
-			if ec and ec:IsA("BindableEvent") then
-				pcall(function() ec:Fire() end)
-				pcall(function() ec:Fire(isGun and "Gun" or "Knife", key) end)
+			local okReq, ES = pcall(require, esM)
+			if okReq and type(ES) == "table" and type(ES.EquipItem) == "function" then
+				local a = pcall(function() ES.EquipItem(key) end)        -- plain fn(key)
+				local b = pcall(function() ES.EquipItem(ES, key) end)     -- method(self,key)
+				ok = true
+				detail = "EquipItem fn=" .. tostring(a) .. " method=" .. tostring(b)
+			else
+				detail = "EquipItem fn missing"
 			end
 		end
-		pcall(function() rs.Remotes.Inventory.ProfileDataChanged:Fire() end)
 	end)
-	return ok
+	return ok, detail
 end
 
 -- Rank catalog matches for a typed name: exact key/name > prefix > contains.
@@ -4528,12 +4515,13 @@ if true then
 				S:Input({ Title = "Amount", Placeholder = "1", Callback = function(v) spAmt = v end })
 				S:Button({ Title = "Spawn item", Desc = "into trade inventory + game inventory",
 					Callback = function() doSpawn(spName, spAmt, false) end })
-				S:Button({ Title = "Equip item", Desc = "equip the searched item on your character (client-side)",
+				S:Button({ Title = "Equip item", Desc = "spawn + equip it on your character (client-side, only you see it)",
 					Callback = function()
 						local it = rankMatches(spName)[1]
 						if not it then notify("Equip", "no match for \""..tostring(spName).."\"") return end
-						local okq = MH_equipItem(it.key)
-						notify("Equip", okq and (it.name.." equipped") or "equip remote not found")
+						doSpawn(spName, 1, false)                 -- add to trade + game inventory
+						local okq, detail = MH_equipItem(it.key)
+						notify("Equip", it.name .. " - " .. tostring(okq and (detail or "equipped") or "no EquipService"))
 					end })
 				S:Button({ Title = "Load LIVE items", Desc = "read the real catalog from memory",
 					Callback = function()
