@@ -2265,6 +2265,29 @@ function MH_Dump()
 		end
 	end)
 	-- EQUIP: where the weapon MODELS live + how an equipped one is attached.
+	-- (0) ProfileData: where the "equipped knife/gun" is stored (client-side equip
+	-- = set this + poke ProfileDataChanged, since the game already displays it).
+	pcall(function()
+		local rs0 = game:GetService("ReplicatedStorage")
+		local mods = rs0:FindFirstChild("Modules")
+		local pd = mods and mods:FindFirstChild("ProfileData")
+		pd = pd and require(pd)
+		if type(pd) == "table" then
+			w("-- ProfileData top-level keys --")
+			for k, v in pairs(pd) do
+				w("  " .. tostring(k) .. " : " .. type(v) .. (type(v) ~= "table" and (" = " .. tostring(v)) or ""))
+			end
+			for _, kk in ipairs({ "Equipped", "Loadout", "Weapons", "Pets", "Character", "Selected" }) do
+				local sub = pd[kk]
+				if type(sub) == "table" then
+					w("-- ProfileData." .. kk .. " keys --")
+					for k, v in pairs(sub) do
+						w("    " .. tostring(k) .. " = " .. (type(v) == "table" and "table" or tostring(v)))
+					end
+				end
+			end
+		end
+	end)
 	-- (1) ReplicatedStorage top level — find the weapon-model storage folder.
 	pcall(function()
 		local rs = game:GetService("ReplicatedStorage")
