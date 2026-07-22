@@ -2299,19 +2299,41 @@ function MH_Dump()
 			end
 		end
 	end)
-	-- WeaponDisplays meshes (how the lobby-equipped weapon is represented).
+	-- MY equipped display's current mesh/texture (DisplayRefKnife/Gun -> Mesh).
 	pcall(function()
-		local wd = workspace:FindFirstChild("WeaponDisplays")
-		if wd then
-			w("-- Workspace.WeaponDisplays --")
-			for _, p in ipairs(wd:GetChildren()) do
+		local char = LocalPlayer.Character
+		for _, rn in ipairs({ "DisplayRefKnife", "DisplayRefGun" }) do
+			local ov = char and char:FindFirstChild(rn)
+			local part = ov and ov:IsA("ObjectValue") and ov.Value
+			local m = part and (part:FindFirstChildWhichIsA("SpecialMesh") or part:FindFirstChildWhichIsA("MeshPart"))
+			if m then
 				local mid, tid = "", ""
-				local m = p:FindFirstChildWhichIsA("SpecialMesh") or p:FindFirstChildWhichIsA("MeshPart")
-				pcall(function() mid = tostring(m and (m.MeshId or m.MeshID)) end)
-				pcall(function() tid = tostring(m and m.TextureId) end)
-				w("  " .. p.ClassName .. ' "' .. tostring(p.Name) .. '"  mesh=' .. mid .. "  tex=" .. tid)
+				pcall(function() mid = tostring(m.MeshId) end)
+				pcall(function() tid = tostring(m.TextureId) end)
+				w("-- MY " .. rn .. ": mesh=" .. mid .. " tex=" .. tid .. " --")
 			end
 		end
+	end)
+	-- Item data fields for the equipped items — is there a Mesh/Texture/Model field?
+	pcall(function()
+		w("-- Item fields (Gingerscope / 2015 / Seer) --")
+		local src = ItemDB
+		for _, k in ipairs({ "Gingerscope", "2015", "Seer", "Chroma" }) do
+			local d = src[k]
+			if type(d) == "table" then
+				local fs = {}
+				for fk, fv in pairs(d) do fs[#fs + 1] = tostring(fk) .. "=" .. tostring(fv) end
+				table.sort(fs)
+				w("  [" .. k .. "] " .. table.concat(fs, ", "))
+			end
+		end
+	end)
+	-- ReplicatedStorage.Backpack.Trade — the weapon Tool models (Handle meshes) that
+	-- the trade uses; likely how to get a model/mesh for any weapon by key.
+	pcall(function()
+		local rs = game:GetService("ReplicatedStorage")
+		local bp = rs:FindFirstChild("Trade") or rs:FindFirstChildOfClass("Backpack")
+		if bp then w("-- ReplicatedStorage Trade backpack --"); dump(bp, 0, 3, 20) end
 	end)
 	-- (1) ReplicatedStorage top level — find the weapon-model storage folder.
 	pcall(function()
