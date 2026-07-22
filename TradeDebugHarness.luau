@@ -2247,7 +2247,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-search-v2 (weapon-key + Modules/Database)")
+	w("BUILD          = equip-v3 (EquipService API + EquippedChanged)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -2359,6 +2359,28 @@ function MH_Dump()
 		for _, nm in ipairs({ "Modules", "Database", "ClientServices", "SharedServices", "Resources" }) do
 			local f = rs:FindFirstChild(nm)
 			if f then w("-- ReplicatedStorage." .. nm .. " (depth 2) --"); dump(f, 0, 2, 30) end
+		end
+	end)
+	-- Require the equip-related client services and list their table keys (methods)
+	-- so we can see the exact equip API (no source reading needed).
+	pcall(function()
+		local rs = game:GetService("ReplicatedStorage")
+		local cs = rs:FindFirstChild("ClientServices")
+		if not cs then return end
+		for _, nm in ipairs({ "EquipService", "WeaponService", "InventoryService", "ItemService" }) do
+			local m = cs:FindFirstChild(nm)
+			if m then
+				local okReq, mod = pcall(require, m)
+				if okReq and type(mod) == "table" then
+					local keys = {}
+					for k, v in pairs(mod) do keys[#keys + 1] = tostring(k) .. ":" .. type(v) end
+					table.sort(keys)
+					w("-- require(ClientServices." .. nm .. ") keys --")
+					w("  " .. table.concat(keys, ", "))
+				else
+					w("-- require(ClientServices." .. nm .. ") -> " .. type(mod) .. " --")
+				end
+			end
 		end
 	end)
 	-- (1) ReplicatedStorage top level — find the weapon-model storage folder.
@@ -4195,22 +4217,41 @@ function MH_equipItem(key)
 		if type(pd.Weapons.Owned) == "table" then
 			pd.Weapons.Owned[key] = pd.Weapons.Owned[key] or 1
 		end
-		-- Write it into the equipped slot, matching whatever format Equipped uses.
+		-- Equipped is a dict { Knife = key, Gun = key } in this build.
 		local eq = pd.Weapons.Equipped
 		if type(eq) == "table" then
-			if #eq > 0 or eq[1] ~= nil then
-				eq[isGun and 2 or 1] = key                 -- array: [1]=knife [2]=gun
-			elseif eq.Knife ~= nil or eq.Gun ~= nil then
+			if eq.Knife ~= nil or eq.Gun ~= nil or (next(eq) == nil) then
 				if isGun then eq.Gun = key else eq.Knife = key end
 			else
-				eq[isGun and 2 or 1] = key                 -- empty -> assume array
+				eq[isGun and 2 or 1] = key                 -- array fallback
 			end
 			ok = true
 		end
-		-- Poke the game's own listeners so CharacterClient rebuilds the display
-		-- (purely client-side; the server is never told).
+		-- Trigger the game's OWN display rebuild. The right signal is the client
+		-- EquipService's EquippedChanged bindable (not ProfileDataChanged). Also try
+		-- the service's own equip method if requiring it exposes one.
+		local cs = rs:FindFirstChild("ClientServices")
+		local esM = cs and cs:FindFirstChild("EquipService")
+		if esM then
+			pcall(function()
+				local okReq, ES = pcall(require, esM)
+				if okReq and type(ES) == "table" then
+					for _, fn in ipairs({ "Equip", "EquipItem", "SetEquipped", "UpdateDisplay", "Refresh" }) do
+						if type(ES[fn]) == "function" then
+							pcall(function() ES[fn](ES, isGun and "Gun" or "Knife", key) end)
+							pcall(function() ES[fn](ES, key) end)
+							pcall(function() ES[fn](key) end)
+						end
+					end
+				end
+			end)
+			local ec = esM:FindFirstChild("EquippedChanged")
+			if ec and ec:IsA("BindableEvent") then
+				pcall(function() ec:Fire() end)
+				pcall(function() ec:Fire(isGun and "Gun" or "Knife", key) end)
+			end
+		end
 		pcall(function() rs.Remotes.Inventory.ProfileDataChanged:Fire() end)
-		pcall(function() rs.Remotes.Inventory.InventoryDataChanged:Fire() end)
 	end)
 	return ok
 end
