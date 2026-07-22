@@ -4002,30 +4002,76 @@ function MH_ApplyConfig(name)
 	return true
 end
 
--- Trigger the GAME's OWN "you received an item" popup (CrossPlatform.NewItem /
--- ItemPopupScript) for each item in `list`, by firing the game's Bindable — so the
--- native popup plays, one item at a time. Signature is a best guess (item key);
--- if the popup doesn't show we'll adjust once ItemPopupScript's trigger is known.
--- GLOBAL (no top-level local).
+-- Show the GAME'S OWN "you received an item" popup (CrossPlatform.NewItem.Medium)
+-- DIRECTLY — set its icon / name / rarity plate / tags and reveal it, one item at
+-- a time, advancing on the native Claim button. Uses the real game GUI (no custom
+-- popup). GLOBAL (no top-level local).
 function MH_fireReceived(list)
-	if type(list) ~= "table" then return end
+	if type(list) ~= "table" or #list == 0 then return end
+	-- Resolve the native popup (prefer the CrossPlatform one, fall back to MainGUI).
+	local pop
 	pcall(function()
-		local rs = game:GetService("ReplicatedStorage")
-		local rem = rs:FindFirstChild("Remotes")
-		local shop = rem and rem:FindFirstChild("Shop")
-		local inv = rem and rem:FindFirstChild("Inventory")
-		local ev = (shop and (shop:FindFirstChild("NewItemReceived") or shop:FindFirstChild("NewItemsClaimed")))
-			or (inv and inv:FindFirstChild("ItemReceived"))
-		if not ev then return end
-		for _, e in ipairs(list) do
-			local key = e.key or e[1]
-			if key and key ~= "DefaultKnife" and key ~= "DefaultGun" then
-				-- BindableEvents fire client-side; a RemoteEvent would need FireServer.
-				if ev:IsA("BindableEvent") then pcall(function() ev:Fire(key) end)
-				elseif ev:IsA("RemoteEvent") then pcall(function() ev:FireServer(key) end) end
-			end
+		local cp = PlayerGui:FindFirstChild("CrossPlatform")
+		pop = cp and cp:FindFirstChild("NewItem")
+		if not (pop and pop:FindFirstChild("Medium")) then
+			local mg = PlayerGui:FindFirstChild("MainGUI")
+			local gn = mg and mg:FindFirstChild("Game")
+			pop = gn and gn:FindFirstChild("NewItem")
 		end
 	end)
+	local medium = pop and pop:FindFirstChild("Medium")
+	if not medium then return end
+	local card  = resolve(medium, "Container.NewItem")   -- item slot: Icon / ItemName / Tags
+	local title = resolve(medium, "Container.Title")
+	local claim = resolve(medium, "Container.Claim")
+	local scale = resolve(medium, "Container.UIScale")
+	-- Resolve the queue of items to reveal.
+	local queue = {}
+	for _, e in ipairs(list) do
+		local key = e.key or e[1]
+		local cat = e.cat or e[3] or "Weapons"
+		local amount = e.amount or e[2] or 1
+		if key and key ~= "DefaultKnife" and key ~= "DefaultGun" then
+			local db = (cat == "Pets") and PetDB or ItemDB
+			queue[#queue + 1] = { key = key, amount = amount, data = db[key] }
+		end
+	end
+	if #queue == 0 then return end
+	if Runtime.ClaimConn then pcall(function() Runtime.ClaimConn:Disconnect() end); Runtime.ClaimConn = nil end
+	local idx = 0
+	local function hide()
+		pcall(function() medium.Visible = false end)
+		if Runtime.ClaimConn then pcall(function() Runtime.ClaimConn:Disconnect() end); Runtime.ClaimConn = nil end
+	end
+	local function showNext()
+		idx = idx + 1
+		local it = queue[idx]
+		if not it then hide(); return end
+		local d = it.data or { ItemName = it.key, Rarity = "Common", Image = "" }
+		if card then
+			-- Paint the native card WITHOUT paintSlot (it would reset the card's position).
+			setProp(card, "Container.Icon", "Image", getImage(d.Image))
+			setProp(card, "ItemName.Label", "Text", d.ItemName or d.Name or it.key)
+			local plate = (d.Rarity == "Common") and RARITY_GREY or (Rarity[d.Rarity] or RARITY_GREY)
+			setProp(card, "ItemName", "BackgroundColor3", plate)
+			setProp(card, "ItemName.BG", "ImageColor3", plate)
+			setProp(card, "Container.Amount", "Text", (it.amount and it.amount > 1) and ("x" .. it.amount) or "")
+			pcall(function() applyTags(card, d) end)
+		end
+		if title and title:IsA("TextLabel") then pcall(function() title.Text = tostring(d.Rarity or "") end) end
+		if scale then pcall(function() scale.Scale = 1 end) end  -- native anim may leave it at 0
+		pcall(function() pop.Visible = true end)
+		pcall(function() medium.Visible = true end)
+	end
+	if claim then
+		pcall(function() claim.Active = true end)
+		-- Advance on the native Claim; defer a frame so the game's own handler (which
+		-- may hide Medium) runs first and our next-item reveal wins.
+		Runtime.ClaimConn = claim.MouseButton1Click:Connect(function()
+			task.spawn(function() task.wait() showNext() end)
+		end)
+	end
+	showNext()
 end
 
 -- Equip a spawned item on YOUR character (client-side, visible to you) via the
