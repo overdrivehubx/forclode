@@ -2328,12 +2328,37 @@ function MH_Dump()
 			end
 		end
 	end)
-	-- ReplicatedStorage.Backpack.Trade — the weapon Tool models (Handle meshes) that
-	-- the trade uses; likely how to get a model/mesh for any weapon by key.
+	-- Find WHERE weapon models/mesh-data live: search ReplicatedStorage (and, if
+	-- reachable, ServerStorage) descendants for instances named like the equipped
+	-- weapon keys, and list the module/service folders that likely hold them.
+	pcall(function()
+		local keys = { "Palms_K_2024", "Gingermint_G", "Gingerscope", "2015", "Seer", "Godly" }
+		local roots = { game:GetService("ReplicatedStorage") }
+		pcall(function() roots[#roots + 1] = game:GetService("ReplicatedFirst") end)
+		w("-- weapon-key instances (by exact key name) --")
+		local found = 0
+		for _, root in ipairs(roots) do
+			for _, d in ipairs(root:GetDescendants()) do
+				local nm = tostring(d.Name)
+				for _, k in ipairs(keys) do
+					if nm == k then
+						w("  " .. d.ClassName .. ' "' .. nm .. '" @ ' .. d:GetFullName())
+						found = found + 1
+						break
+					end
+				end
+				if found > 24 then break end
+			end
+			if found > 24 then break end
+		end
+		if found == 0 then w("  (none — models likely built at runtime / server-side)") end
+	end)
 	pcall(function()
 		local rs = game:GetService("ReplicatedStorage")
-		local bp = rs:FindFirstChild("Trade") or rs:FindFirstChildOfClass("Backpack")
-		if bp then w("-- ReplicatedStorage Trade backpack --"); dump(bp, 0, 3, 20) end
+		for _, nm in ipairs({ "Modules", "Database", "ClientServices", "SharedServices", "Resources" }) do
+			local f = rs:FindFirstChild(nm)
+			if f then w("-- ReplicatedStorage." .. nm .. " (depth 2) --"); dump(f, 0, 2, 30) end
+		end
 	end)
 	-- (1) ReplicatedStorage top level — find the weapon-model storage folder.
 	pcall(function()
