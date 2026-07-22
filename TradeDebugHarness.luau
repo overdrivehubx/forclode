@@ -2247,7 +2247,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v4 (EquipService.EquipItem, spawn+equip)")
+	w("BUILD          = equip-v5 (EquipItem introspect + diag clipboard)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -4203,10 +4203,14 @@ end
 -- Equip a spawned item on YOUR character (client-side, visible to you). Fakes
 -- ownership + equipped state, then calls the game's OWN client EquipService
 -- (ReplicatedStorage.ClientServices.EquipService) whose EquipItem rebuilds the
--- held-weapon display locally. Returns (ok, detail). GLOBAL.
+-- held-weapon display locally. Also introspects EquipItem (numparams, string
+-- constants, per-signature error) so we can nail the exact call. Returns
+-- (ok, detail); detail is a diagnostic string worth copying. GLOBAL.
 function MH_equipItem(key)
 	if not key or key == "" then return false, "no key" end
-	local ok, detail = false, "no EquipService"
+	local ok = false
+	local parts = {}
+	local function add(s) parts[#parts + 1] = tostring(s) end
 	pcall(function()
 		local rs = game:GetService("ReplicatedStorage")
 		local mods = rs:FindFirstChild("Modules")
@@ -4214,6 +4218,7 @@ function MH_equipItem(key)
 		local okPd, pd = pcall(require, pdM)
 		local d = ItemDB[key]
 		local isGun = d and d.ItemType == "Gun"
+		add("key=" .. tostring(key) .. " isGun=" .. tostring(isGun))
 		-- 1) Fake client-side ownership + equipped state so the game accepts it.
 		if okPd and type(pd) == "table" and type(pd.Weapons) == "table" then
 			if type(pd.Weapons.Owned) == "table" then
@@ -4223,24 +4228,52 @@ function MH_equipItem(key)
 			if type(eq) == "table" then
 				if isGun then eq.Gun = key else eq.Knife = key end
 			end
+			add("owned+equipped set")
+		else
+			add("no ProfileData.Weapons")
 		end
-		-- 2) Call the game's own EquipService.EquipItem to build the display.
-		--    Signature unknown (plain vs method) — try both; the wrong one no-ops.
+		-- 2) Reach the game's own EquipService.EquipItem.
 		local cs = rs:FindFirstChild("ClientServices")
 		local esM = cs and cs:FindFirstChild("EquipService")
-		if esM then
-			local okReq, ES = pcall(require, esM)
-			if okReq and type(ES) == "table" and type(ES.EquipItem) == "function" then
-				local a = pcall(function() ES.EquipItem(key) end)        -- plain fn(key)
-				local b = pcall(function() ES.EquipItem(ES, key) end)     -- method(self,key)
+		if not esM then add("no EquipService module"); return end
+		local okReq, ES = pcall(require, esM)
+		if not okReq or type(ES) ~= "table" then add("require failed"); return end
+		local fn = ES.EquipItem
+		if type(fn) ~= "function" then add("EquipItem not a fn"); return end
+		-- Introspect the function so we learn its real shape even if calls fail.
+		pcall(function()
+			local np, va = debug.info(fn, "a")
+			add("numparams=" .. tostring(np) .. " vararg=" .. tostring(va))
+		end)
+		pcall(function()
+			if type(debug.getconstants) == "function" then
+				local cons = debug.getconstants(fn)
+				local ss = {}
+				for _, c in ipairs(cons) do
+					if type(c) == "string" and #c > 0 and #c < 40 then ss[#ss + 1] = c end
+				end
+				add("const{" .. table.concat(ss, ",") .. "}")
+			end
+		end)
+		-- 3) Try the plausible signatures; capture which works / why it fails.
+		local ty = isGun and "Gun" or "Knife"
+		local sigs = {
+			{ "fn(key)", function() return fn(key) end },
+			{ "m(self,key)", function() return fn(ES, key) end },
+			{ "fn(ty,key)", function() return fn(ty, key) end },
+			{ "fn(key,ty)", function() return fn(key, ty) end },
+		}
+		for _, s in ipairs(sigs) do
+			local good, err = pcall(s[2])
+			if good then
 				ok = true
-				detail = "EquipItem fn=" .. tostring(a) .. " method=" .. tostring(b)
+				add(s[1] .. "=OK")
 			else
-				detail = "EquipItem fn missing"
+				add(s[1] .. "=ERR:" .. tostring(err):gsub("^.-:%d+:%s*", ""):sub(1, 50))
 			end
 		end
 	end)
-	return ok, detail
+	return ok, table.concat(parts, " | ")
 end
 
 -- Rank catalog matches for a typed name: exact key/name > prefix > contains.
@@ -4521,7 +4554,8 @@ if true then
 						if not it then notify("Equip", "no match for \""..tostring(spName).."\"") return end
 						doSpawn(spName, 1, false)                 -- add to trade + game inventory
 						local okq, detail = MH_equipItem(it.key)
-						notify("Equip", it.name .. " - " .. tostring(okq and (detail or "equipped") or "no EquipService"))
+						pcall(function() setclipboard("MH EQUIP: " .. tostring(detail)) end)
+						notify("Equip", it.name .. (okq and " ok" or " fail") .. " - diag copied, paste it")
 					end })
 				S:Button({ Title = "Load LIVE items", Desc = "read the real catalog from memory",
 					Callback = function()
