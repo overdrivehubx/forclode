@@ -2247,7 +2247,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v5 (EquipItem introspect + diag clipboard)")
+	w("BUILD          = equip-v6 (EquipService upvalue deep-inspect)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -4200,80 +4200,104 @@ function MH_fireReceived(list)
 	showNext()
 end
 
--- Equip a spawned item on YOUR character (client-side, visible to you). Fakes
--- ownership + equipped state, then calls the game's OWN client EquipService
--- (ReplicatedStorage.ClientServices.EquipService) whose EquipItem rebuilds the
--- held-weapon display locally. Also introspects EquipItem (numparams, string
--- constants, per-signature error) so we can nail the exact call. Returns
--- (ok, detail); detail is a diagnostic string worth copying. GLOBAL.
+-- Deep-inspect the game's client EquipService so we can drive a client-side
+-- equip. Dumps each function's numparams+constants and EquipItem's upvalues
+-- (the DB / GetItemInfo helper / Remotes it closes over) plus CreateEquip
+-- Container (a likely client-only display builder). Returns (ok, detail);
+-- detail is a multi-line diagnostic worth copying. GLOBAL.
 function MH_equipItem(key)
 	if not key or key == "" then return false, "no key" end
-	local ok = false
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
+	-- read up to N upvalues of fn regardless of which debug API exists
+	local function readUpvalues(fn)
+		local out = {}
+		if type(debug.getupvalues) == "function" then
+			local ok, uvs = pcall(debug.getupvalues, fn)
+			if ok and type(uvs) == "table" then
+				for i, v in pairs(uvs) do out[i] = v end
+				return out
+			end
+		end
+		if type(debug.getupvalue) == "function" then
+			for i = 1, 30 do
+				local ok, v = pcall(debug.getupvalue, fn, i)
+				if not ok then break end
+				out[i] = v
+			end
+		end
+		return out
+	end
+	local function describe(v)
+		local t = typeof(v)
+		if t == "Instance" then
+			local s = "?"
+			pcall(function() s = v.ClassName .. "/" .. v.Name end)
+			return "Instance " .. s
+		elseif t == "table" then
+			local ks = {}
+			pcall(function()
+				for k in pairs(v) do
+					if type(k) == "string" then ks[#ks + 1] = k end
+					if #ks >= 14 then break end
+				end
+			end)
+			return "table{" .. table.concat(ks, ",") .. "}"
+		elseif t == "function" then
+			local np = "?"
+			pcall(function() np = tostring((debug.info(v, "a"))) end)
+			return "function/np=" .. np
+		elseif t == "string" then
+			return "string:" .. tostring(v):sub(1, 30)
+		else
+			return t
+		end
+	end
+	local function inspectFn(name, fn)
+		if type(fn) ~= "function" then add("[" .. name .. " = " .. type(fn) .. "]"); return end
+		local np = "?"
+		pcall(function() np = tostring((debug.info(fn, "a"))) end)
+		local ss = {}
+		pcall(function()
+			if type(debug.getconstants) == "function" then
+				for _, c in ipairs(debug.getconstants(fn)) do
+					if type(c) == "string" and #c > 0 and #c < 40 then ss[#ss + 1] = c end
+				end
+			end
+		end)
+		add("[" .. name .. " np=" .. np .. " const{" .. table.concat(ss, ",") .. "}]")
+	end
 	pcall(function()
 		local rs = game:GetService("ReplicatedStorage")
-		local mods = rs:FindFirstChild("Modules")
-		local pdM = mods and mods:FindFirstChild("ProfileData")
-		local okPd, pd = pcall(require, pdM)
-		local d = ItemDB[key]
-		local isGun = d and d.ItemType == "Gun"
-		add("key=" .. tostring(key) .. " isGun=" .. tostring(isGun))
-		-- 1) Fake client-side ownership + equipped state so the game accepts it.
-		if okPd and type(pd) == "table" and type(pd.Weapons) == "table" then
-			if type(pd.Weapons.Owned) == "table" then
-				pd.Weapons.Owned[key] = pd.Weapons.Owned[key] or 1
-			end
-			local eq = pd.Weapons.Equipped
-			if type(eq) == "table" then
-				if isGun then eq.Gun = key else eq.Knife = key end
-			end
-			add("owned+equipped set")
-		else
-			add("no ProfileData.Weapons")
-		end
-		-- 2) Reach the game's own EquipService.EquipItem.
+		add("key=" .. tostring(key))
 		local cs = rs:FindFirstChild("ClientServices")
 		local esM = cs and cs:FindFirstChild("EquipService")
 		if not esM then add("no EquipService module"); return end
 		local okReq, ES = pcall(require, esM)
 		if not okReq or type(ES) ~= "table" then add("require failed"); return end
+		-- 1) shape of every function on the service
+		for _, n in ipairs({ "EquipItem", "UnequipItem", "GetEquipped",
+			"CreateEquipContainer", "BindEquipContainer" }) do
+			inspectFn(n, ES[n])
+		end
+		-- 2) upvalues of EquipItem — reveals the DB / GetItemInfo / Remotes
 		local fn = ES.EquipItem
-		if type(fn) ~= "function" then add("EquipItem not a fn"); return end
-		-- Introspect the function so we learn its real shape even if calls fail.
-		pcall(function()
-			local np, va = debug.info(fn, "a")
-			add("numparams=" .. tostring(np) .. " vararg=" .. tostring(va))
-		end)
-		pcall(function()
-			if type(debug.getconstants) == "function" then
-				local cons = debug.getconstants(fn)
-				local ss = {}
-				for _, c in ipairs(cons) do
-					if type(c) == "string" and #c > 0 and #c < 40 then ss[#ss + 1] = c end
-				end
-				add("const{" .. table.concat(ss, ",") .. "}")
+		if type(fn) == "function" then
+			local uvs = readUpvalues(fn)
+			for i, v in pairs(uvs) do
+				add("EI.uv[" .. tostring(i) .. "]=" .. describe(v))
 			end
-		end)
-		-- 3) Try the plausible signatures; capture which works / why it fails.
-		local ty = isGun and "Gun" or "Knife"
-		local sigs = {
-			{ "fn(key)", function() return fn(key) end },
-			{ "m(self,key)", function() return fn(ES, key) end },
-			{ "fn(ty,key)", function() return fn(ty, key) end },
-			{ "fn(key,ty)", function() return fn(key, ty) end },
-		}
-		for _, s in ipairs(sigs) do
-			local good, err = pcall(s[2])
-			if good then
-				ok = true
-				add(s[1] .. "=OK")
-			else
-				add(s[1] .. "=ERR:" .. tostring(err):gsub("^.-:%d+:%s*", ""):sub(1, 50))
+		end
+		-- 3) upvalues of CreateEquipContainer — likely the local display builder
+		local cf = ES.CreateEquipContainer
+		if type(cf) == "function" then
+			local uvs = readUpvalues(cf)
+			for i, v in pairs(uvs) do
+				add("CEC.uv[" .. tostring(i) .. "]=" .. describe(v))
 			end
 		end
 	end)
-	return ok, table.concat(parts, " | ")
+	return false, table.concat(parts, "\n")
 end
 
 -- Rank catalog matches for a typed name: exact key/name > prefix > contains.
