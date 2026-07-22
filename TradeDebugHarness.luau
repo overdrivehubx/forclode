@@ -2277,14 +2277,39 @@ function MH_Dump()
 			for k, v in pairs(pd) do
 				w("  " .. tostring(k) .. " : " .. type(v) .. (type(v) ~= "table" and (" = " .. tostring(v)) or ""))
 			end
-			for _, kk in ipairs({ "Equipped", "Loadout", "Weapons", "Pets", "Character", "Selected" }) do
+			-- Show Weapons/Pets and, crucially, the CONTENTS of Equipped + a few Owned
+			-- (so we know the exact format to write for a client-side equip).
+			for _, kk in ipairs({ "Weapons", "Pets" }) do
 				local sub = pd[kk]
 				if type(sub) == "table" then
-					w("-- ProfileData." .. kk .. " keys --")
+					w("-- ProfileData." .. kk .. " --")
 					for k, v in pairs(sub) do
-						w("    " .. tostring(k) .. " = " .. (type(v) == "table" and "table" or tostring(v)))
+						if type(v) == "table" then
+							local n, sample = 0, {}
+							for ik, iv in pairs(v) do
+								n = n + 1
+								if #sample < 8 then sample[#sample + 1] = tostring(ik) .. "=" .. tostring(iv) end
+							end
+							w("    " .. tostring(k) .. " (table, " .. n .. "): " .. table.concat(sample, ", "))
+						else
+							w("    " .. tostring(k) .. " = " .. tostring(v))
+						end
 					end
 				end
+			end
+		end
+	end)
+	-- WeaponDisplays meshes (how the lobby-equipped weapon is represented).
+	pcall(function()
+		local wd = workspace:FindFirstChild("WeaponDisplays")
+		if wd then
+			w("-- Workspace.WeaponDisplays --")
+			for _, p in ipairs(wd:GetChildren()) do
+				local mid, tid = "", ""
+				local m = p:FindFirstChildWhichIsA("SpecialMesh") or p:FindFirstChildWhichIsA("MeshPart")
+				pcall(function() mid = tostring(m and (m.MeshId or m.MeshID)) end)
+				pcall(function() tid = tostring(m and m.TextureId) end)
+				w("  " .. p.ClassName .. ' "' .. tostring(p.Name) .. '"  mesh=' .. mid .. "  tex=" .. tid)
 			end
 		end
 	end)
@@ -4112,9 +4137,32 @@ function MH_equipItem(key)
 	local ok = false
 	pcall(function()
 		local rs = game:GetService("ReplicatedStorage")
-		local inv = rs:FindFirstChild("Remotes") and rs.Remotes:FindFirstChild("Inventory")
-		local eq = inv and inv:FindFirstChild("Equip")
-		if eq and eq:IsA("RemoteEvent") then eq:FireServer(key); ok = true end
+		local mods = rs:FindFirstChild("Modules")
+		local pd = mods and mods:FindFirstChild("ProfileData")
+		pd = pd and require(pd)
+		if type(pd) ~= "table" or type(pd.Weapons) ~= "table" then return end
+		local d = ItemDB[key]
+		local isGun = d and d.ItemType == "Gun"
+		-- Mark it owned so the display builder accepts it (client-side only).
+		if type(pd.Weapons.Owned) == "table" then
+			pd.Weapons.Owned[key] = pd.Weapons.Owned[key] or 1
+		end
+		-- Write it into the equipped slot, matching whatever format Equipped uses.
+		local eq = pd.Weapons.Equipped
+		if type(eq) == "table" then
+			if #eq > 0 or eq[1] ~= nil then
+				eq[isGun and 2 or 1] = key                 -- array: [1]=knife [2]=gun
+			elseif eq.Knife ~= nil or eq.Gun ~= nil then
+				if isGun then eq.Gun = key else eq.Knife = key end
+			else
+				eq[isGun and 2 or 1] = key                 -- empty -> assume array
+			end
+			ok = true
+		end
+		-- Poke the game's own listeners so CharacterClient rebuilds the display
+		-- (purely client-side; the server is never told).
+		pcall(function() rs.Remotes.Inventory.ProfileDataChanged:Fire() end)
+		pcall(function() rs.Remotes.Inventory.InventoryDataChanged:Fire() end)
 	end)
 	return ok
 end
