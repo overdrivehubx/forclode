@@ -2264,17 +2264,31 @@ function MH_Dump()
 			w("  " .. g.ClassName .. ' "' .. tostring(g.Name) .. '"' .. en .. " kids=" .. kids)
 		end
 	end)
-	-- Shallow maps of the big GUI containers: the trade-reward "you received" reveal
-	-- is almost certainly a child of one of these under a non-obvious name.
-	for _, nm in ipairs({ "MainGUI", "CrossPlatform", "TradeGUI" }) do
-		local sg = PlayerGui:FindFirstChild(nm)
-		if sg then w("-- " .. nm .. " (depth 2) --"); dump(sg, 0, 2, 16) end
-	end
-	-- The game's Remotes (folders / events / functions) — for equip + trade wiring.
+	-- DEEP dump of the native item-received popup, so we can drive it DIRECTLY
+	-- (set its icon/name and show it) instead of guessing the trigger event.
 	pcall(function()
-		local rs = game:GetService("ReplicatedStorage")
-		local rem = rs:FindFirstChild("Remotes") or rs:FindFirstChild("Remote")
-		if rem then w("-- ReplicatedStorage.Remotes --"); dump(rem, 0, 3, 60) end
+		local cp = PlayerGui:FindFirstChild("CrossPlatform")
+		local np = cp and cp:FindFirstChild("NewItem")
+		if np then w("-- CrossPlatform.NewItem (DEEP) --"); dump(np, 0, 7, 10) end
+	end)
+	pcall(function()
+		local mg = PlayerGui:FindFirstChild("MainGUI")
+		local gn = mg and mg:FindFirstChild("Game")
+		local ni = gn and gn:FindFirstChild("NewItem")
+		if ni then w("-- MainGUI.Game.NewItem (DEEP) --"); dump(ni, 0, 7, 10) end
+	end)
+	-- Character + Backpack: how an equipped weapon appears, for the equip feature.
+	pcall(function()
+		local char = LocalPlayer.Character
+		if char then
+			w("-- Character children --")
+			for _, c in ipairs(char:GetChildren()) do w("  " .. c.ClassName .. ' "' .. tostring(c.Name) .. '"') end
+		end
+		local bp = LocalPlayer:FindFirstChild("Backpack")
+		if bp then
+			w("-- Backpack children --")
+			for _, c in ipairs(bp:GetChildren()) do w("  " .. c.ClassName .. ' "' .. tostring(c.Name) .. '"') end
+		end
 	end)
 	w("-- Actions subtree (Accept button) --")
 	dump(resolve(TradeRoot, "Actions"), 0, 6, 8)
