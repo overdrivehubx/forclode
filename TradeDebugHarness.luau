@@ -2264,25 +2264,17 @@ function MH_Dump()
 			w("  " .. g.ClassName .. ' "' .. tostring(g.Name) .. '"' .. en .. " kids=" .. kids)
 		end
 	end)
-	-- Dump the subtree of any GUI whose name looks like the reward / received popup.
+	-- Shallow maps of the big GUI containers: the trade-reward "you received" reveal
+	-- is almost certainly a child of one of these under a non-obvious name.
+	for _, nm in ipairs({ "MainGUI", "CrossPlatform", "TradeGUI" }) do
+		local sg = PlayerGui:FindFirstChild(nm)
+		if sg then w("-- " .. nm .. " (depth 2) --"); dump(sg, 0, 2, 16) end
+	end
+	-- The game's Remotes (folders / events / functions) — for equip + trade wiring.
 	pcall(function()
-		local kws = { "reward", "receiv", "unbox", "prize", "won", "itemget", "gotitem",
-			"youget", "collect", "crate", "popup", "result", "success", "complete", "obtain",
-			"inventory", "notif", "award", "get" }
-		local seen = {}
-		for _, g in ipairs(PlayerGui:GetDescendants()) do
-			if (g:IsA("ScreenGui") or g:IsA("Frame")) then
-				local n = tostring(g.Name):lower()
-				for _, kw in ipairs(kws) do
-					if n:find(kw, 1, true) and not seen[g] then
-						seen[g] = true
-						w('-- popup candidate: ' .. g:GetFullName() .. ' --')
-						dump(g, 0, 5, 6)
-						break
-					end
-				end
-			end
-		end
+		local rs = game:GetService("ReplicatedStorage")
+		local rem = rs:FindFirstChild("Remotes") or rs:FindFirstChild("Remote")
+		if rem then w("-- ReplicatedStorage.Remotes --"); dump(rem, 0, 3, 60) end
 	end)
 	w("-- Actions subtree (Accept button) --")
 	dump(resolve(TradeRoot, "Actions"), 0, 6, 8)
