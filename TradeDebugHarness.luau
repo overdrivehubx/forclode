@@ -2264,30 +2264,38 @@ function MH_Dump()
 			w("  " .. g.ClassName .. ' "' .. tostring(g.Name) .. '"' .. en .. " kids=" .. kids)
 		end
 	end)
-	-- DEEP dump of the native item-received popup, so we can drive it DIRECTLY
-	-- (set its icon/name and show it) instead of guessing the trigger event.
+	-- EQUIP: where the weapon MODELS live + how an equipped one is attached.
+	-- (1) ReplicatedStorage top level — find the weapon-model storage folder.
 	pcall(function()
-		local cp = PlayerGui:FindFirstChild("CrossPlatform")
-		local np = cp and cp:FindFirstChild("NewItem")
-		if np then w("-- CrossPlatform.NewItem (DEEP) --"); dump(np, 0, 7, 10) end
+		local rs = game:GetService("ReplicatedStorage")
+		w("-- ReplicatedStorage children --")
+		for _, c in ipairs(rs:GetChildren()) do
+			local kids = 0; pcall(function() kids = #c:GetChildren() end)
+			w("  " .. c.ClassName .. ' "' .. tostring(c.Name) .. '" kids=' .. kids)
+		end
+		-- Shallow-dump likely weapon-storage folders so we can find a model by key.
+		for _, nm in ipairs({ "Weapons", "Weapon", "Assets", "Knives", "Guns", "Items", "Skins", "WeaponModels", "Models" }) do
+			local f = rs:FindFirstChild(nm)
+			if f then w("-- ReplicatedStorage." .. nm .. " (children) --"); dump(f, 0, 1, 20) end
+		end
 	end)
-	pcall(function()
-		local mg = PlayerGui:FindFirstChild("MainGUI")
-		local gn = mg and mg:FindFirstChild("Game")
-		local ni = gn and gn:FindFirstChild("NewItem")
-		if ni then w("-- MainGUI.Game.NewItem (DEEP) --"); dump(ni, 0, 7, 10) end
-	end)
-	-- Character + Backpack: how an equipped weapon appears, for the equip feature.
+	-- (2) The currently equipped weapon model (DisplayRefKnife/Gun -> Value) and its
+	-- structure + parent, so we can replicate how the game welds it to the character.
 	pcall(function()
 		local char = LocalPlayer.Character
 		if char then
 			w("-- Character children --")
 			for _, c in ipairs(char:GetChildren()) do w("  " .. c.ClassName .. ' "' .. tostring(c.Name) .. '"') end
-		end
-		local bp = LocalPlayer:FindFirstChild("Backpack")
-		if bp then
-			w("-- Backpack children --")
-			for _, c in ipairs(bp:GetChildren()) do w("  " .. c.ClassName .. ' "' .. tostring(c.Name) .. '"') end
+			for _, rn in ipairs({ "DisplayRefKnife", "DisplayRefGun" }) do
+				local ov = char:FindFirstChild(rn)
+				local mdl = ov and ov:IsA("ObjectValue") and ov.Value
+				if mdl then
+					w("-- " .. rn .. ".Value = " .. mdl:GetFullName() .. " --")
+					dump(mdl, 0, 3, 14)
+				else
+					w("-- " .. rn .. ".Value = <none> --")
+				end
+			end
 		end
 	end)
 	w("-- Actions subtree (Accept button) --")
