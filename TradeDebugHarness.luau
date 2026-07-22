@@ -3489,6 +3489,12 @@ local function completeTradeIfBothAccepted()
 		if processing then revealAncestors(processing); processing.Visible = true end
 		completeToken = completeToken + 1
 		local myToken = completeToken
+		-- Capture what YOU receive (the other side's offer) so we can trigger the
+		-- game's native "you received" popup once the trade closes.
+		local received = {}
+		for _, e in ipairs(DebugTradeTable.Player2.Offer) do
+			received[#received + 1] = { key = e[1], cat = e[3], amount = e[2] }
+		end
 		task.delay(2, function()
 			-- Abort if a new trade started in the meantime.
 			if myToken ~= completeToken then return end
@@ -3505,6 +3511,8 @@ local function completeTradeIfBothAccepted()
 			HarnessTradeActive = false; HarnessRequestArmed = false  -- disarm; re-shown request re-arms it
 			showAcceptedBadge("your", false); showAcceptedBadge("their", false)
 			for _, f in ipairs(onNewTrade) do pcall(f) end
+			-- Fire the game's OWN item-received popup for each item you got.
+			pcall(function() MH_fireReceived(received) end)
 		end)
 	end
 end
@@ -3980,6 +3988,46 @@ function MH_ApplyConfig(name)
 	return true
 end
 
+-- Trigger the GAME's OWN "you received an item" popup (CrossPlatform.NewItem /
+-- ItemPopupScript) for each item in `list`, by firing the game's Bindable — so the
+-- native popup plays, one item at a time. Signature is a best guess (item key);
+-- if the popup doesn't show we'll adjust once ItemPopupScript's trigger is known.
+-- GLOBAL (no top-level local).
+function MH_fireReceived(list)
+	if type(list) ~= "table" then return end
+	pcall(function()
+		local rs = game:GetService("ReplicatedStorage")
+		local rem = rs:FindFirstChild("Remotes")
+		local shop = rem and rem:FindFirstChild("Shop")
+		local inv = rem and rem:FindFirstChild("Inventory")
+		local ev = (shop and (shop:FindFirstChild("NewItemReceived") or shop:FindFirstChild("NewItemsClaimed")))
+			or (inv and inv:FindFirstChild("ItemReceived"))
+		if not ev then return end
+		for _, e in ipairs(list) do
+			local key = e.key or e[1]
+			if key and key ~= "DefaultKnife" and key ~= "DefaultGun" then
+				-- BindableEvents fire client-side; a RemoteEvent would need FireServer.
+				if ev:IsA("BindableEvent") then pcall(function() ev:Fire(key) end)
+				elseif ev:IsA("RemoteEvent") then pcall(function() ev:FireServer(key) end) end
+			end
+		end
+	end)
+end
+
+-- Equip a spawned item on YOUR character (client-side, visible to you) via the
+-- game's own Inventory.Equip RemoteEvent. GLOBAL.
+function MH_equipItem(key)
+	if not key or key == "" then return false end
+	local ok = false
+	pcall(function()
+		local rs = game:GetService("ReplicatedStorage")
+		local inv = rs:FindFirstChild("Remotes") and rs.Remotes:FindFirstChild("Inventory")
+		local eq = inv and inv:FindFirstChild("Equip")
+		if eq and eq:IsA("RemoteEvent") then eq:FireServer(key); ok = true end
+	end)
+	return ok
+end
+
 -- Rank catalog matches for a typed name: exact key/name > prefix > contains.
 -- This is the "scanner" — you type what you want, it figures out the item.
 local function rankMatches(query)
@@ -4252,6 +4300,13 @@ if true then
 				S:Input({ Title = "Amount", Placeholder = "1", Callback = function(v) spAmt = v end })
 				S:Button({ Title = "Spawn item", Desc = "into trade inventory + game inventory",
 					Callback = function() doSpawn(spName, spAmt, false) end })
+				S:Button({ Title = "Equip item", Desc = "equip the searched item on your character (client-side)",
+					Callback = function()
+						local it = rankMatches(spName)[1]
+						if not it then notify("Equip", "no match for \""..tostring(spName).."\"") return end
+						local okq = MH_equipItem(it.key)
+						notify("Equip", okq and (it.name.." equipped") or "equip remote not found")
+					end })
 				S:Button({ Title = "Load LIVE items", Desc = "read the real catalog from memory",
 					Callback = function()
 						task.spawn(function()
@@ -4350,6 +4405,14 @@ if true then
 								if ok2 and kc then p2AcceptKey = kc end
 							end })
 					end)
+					local testPopupKey = Enum.KeyCode.Unknown
+					pcall(function()
+						KB:Keybind({ Title = "Test received popup", Desc = "fire the game item-received popup for the Spawner item", Value = "",
+							Callback = function(k)
+								local ok2, kc = pcall(function() return Enum.KeyCode[k] end)
+								if ok2 and kc then testPopupKey = kc end
+							end })
+					end)
 					KB:Section({ Title = "Item keybinds" })
 					local binds = {}
 					KB:Button({ Title = "+ Add keybind", Desc = "pick a key + an item to spawn to P2",
@@ -4374,6 +4437,10 @@ if true then
 						if p2AcceptKey ~= Enum.KeyCode.Unknown and input.KeyCode == p2AcceptKey
 							and HarnessTradeActive then          -- only in OUR fake trade, never a real one
 							pcall(forceRemoteAccept)  -- other side accepts (+ completes if you also did)
+						end
+						if testPopupKey ~= Enum.KeyCode.Unknown and input.KeyCode == testPopupKey then
+							local it = rankMatches(spName)[1]
+							if it then MH_fireReceived({ { key = it.key, cat = it.cat } }) end
 						end
 						for _, b in ipairs(binds) do
 							if b.key ~= Enum.KeyCode.Unknown and input.KeyCode == b.key and b.item ~= "" then
