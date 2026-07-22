@@ -2252,16 +2252,8 @@ function MH_Dump()
 	w("ItemsPicker    = " .. fn(ItemsPicker))
 	w("Weapons grid   = " .. fn(InventoryFrame))
 	w("Pets grid      = " .. fn(PetsFrame))
-	w("-- Container.Items subtree (picker) --")
-	dump(ItemsPicker or (TradeGUI and resolve(TradeGUI, "Container.Items")), 0, 7, 6)
-	w("-- Actions subtree (Accept button) --")
-	dump(resolve(TradeRoot, "Actions"), 0, 6, 8)
-	w("-- YourOffer subtree --")
-	dump(Offer1, 0, 4, 6)
-	w("-- TheirOffer subtree --")
-	dump(Offer2, 0, 4, 6)
-	-- Every top-level ScreenGui in PlayerGui (name + enabled), so the trade-reward /
-	-- "you received" popup GUI can be identified by name.
+	-- FIRST (so a truncated paste still keeps it): every top-level GUI in PlayerGui
+	-- (name + enabled), so the trade-reward / "you received" popup can be found.
 	w("-- PlayerGui ScreenGuis --")
 	pcall(function()
 		for _, g in ipairs(PlayerGui:GetChildren()) do
@@ -2272,22 +2264,34 @@ function MH_Dump()
 			w("  " .. g.ClassName .. ' "' .. tostring(g.Name) .. '"' .. en .. " kids=" .. kids)
 		end
 	end)
-	-- Dump the subtree of any GUI whose name looks like the reward / received /
-	-- unbox / prize popup, so we can drive the same one for the fake trade.
+	-- Dump the subtree of any GUI whose name looks like the reward / received popup.
 	pcall(function()
 		local kws = { "reward", "receiv", "unbox", "prize", "won", "itemget", "gotitem",
-			"youget", "collect", "crate", "popup", "result", "success", "complete", "obtain" }
+			"youget", "collect", "crate", "popup", "result", "success", "complete", "obtain",
+			"inventory", "notif", "award", "get" }
+		local seen = {}
 		for _, g in ipairs(PlayerGui:GetDescendants()) do
-			local n = tostring(g.Name):lower()
-			for _, kw in ipairs(kws) do
-				if n:find(kw, 1, true) then
-					w('-- popup candidate: ' .. g:GetFullName() .. ' --')
-					dump(g, 0, 6, 8)
-					break
+			if (g:IsA("ScreenGui") or g:IsA("Frame")) then
+				local n = tostring(g.Name):lower()
+				for _, kw in ipairs(kws) do
+					if n:find(kw, 1, true) and not seen[g] then
+						seen[g] = true
+						w('-- popup candidate: ' .. g:GetFullName() .. ' --')
+						dump(g, 0, 5, 6)
+						break
+					end
 				end
 			end
 		end
 	end)
+	w("-- Actions subtree (Accept button) --")
+	dump(resolve(TradeRoot, "Actions"), 0, 6, 8)
+	w("-- Container.Items subtree (picker) --")
+	dump(ItemsPicker or (TradeGUI and resolve(TradeGUI, "Container.Items")), 0, 7, 4)
+	w("-- YourOffer subtree (trimmed) --")
+	dump(Offer1, 0, 3, 2)
+	w("-- TheirOffer subtree (trimmed) --")
+	dump(Offer2, 0, 3, 2)
 	w("===== END DUMP =====")
 	local text = table.concat(out, "\n")
 	-- Three ways to get the dump off the device (no console needed):
