@@ -2247,7 +2247,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v6 (EquipService upvalue deep-inspect)")
+	w("BUILD          = equip-v7 (client-only: set Equipped + fire EquippedChanged)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -4200,104 +4200,75 @@ function MH_fireReceived(list)
 	showNext()
 end
 
--- Deep-inspect the game's client EquipService so we can drive a client-side
--- equip. Dumps each function's numparams+constants and EquipItem's upvalues
--- (the DB / GetItemInfo helper / Remotes it closes over) plus CreateEquip
--- Container (a likely client-only display builder). Returns (ok, detail);
--- detail is a multi-line diagnostic worth copying. GLOBAL.
+-- Equip an item on YOUR character CLIENT-SIDE only. The game's EquipItem does
+-- three things: set ProfileData.Weapons.Equipped[type]=key, fire the client
+-- EquippedChanged signal (local display listens), and FireServer (server-side,
+-- rejects fakes). We do the first two — on the exact profile table the service
+-- closes over (EquipItem upvalue #2) — and SKIP the server call, so it shows
+-- only to us. Returns (ok, detail). GLOBAL.
 function MH_equipItem(key)
 	if not key or key == "" then return false, "no key" end
+	local ok = false
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	-- read up to N upvalues of fn regardless of which debug API exists
-	local function readUpvalues(fn)
-		local out = {}
-		if type(debug.getupvalues) == "function" then
-			local ok, uvs = pcall(debug.getupvalues, fn)
-			if ok and type(uvs) == "table" then
-				for i, v in pairs(uvs) do out[i] = v end
-				return out
-			end
-		end
-		if type(debug.getupvalue) == "function" then
-			for i = 1, 30 do
-				local ok, v = pcall(debug.getupvalue, fn, i)
-				if not ok then break end
-				out[i] = v
-			end
-		end
-		return out
-	end
-	local function describe(v)
-		local t = typeof(v)
-		if t == "Instance" then
-			local s = "?"
-			pcall(function() s = v.ClassName .. "/" .. v.Name end)
-			return "Instance " .. s
-		elseif t == "table" then
-			local ks = {}
-			pcall(function()
-				for k in pairs(v) do
-					if type(k) == "string" then ks[#ks + 1] = k end
-					if #ks >= 14 then break end
-				end
-			end)
-			return "table{" .. table.concat(ks, ",") .. "}"
-		elseif t == "function" then
-			local np = "?"
-			pcall(function() np = tostring((debug.info(v, "a"))) end)
-			return "function/np=" .. np
-		elseif t == "string" then
-			return "string:" .. tostring(v):sub(1, 30)
-		else
-			return t
-		end
-	end
-	local function inspectFn(name, fn)
-		if type(fn) ~= "function" then add("[" .. name .. " = " .. type(fn) .. "]"); return end
-		local np = "?"
-		pcall(function() np = tostring((debug.info(fn, "a"))) end)
-		local ss = {}
-		pcall(function()
-			if type(debug.getconstants) == "function" then
-				for _, c in ipairs(debug.getconstants(fn)) do
-					if type(c) == "string" and #c > 0 and #c < 40 then ss[#ss + 1] = c end
-				end
-			end
-		end)
-		add("[" .. name .. " np=" .. np .. " const{" .. table.concat(ss, ",") .. "}]")
-	end
 	pcall(function()
 		local rs = game:GetService("ReplicatedStorage")
-		add("key=" .. tostring(key))
+		local d = ItemDB[key]
+		local itemType = (d and d.ItemType == "Gun") and "Gun" or "Knife"
+		add("key=" .. tostring(key) .. " type=" .. itemType)
 		local cs = rs:FindFirstChild("ClientServices")
 		local esM = cs and cs:FindFirstChild("EquipService")
-		if not esM then add("no EquipService module"); return end
+		if not esM then add("no EquipService"); return end
 		local okReq, ES = pcall(require, esM)
-		if not okReq or type(ES) ~= "table" then add("require failed"); return end
-		-- 1) shape of every function on the service
-		for _, n in ipairs({ "EquipItem", "UnequipItem", "GetEquipped",
-			"CreateEquipContainer", "BindEquipContainer" }) do
-			inspectFn(n, ES[n])
+		if not okReq or type(ES) ~= "table" then add("require fail"); return end
+		-- Use the SAME profile table the service uses: EquipItem upvalue #2.
+		local pd
+		if type(debug) == "table" and type(debug.getupvalue) == "function"
+			and type(ES.EquipItem) == "function" then
+			pcall(function() pd = debug.getupvalue(ES.EquipItem, 2) end)
 		end
-		-- 2) upvalues of EquipItem — reveals the DB / GetItemInfo / Remotes
-		local fn = ES.EquipItem
-		if type(fn) == "function" then
-			local uvs = readUpvalues(fn)
-			for i, v in pairs(uvs) do
-				add("EI.uv[" .. tostring(i) .. "]=" .. describe(v))
+		if type(pd) ~= "table" or type(pd.Weapons) ~= "table" then
+			local mods = rs:FindFirstChild("Modules")
+			local pdM = mods and mods:FindFirstChild("ProfileData")
+			local okp, p = pcall(require, pdM)
+			if okp then pd = p end
+		end
+		if type(pd) == "table" and type(pd.Weapons) == "table" then
+			if type(pd.Weapons.Owned) == "table" then
+				pd.Weapons.Owned[key] = pd.Weapons.Owned[key] or 1
 			end
-		end
-		-- 3) upvalues of CreateEquipContainer — likely the local display builder
-		local cf = ES.CreateEquipContainer
-		if type(cf) == "function" then
-			local uvs = readUpvalues(cf)
-			for i, v in pairs(uvs) do
-				add("CEC.uv[" .. tostring(i) .. "]=" .. describe(v))
+			if type(pd.Weapons.Equipped) == "table" then
+				pd.Weapons.Equipped[itemType] = key
+				ok = true
+				add("Equipped." .. itemType .. "=" .. tostring(key))
+			else
+				add("no Equipped table")
 			end
+		else
+			add("no ProfileData.Weapons")
 		end
+		-- Fire the client EquippedChanged so the LOCAL display rebuilds (no server).
+		local ec = ES.EquippedChanged
+		if ec ~= nil then
+			local f1 = pcall(function() ec:Fire(itemType, key) end)
+			local f2 = pcall(function() ec:Fire() end)
+			add("firedChanged=" .. tostring(f1 or f2))
+		else
+			add("no EquippedChanged")
+		end
+		-- Compact scan for where 3D weapon models live (for a manual attach path
+		-- if the display isn't rendered client-side in this place).
+		pcall(function()
+			local hits = {}
+			for _, nm in ipairs({ "Knives", "Guns", "Weapons", "WeaponModels",
+				"Assets", "Items", "Gun", "Knife", "Displays" }) do
+				local f = rs:FindFirstChild(nm)
+				if f then hits[#hits + 1] = nm .. "(" .. #f:GetChildren() .. ")" end
+			end
+			if #hits > 0 then add("rsModels:" .. table.concat(hits, ",")) end
+		end)
 	end)
-	return false, table.concat(parts, "\n")
+	return ok, table.concat(parts, " | ")
 end
 
 -- Rank catalog matches for a typed name: exact key/name > prefix > contains.
