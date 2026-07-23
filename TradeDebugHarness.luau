@@ -2247,7 +2247,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v11 (load weapon model from ItemID asset)")
+	w("BUILD          = equip-v12 (ItemID asset load + LoadAsset fallback)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -4327,18 +4327,29 @@ function MH_buildHandleFromInfo(info)
 		end
 	end
 	if assetId then
-		local idStr = "rbxassetid://" .. string.format("%d", math.floor(assetId))
+		local idNum = math.floor(assetId)
+		local idStr = "rbxassetid://" .. string.format("%d", idNum)
+		local pick
+		-- try game:GetObjects first
 		local objs
-		local okG = pcall(function() objs = game:GetObjects(idStr) end)
-		if okG and type(objs) == "table" and objs[1] then
+		if pcall(function() objs = game:GetObjects(idStr) end) and type(objs) == "table" then
 			for _, o in ipairs(objs) do
-				if o:IsA("Model") or o:IsA("Tool") or o:IsA("BasePart") then
-					return o, "asset:" .. string.format("%d", math.floor(assetId))
-				end
+				if o:IsA("Model") or o:IsA("Tool") or o:IsA("BasePart") then pick = o; break end
 			end
-			return objs[1], "asset(raw):" .. string.format("%d", math.floor(assetId))
+			pick = pick or objs[1]
 		end
-		return nil, "asset load failed:" .. string.format("%d", math.floor(assetId))
+		-- fallback: InsertService:LoadAsset
+		if not pick then
+			local cont
+			if pcall(function() cont = game:GetService("InsertService"):LoadAsset(idNum) end) and cont then
+				for _, o in ipairs(cont:GetChildren()) do
+					if o:IsA("Model") or o:IsA("Tool") or o:IsA("BasePart") then pick = o; break end
+				end
+				pick = pick or cont
+			end
+		end
+		if pick then return pick, "asset:" .. string.format("%d", idNum) end
+		return nil, "asset load failed:" .. string.format("%d", idNum)
 	end
 	-- c) MeshId / TextureId strings in the record
 	local meshId, texId, color
@@ -4447,6 +4458,7 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
+	add("v12")   -- freshness marker so a stale-cache test is obvious
 	-- 1) menu equip (data + client signal, no FireServer)
 	pcall(function()
 		local rs = game:GetService("ReplicatedStorage")
