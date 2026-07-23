@@ -2247,7 +2247,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v9 (hand model from game item record)")
+	w("BUILD          = equip-v10 (find item record via DB upvalue search)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -4222,8 +4222,10 @@ function MH_infoDump(info, depth)
 	return "{" .. table.concat(out, " ") .. "}"
 end
 
--- Pull the game's OWN item record for a key via its ItemUtil helper (which is
--- EquipService.EquipItem's upvalue #1). Returns (info, detail). GLOBAL.
+-- Pull the game's OWN item record for a key. The item DATABASE is an upvalue of
+-- the ItemUtil helper functions (ItemUtil = EquipService.EquipItem upvalue #1),
+-- so we search those upvalue tables directly for the key — no need to guess the
+-- getter's (category,name) signature. Returns (info, detail). GLOBAL.
 function MH_getItemInfo(key)
 	local rs = game:GetService("ReplicatedStorage")
 	local cs = rs:FindFirstChild("ClientServices")
@@ -4231,25 +4233,69 @@ function MH_getItemInfo(key)
 	if not esM then return nil, "no ES module" end
 	local okReq, ES = pcall(require, esM)
 	if not okReq or type(ES) ~= "table" then return nil, "ES require fail" end
+	if type(debug) ~= "table" or type(debug.getupvalue) ~= "function" then
+		return nil, "no debug.getupvalue"
+	end
 	local IU
-	if type(debug) == "table" and type(debug.getupvalue) == "function"
-		and type(ES.EquipItem) == "function" then
+	if type(ES.EquipItem) == "function" then
 		pcall(function() IU = debug.getupvalue(ES.EquipItem, 1) end)
 	end
 	if type(IU) ~= "table" then return nil, "no ItemUtil" end
-	local getters = {}
-	if type(IU.GetItemInfo) == "function" then getters[#getters + 1] = IU.GetItemInfo end
-	if type(IU.FindItemInfo) == "function" then getters[#getters + 1] = IU.FindItemInfo end
-	for _, g in ipairs(getters) do
-		for _, call in ipairs({
-			function() return g(key) end,
-			function() return g(IU, key) end,
-		}) do
-			local ok, res = pcall(call)
-			if ok and type(res) == "table" then return res, "ok" end
+	local wantLow = tostring(key):lower()
+	local function looksLikeItem(v)
+		return type(v) == "table" and (v.ItemType ~= nil or v.Rarity ~= nil
+			or v.Value ~= nil or v.Chroma ~= nil or v.Name ~= nil)
+	end
+	-- collect every key-matching sub-table across the DB (bounded depth)
+	local best, any, where
+	local function walk(t, depth, seen, tag)
+		if seen[t] then return end
+		seen[t] = true
+		local ok = pcall(function()
+			for k, v in pairs(t) do
+				if type(v) == "table" then
+					if type(k) == "string" and k:lower() == wantLow then
+						any = any or v; where = where or tag
+						if looksLikeItem(v) and not best then best = v; where = tag end
+					end
+					if depth < 3 and not best then walk(v, depth + 1, seen, tag) end
+				end
+			end
+		end)
+		return ok
+	end
+	-- 1) DBs closed over by the util functions
+	for _, fname in ipairs({ "GetItemInfo", "FindItemInfo", "GetItemImage",
+		"ItemExists", "GetDisplayName", "GetRarityColor" }) do
+		local f = IU[fname]
+		if type(f) == "function" then
+			for i = 1, 20 do
+				local okv, uv = pcall(debug.getupvalue, f, i)
+				if not okv then break end
+				if type(uv) == "table" then
+					walk(uv, 0, {}, fname .. "#" .. i)
+					if best then return best, "db:" .. where end
+				end
+			end
 		end
 	end
-	return nil, "getter gave no table"
+	if best then return best, "db:" .. tostring(where) end
+	if any then return any, "any:" .. tostring(where) end
+	-- 2) last resort: try calling the getters a few plausible ways
+	for _, fname in ipairs({ "GetItemInfo", "FindItemInfo" }) do
+		local g = IU[fname]
+		if type(g) == "function" then
+			local tries = { { key }, { IU, key } }
+			for _, c in ipairs({ "Gun", "Guns", "Knife", "Knives", "Weapon", "Weapons" }) do
+				tries[#tries + 1] = { c, key }; tries[#tries + 1] = { key, c }
+			end
+			for _, a in ipairs(tries) do
+				local ok, res = pcall(function() return g(table.unpack(a)) end)
+				if ok and type(res) == "table" then return res, "call:" .. fname end
+			end
+		end
+	end
+	return nil, "key not in any DB upvalue"
 end
 
 -- Build a hand-holdable Instance from an item record: a renderable Instance in
