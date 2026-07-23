@@ -2247,7 +2247,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v8 (attach real weapon model to hand)")
+	w("BUILD          = equip-v9 (hand model from game item record)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -4200,45 +4200,115 @@ function MH_fireReceived(list)
 	showNext()
 end
 
--- Find a client-accessible weapon Tool/Model/MeshPart matching an item and clone
--- it onto YOUR character so it physically shows in your hand (client-side only).
--- Searches everywhere the client can reach. Returns (ok, detail). GLOBAL.
-function MH_equipVisual(key, dispName)
-	local Players = game:GetService("Players")
-	local plr = Players.LocalPlayer
-	local char = plr and plr.Character
-	if not char then return false, "no character" end
-	local wantKey = tostring(key):lower()
-	local wantName = dispName and tostring(dispName):lower() or nil
-	-- 1) Locate a matching source instance.
-	local found
-	local roots = { game:GetService("ReplicatedStorage") }
-	local rf = game:GetService("ReplicatedFirst"); if rf then roots[#roots + 1] = rf end
-	local wd = workspace:FindFirstChild("WeaponDisplays"); if wd then roots[#roots + 1] = wd end
-	for _, root in ipairs(roots) do
-		local okD, ds = pcall(function() return root:GetDescendants() end)
-		if okD then
-			for _, inst in ipairs(ds) do
-				local cls = inst.ClassName
-				if cls == "Tool" or cls == "Model" or cls == "MeshPart" or cls == "Part"
-					or cls == "UnionOperation" then
-					local n = inst.Name:lower()
-					if n == wantKey or (wantName and n == wantName) then
-						-- must actually hold renderable geometry
-						if inst:IsA("BasePart") or inst.PrimaryPart
-							or inst:FindFirstChildWhichIsA("BasePart", true) then
-							found = inst; break
-						end
-					end
-				end
+-- Compact structural dump of a table (2 levels), for diagnosing item records.
+-- GLOBAL.
+function MH_infoDump(info, depth)
+	depth = depth or 0
+	if type(info) ~= "table" then return tostring(info) end
+	local out, n = {}, 0
+	for k, v in pairs(info) do
+		n = n + 1
+		if n > 24 then out[#out + 1] = "..."; break end
+		local t = typeof(v)
+		local extra = ""
+		if t == "Instance" then pcall(function() extra = v.ClassName .. "/" .. v.Name end)
+		elseif t == "string" then extra = tostring(v):sub(1, 28)
+		elseif t == "number" or t == "boolean" then extra = tostring(v)
+		elseif t == "Color3" then extra = "color"
+		elseif t == "table" and depth < 1 then extra = MH_infoDump(v, depth + 1)
+		elseif t == "table" then extra = "{..}" end
+		out[#out + 1] = tostring(k) .. "=" .. t .. (extra ~= "" and "(" .. extra .. ")" or "")
+	end
+	return "{" .. table.concat(out, " ") .. "}"
+end
+
+-- Pull the game's OWN item record for a key via its ItemUtil helper (which is
+-- EquipService.EquipItem's upvalue #1). Returns (info, detail). GLOBAL.
+function MH_getItemInfo(key)
+	local rs = game:GetService("ReplicatedStorage")
+	local cs = rs:FindFirstChild("ClientServices")
+	local esM = cs and cs:FindFirstChild("EquipService")
+	if not esM then return nil, "no ES module" end
+	local okReq, ES = pcall(require, esM)
+	if not okReq or type(ES) ~= "table" then return nil, "ES require fail" end
+	local IU
+	if type(debug) == "table" and type(debug.getupvalue) == "function"
+		and type(ES.EquipItem) == "function" then
+		pcall(function() IU = debug.getupvalue(ES.EquipItem, 1) end)
+	end
+	if type(IU) ~= "table" then return nil, "no ItemUtil" end
+	local getters = {}
+	if type(IU.GetItemInfo) == "function" then getters[#getters + 1] = IU.GetItemInfo end
+	if type(IU.FindItemInfo) == "function" then getters[#getters + 1] = IU.FindItemInfo end
+	for _, g in ipairs(getters) do
+		for _, call in ipairs({
+			function() return g(key) end,
+			function() return g(IU, key) end,
+		}) do
+			local ok, res = pcall(call)
+			if ok and type(res) == "table" then return res, "ok" end
+		end
+	end
+	return nil, "getter gave no table"
+end
+
+-- Build a hand-holdable Instance from an item record: a renderable Instance in
+-- the record, else a Part+SpecialMesh from its MeshId/TextureId. Returns
+-- (clone, detail). GLOBAL.
+function MH_buildHandleFromInfo(info)
+	if type(info) ~= "table" then return nil, "no info" end
+	-- a) any renderable Instance inside the record (2 levels)
+	local function findInst(t, depth)
+		for _, v in pairs(t) do
+			if typeof(v) == "Instance" then
+				if v:IsA("Model") or v:IsA("Tool") or v:IsA("BasePart") then return v end
+			elseif type(v) == "table" and depth < 2 then
+				local r = findInst(v, depth + 1)
+				if r then return r end
 			end
 		end
-		if found then break end
+		return nil
 	end
-	if not found then return false, "no client model for '" .. tostring(key) .. "'" end
-	-- 2) Clone, neutralise scripts/physics, attach.
+	local inst = findInst(info, 0)
+	if inst then return inst:Clone(), "instance:" .. inst.ClassName .. "/" .. inst.Name end
+	-- b) MeshId / TextureId strings in the record
+	local meshId, texId, color
+	local function scan(t, depth)
+		for k, v in pairs(t) do
+			local lk = tostring(k):lower()
+			if type(v) == "string" then
+				local looksAsset = v:find("rbxasset") ~= nil or v:match("^%d+$") ~= nil
+				if looksAsset and lk:find("mesh") then meshId = meshId or v end
+				if looksAsset and (lk:find("tex") or lk:find("decal")) then texId = texId or v end
+			elseif typeof(v) == "Color3" and lk:find("col") then color = color or v
+			elseif type(v) == "table" and depth < 2 then scan(v, depth + 1) end
+		end
+	end
+	scan(info, 0)
+	if meshId then
+		if meshId:match("^%d+$") then meshId = "rbxassetid://" .. meshId end
+		if texId and texId:match("^%d+$") then texId = "rbxassetid://" .. texId end
+		local part = Instance.new("Part")
+		part.Size = Vector3.new(1, 1, 1)
+		local m = Instance.new("SpecialMesh")
+		m.MeshType = Enum.MeshType.FileMesh
+		m.MeshId = meshId
+		if texId then m.TextureId = texId end
+		m.Parent = part
+		if color then pcall(function() part.Color = color end) end
+		return part, "mesh:" .. meshId
+	end
+	return nil, "no model/mesh in record"
+end
+
+-- Neutralise a clone (scripts off, non-colliding, massless) and attach it to
+-- YOUR character's hand (Tool auto-equips; else welds to the right hand). Client
+-- side only. Returns (ok, detail). GLOBAL.
+function MH_attachToHand(clone)
+	local plr = game:GetService("Players").LocalPlayer
+	local char = plr and plr.Character
+	if not char then if clone then clone:Destroy() end return false, "no character" end
 	local old = char:FindFirstChild("__MHequip"); if old then old:Destroy() end
-	local clone = found:Clone()
 	clone.Name = "__MHequip"
 	for _, s in ipairs(clone:GetDescendants()) do
 		if s:IsA("BaseScript") then pcall(function() s.Disabled = true end)
@@ -4250,37 +4320,65 @@ function MH_equipVisual(key, dispName)
 		pcall(function() clone.CanCollide = false; clone.Massless = true; clone.Anchored = false end)
 	end
 	if clone:IsA("Tool") then
-		-- Humanoid auto-equips a Tool parented to the character (grips via Handle).
 		if not clone:FindFirstChild("Handle") then pcall(function() clone.RequiresHandle = false end) end
 		clone.Parent = char
-		return true, "tool in hand: " .. found.Name
+		return true, "tool in hand"
 	end
-	-- Model / part: weld to the right hand.
 	local hand = char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm")
 	if not hand then clone:Destroy(); return false, "no right hand" end
-	local prim = (clone.IsA and clone:IsA("BasePart") and clone)
-		or clone.PrimaryPart or clone:FindFirstChild("Handle")
-		or clone:FindFirstChildWhichIsA("BasePart", true)
+	local prim = (clone:IsA("BasePart") and clone) or clone.PrimaryPart
+		or clone:FindFirstChild("Handle") or clone:FindFirstChildWhichIsA("BasePart", true)
 	if not prim then clone:Destroy(); return false, "no primary part" end
+	if clone:IsA("Model") and not clone.PrimaryPart then pcall(function() clone.PrimaryPart = prim end) end
 	local w = Instance.new("Weld")
 	w.Part0 = hand
 	w.Part1 = prim
-	w.C0 = CFrame.new(0, -0.6, -0.4)
+	w.C0 = CFrame.new(0, -1, 0)
 	w.Parent = prim
 	clone.Parent = char
-	return true, "model welded: " .. found.Name
+	return true, "welded to hand"
 end
 
--- Equip an item on YOUR character CLIENT-SIDE only. Sets ProfileData.Weapons.
--- Equipped[type]=key on the exact table the service uses + fires the client
--- EquippedChanged (menu updates), SKIPPING the server FireServer. Then physically
--- attaches a real weapon model to your hand via MH_equipVisual so it's actually
--- visible. Returns (ok, detail). GLOBAL.
+-- Fallback: find a weapon Instance NAMED by the item key/name anywhere the client
+-- can reach and attach it. Returns (ok, detail). GLOBAL.
+function MH_equipVisual(key, dispName)
+	local wantKey = tostring(key):lower()
+	local wantName = dispName and tostring(dispName):lower() or nil
+	local found
+	local roots = { game:GetService("ReplicatedStorage") }
+	local rf = game:GetService("ReplicatedFirst"); if rf then roots[#roots + 1] = rf end
+	local wd = workspace:FindFirstChild("WeaponDisplays"); if wd then roots[#roots + 1] = wd end
+	for _, root in ipairs(roots) do
+		local okD, ds = pcall(function() return root:GetDescendants() end)
+		if okD then
+			for _, inst in ipairs(ds) do
+				if inst:IsA("Tool") or inst:IsA("Model") or inst:IsA("BasePart") then
+					local n = inst.Name:lower()
+					if n == wantKey or (wantName and n == wantName) then
+						if inst:IsA("BasePart") or inst.PrimaryPart
+							or inst:FindFirstChildWhichIsA("BasePart", true) then
+							found = inst; break
+						end
+					end
+				end
+			end
+		end
+		if found then break end
+	end
+	if not found then return false, "no client model for '" .. tostring(key) .. "'" end
+	return MH_attachToHand(found:Clone())
+end
+
+-- Equip an item on YOUR character CLIENT-SIDE only. (1) menu equip: set
+-- ProfileData.Weapons.Equipped + fire EquippedChanged (no server). (2) hand:
+-- pull the game's item record and build a real weapon model into your hand;
+-- fall back to a name-search. Dumps the record so its mesh field is visible if
+-- the build fails. Returns (ok, detail). GLOBAL.
 function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
-	local ok = false
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
+	-- 1) menu equip (data + client signal, no FireServer)
 	pcall(function()
 		local rs = game:GetService("ReplicatedStorage")
 		local d = ItemDB[key]
@@ -4291,7 +4389,6 @@ function MH_equipItem(key, dispName)
 		local ES
 		if esM then local r; r, ES = pcall(require, esM); if not r then ES = nil end end
 		if type(ES) == "table" then
-			-- Same profile table the service uses: EquipItem upvalue #2.
 			local pd
 			if type(debug) == "table" and type(debug.getupvalue) == "function"
 				and type(ES.EquipItem) == "function" then
@@ -4316,11 +4413,25 @@ function MH_equipItem(key, dispName)
 			pcall(function() ES.EquippedChanged:Fire() end)
 		end
 	end)
-	-- Physically attach the model to the hand (the part the user actually sees).
-	local vok, vdetail = MH_equipVisual(key, dispName)
-	ok = vok
-	add(tostring(vdetail))
-	return ok, table.concat(parts, " | ")
+	-- 2) build the hand model from the game's own item record
+	local info, gd = MH_getItemInfo(key)
+	if info then
+		add("info=" .. MH_infoDump(info))
+		local handle, hd = MH_buildHandleFromInfo(info)
+		if handle then
+			local aok, ad = MH_attachToHand(handle)
+			add("build " .. tostring(hd) .. " -> " .. tostring(ad))
+			if aok then return true, table.concat(parts, " | ") end
+		else
+			add("build:" .. tostring(hd))
+		end
+	else
+		add("getInfo:" .. tostring(gd))
+	end
+	-- 3) fallback: attach an instance named by the key
+	local vok, vd = MH_equipVisual(key, dispName)
+	add("nameSearch:" .. tostring(vd))
+	return vok, table.concat(parts, " | ")
 end
 
 -- Rank catalog matches for a typed name: exact key/name > prefix > contains.
