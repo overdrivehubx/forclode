@@ -2247,7 +2247,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v13 (search model by ItemID/name in Workspace too)")
+	w("BUILD          = equip-v14 (3 asset-load methods + class report)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -4329,26 +4329,52 @@ function MH_buildHandleFromInfo(info)
 	if assetId then
 		local idNum = math.floor(assetId)
 		local idStr = "rbxassetid://" .. string.format("%d", idNum)
-		local pick
-		-- try game:GetObjects first
+		-- Load the asset client-side, trying every method the executor may allow.
+		-- Everything loaded is gathered under one Folder for uniform handling.
+		local loaded, how
 		local objs
-		if pcall(function() objs = game:GetObjects(idStr) end) and type(objs) == "table" then
-			for _, o in ipairs(objs) do
-				if o:IsA("Model") or o:IsA("Tool") or o:IsA("BasePart") then pick = o; break end
-			end
-			pick = pick or objs[1]
+		if pcall(function() objs = game:GetObjects(idStr) end) and type(objs) == "table" and objs[1] then
+			local f = Instance.new("Folder")
+			for _, o in ipairs(objs) do pcall(function() o.Parent = f end) end
+			loaded, how = f, "GetObjects"
 		end
-		-- fallback: InsertService:LoadAsset
-		if not pick then
+		if not loaded then
 			local cont
 			if pcall(function() cont = game:GetService("InsertService"):LoadAsset(idNum) end) and cont then
-				for _, o in ipairs(cont:GetChildren()) do
-					if o:IsA("Model") or o:IsA("Tool") or o:IsA("BasePart") then pick = o; break end
-				end
-				pick = pick or cont
+				loaded, how = cont, "LoadAsset"
 			end
 		end
-		if pick then return pick, "asset:" .. string.format("%d", idNum) end
+		if not loaded then
+			local cont
+			if pcall(function() cont = game:GetService("InsertService"):LoadAssetVersion(idNum) end) and cont then
+				loaded, how = cont, "LoadAssetVersion"
+			end
+		end
+		if loaded then
+			-- pick the best renderable inside: Tool/Model first, else any BasePart
+			local pick
+			if loaded:IsA("Tool") or loaded:IsA("Model") or loaded:IsA("BasePart") then pick = loaded end
+			if not pick then
+				for _, o in ipairs(loaded:GetDescendants()) do
+					if o:IsA("Tool") or o:IsA("Model") then pick = o; break end
+				end
+			end
+			if not pick then
+				for _, o in ipairs(loaded:GetDescendants()) do
+					if o:IsA("BasePart") then pick = o; break end
+				end
+			end
+			if pick then
+				return pick, how .. ":" .. string.format("%d", idNum) .. "[" .. pick.ClassName .. "]"
+			end
+			-- nothing renderable: report what we actually got, for diagnosis
+			local kinds = {}
+			for _, o in ipairs(loaded:GetDescendants()) do
+				kinds[#kinds + 1] = o.ClassName
+				if #kinds >= 8 then break end
+			end
+			return nil, how .. ":no part{" .. table.concat(kinds, ",") .. "}"
+		end
 		return nil, "asset load failed:" .. string.format("%d", idNum)
 	end
 	-- c) MeshId / TextureId strings in the record
@@ -4460,7 +4486,7 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v13")   -- freshness marker so a stale-cache test is obvious
+	add("v14")   -- freshness marker so a stale-cache test is obvious
 	-- 1) menu equip (data + client signal, no FireServer)
 	pcall(function()
 		local rs = game:GetService("ReplicatedStorage")
