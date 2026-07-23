@@ -2270,7 +2270,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v15 (user skin map + menu scale + short toast)")
+	w("BUILD          = equip-v16 (try ItemID as mesh, renders on any account)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -4401,7 +4401,24 @@ function MH_buildHandleFromInfo(info)
 		end
 	end
 	if assetId then
-		return MH_loadAssetModel(assetId)
+		-- b1) try it as a MODEL (GetObjects/LoadAsset) — ownership-gated
+		local m, md = MH_loadAssetModel(assetId)
+		if m then return m, md end
+		-- b2) model load blocked → try it as a MESH. Mesh & texture assets render
+		-- on ANY account (not ownership-gated like models), which is how a spawner
+		-- can work "on all accounts". Texture comes from the item's Image asset id.
+		local idNum = math.floor(assetId)
+		local part = Instance.new("Part")
+		part.Size = Vector3.new(1, 1, 1)
+		part.CanCollide = false
+		local mesh = Instance.new("SpecialMesh")
+		mesh.MeshType = Enum.MeshType.FileMesh
+		mesh.MeshId = "rbxassetid://" .. string.format("%d", idNum)
+		local img = tostring(info.Image or "")
+		local texNum = img:match("[?&]id=(%d+)") or img:match("(%d%d%d%d%d+)")
+		if texNum then mesh.TextureId = "rbxassetid://" .. texNum end
+		mesh.Parent = part
+		return part, "meshTry:" .. string.format("%d", idNum) .. (texNum and ("+tex" .. texNum) or "")
 	end
 	-- c) MeshId / TextureId strings in the record
 	local meshId, texId, color
@@ -4512,7 +4529,7 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v15")   -- freshness marker so a stale-cache test is obvious
+	add("v16")   -- freshness marker so a stale-cache test is obvious
 	-- 1) menu equip (data + client signal, no FireServer)
 	pcall(function()
 		local rs = game:GetService("ReplicatedStorage")
