@@ -2247,7 +2247,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v10 (find item record via DB upvalue search)")
+	w("BUILD          = equip-v11 (load weapon model from ItemID asset)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -4317,7 +4317,30 @@ function MH_buildHandleFromInfo(info)
 	end
 	local inst = findInst(info, 0)
 	if inst then return inst:Clone(), "instance:" .. inst.ClassName .. "/" .. inst.Name end
-	-- b) MeshId / TextureId strings in the record
+	-- b) a Roblox asset id (the item's own model) -> load it client-side
+	local assetId
+	for k, v in pairs(info) do
+		local lk = tostring(k):lower()
+		if type(v) == "number" and v > 100000
+			and (lk == "itemid" or lk == "assetid" or lk == "modelid" or lk == "id") then
+			assetId = assetId or v
+		end
+	end
+	if assetId then
+		local idStr = "rbxassetid://" .. string.format("%d", math.floor(assetId))
+		local objs
+		local okG = pcall(function() objs = game:GetObjects(idStr) end)
+		if okG and type(objs) == "table" and objs[1] then
+			for _, o in ipairs(objs) do
+				if o:IsA("Model") or o:IsA("Tool") or o:IsA("BasePart") then
+					return o, "asset:" .. string.format("%d", math.floor(assetId))
+				end
+			end
+			return objs[1], "asset(raw):" .. string.format("%d", math.floor(assetId))
+		end
+		return nil, "asset load failed:" .. string.format("%d", math.floor(assetId))
+	end
+	-- c) MeshId / TextureId strings in the record
 	local meshId, texId, color
 	local function scan(t, depth)
 		for k, v in pairs(t) do
@@ -4757,9 +4780,12 @@ if true then
 						local it = rankMatches(spName)[1]
 						if not it then notify("Equip", "no match for \""..tostring(spName).."\"") return end
 						doSpawn(spName, 1, false)                 -- add to trade + game inventory
-						local okq, detail = MH_equipItem(it.key, it.name)
-						pcall(function() setclipboard("MH EQUIP: " .. tostring(detail)) end)
-						notify("Equip", it.name .. " - " .. tostring(detail))
+						-- task.spawn: MH_equipItem may yield (game:GetObjects loads the asset)
+						task.spawn(function()
+							local okq, detail = MH_equipItem(it.key, it.name)
+							pcall(function() setclipboard("MH EQUIP: " .. tostring(detail)) end)
+							notify("Equip", it.name .. " - " .. tostring(detail))
+						end)
 					end })
 				S:Button({ Title = "Load LIVE items", Desc = "read the real catalog from memory",
 					Callback = function()
