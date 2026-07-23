@@ -2247,7 +2247,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v12 (ItemID asset load + LoadAsset fallback)")
+	w("BUILD          = equip-v13 (search model by ItemID/name in Workspace too)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -4419,22 +4419,24 @@ function MH_attachToHand(clone)
 	return true, "welded to hand"
 end
 
--- Fallback: find a weapon Instance NAMED by the item key/name anywhere the client
--- can reach and attach it. Returns (ok, detail). GLOBAL.
-function MH_equipVisual(key, dispName)
-	local wantKey = tostring(key):lower()
-	local wantName = dispName and tostring(dispName):lower() or nil
+-- Fallback: find a weapon Instance whose name matches ANY of the given candidate
+-- names (item key, display name, ItemName, numeric ItemID) anywhere the client
+-- can reach — including the whole Workspace in case a round is live — and attach
+-- it. Returns (ok, detail). GLOBAL.
+function MH_equipVisual(names)
+	local want = {}
+	for _, n in ipairs(names) do
+		if n ~= nil and tostring(n) ~= "" then want[tostring(n):lower()] = true end
+	end
 	local found
-	local roots = { game:GetService("ReplicatedStorage") }
+	local roots = { game:GetService("ReplicatedStorage"), workspace }
 	local rf = game:GetService("ReplicatedFirst"); if rf then roots[#roots + 1] = rf end
-	local wd = workspace:FindFirstChild("WeaponDisplays"); if wd then roots[#roots + 1] = wd end
 	for _, root in ipairs(roots) do
 		local okD, ds = pcall(function() return root:GetDescendants() end)
 		if okD then
 			for _, inst in ipairs(ds) do
-				if inst:IsA("Tool") or inst:IsA("Model") or inst:IsA("BasePart") then
-					local n = inst.Name:lower()
-					if n == wantKey or (wantName and n == wantName) then
+				if inst:IsA("Tool") or inst:IsA("Model") or inst:IsA("MeshPart") then
+					if want[inst.Name:lower()] then
 						if inst:IsA("BasePart") or inst.PrimaryPart
 							or inst:FindFirstChildWhichIsA("BasePart", true) then
 							found = inst; break
@@ -4445,7 +4447,7 @@ function MH_equipVisual(key, dispName)
 		end
 		if found then break end
 	end
-	if not found then return false, "no client model for '" .. tostring(key) .. "'" end
+	if not found then return false, "no client model by name/id" end
 	return MH_attachToHand(found:Clone())
 end
 
@@ -4458,7 +4460,7 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v12")   -- freshness marker so a stale-cache test is obvious
+	add("v13")   -- freshness marker so a stale-cache test is obvious
 	-- 1) menu equip (data + client signal, no FireServer)
 	pcall(function()
 		local rs = game:GetService("ReplicatedStorage")
@@ -4495,9 +4497,12 @@ function MH_equipItem(key, dispName)
 		end
 	end)
 	-- 2) build the hand model from the game's own item record
+	local names = { key, dispName }
 	local info, gd = MH_getItemInfo(key)
 	if info then
 		add("info=" .. MH_infoDump(info))
+		if info.ItemName then names[#names + 1] = info.ItemName end
+		if info.ItemID then names[#names + 1] = string.format("%d", math.floor(info.ItemID)) end
 		local handle, hd = MH_buildHandleFromInfo(info)
 		if handle then
 			local aok, ad = MH_attachToHand(handle)
@@ -4509,8 +4514,8 @@ function MH_equipItem(key, dispName)
 	else
 		add("getInfo:" .. tostring(gd))
 	end
-	-- 3) fallback: attach an instance named by the key
-	local vok, vd = MH_equipVisual(key, dispName)
+	-- 3) fallback: attach an instance named by key / ItemName / ItemID anywhere
+	local vok, vd = MH_equipVisual(names)
 	add("nameSearch:" .. tostring(vd))
 	return vok, table.concat(parts, " | ")
 end
