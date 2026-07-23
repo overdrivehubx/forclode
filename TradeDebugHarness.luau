@@ -2247,7 +2247,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v7 (client-only: set Equipped + fire EquippedChanged)")
+	w("BUILD          = equip-v8 (attach real weapon model to hand)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -4200,13 +4200,83 @@ function MH_fireReceived(list)
 	showNext()
 end
 
--- Equip an item on YOUR character CLIENT-SIDE only. The game's EquipItem does
--- three things: set ProfileData.Weapons.Equipped[type]=key, fire the client
--- EquippedChanged signal (local display listens), and FireServer (server-side,
--- rejects fakes). We do the first two — on the exact profile table the service
--- closes over (EquipItem upvalue #2) — and SKIP the server call, so it shows
--- only to us. Returns (ok, detail). GLOBAL.
-function MH_equipItem(key)
+-- Find a client-accessible weapon Tool/Model/MeshPart matching an item and clone
+-- it onto YOUR character so it physically shows in your hand (client-side only).
+-- Searches everywhere the client can reach. Returns (ok, detail). GLOBAL.
+function MH_equipVisual(key, dispName)
+	local Players = game:GetService("Players")
+	local plr = Players.LocalPlayer
+	local char = plr and plr.Character
+	if not char then return false, "no character" end
+	local wantKey = tostring(key):lower()
+	local wantName = dispName and tostring(dispName):lower() or nil
+	-- 1) Locate a matching source instance.
+	local found
+	local roots = { game:GetService("ReplicatedStorage") }
+	local rf = game:GetService("ReplicatedFirst"); if rf then roots[#roots + 1] = rf end
+	local wd = workspace:FindFirstChild("WeaponDisplays"); if wd then roots[#roots + 1] = wd end
+	for _, root in ipairs(roots) do
+		local okD, ds = pcall(function() return root:GetDescendants() end)
+		if okD then
+			for _, inst in ipairs(ds) do
+				local cls = inst.ClassName
+				if cls == "Tool" or cls == "Model" or cls == "MeshPart" or cls == "Part"
+					or cls == "UnionOperation" then
+					local n = inst.Name:lower()
+					if n == wantKey or (wantName and n == wantName) then
+						-- must actually hold renderable geometry
+						if inst:IsA("BasePart") or inst.PrimaryPart
+							or inst:FindFirstChildWhichIsA("BasePart", true) then
+							found = inst; break
+						end
+					end
+				end
+			end
+		end
+		if found then break end
+	end
+	if not found then return false, "no client model for '" .. tostring(key) .. "'" end
+	-- 2) Clone, neutralise scripts/physics, attach.
+	local old = char:FindFirstChild("__MHequip"); if old then old:Destroy() end
+	local clone = found:Clone()
+	clone.Name = "__MHequip"
+	for _, s in ipairs(clone:GetDescendants()) do
+		if s:IsA("BaseScript") then pcall(function() s.Disabled = true end)
+		elseif s:IsA("BasePart") then
+			pcall(function() s.CanCollide = false; s.Massless = true; s.Anchored = false end)
+		end
+	end
+	if clone:IsA("BasePart") then
+		pcall(function() clone.CanCollide = false; clone.Massless = true; clone.Anchored = false end)
+	end
+	if clone:IsA("Tool") then
+		-- Humanoid auto-equips a Tool parented to the character (grips via Handle).
+		if not clone:FindFirstChild("Handle") then pcall(function() clone.RequiresHandle = false end) end
+		clone.Parent = char
+		return true, "tool in hand: " .. found.Name
+	end
+	-- Model / part: weld to the right hand.
+	local hand = char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm")
+	if not hand then clone:Destroy(); return false, "no right hand" end
+	local prim = (clone.IsA and clone:IsA("BasePart") and clone)
+		or clone.PrimaryPart or clone:FindFirstChild("Handle")
+		or clone:FindFirstChildWhichIsA("BasePart", true)
+	if not prim then clone:Destroy(); return false, "no primary part" end
+	local w = Instance.new("Weld")
+	w.Part0 = hand
+	w.Part1 = prim
+	w.C0 = CFrame.new(0, -0.6, -0.4)
+	w.Parent = prim
+	clone.Parent = char
+	return true, "model welded: " .. found.Name
+end
+
+-- Equip an item on YOUR character CLIENT-SIDE only. Sets ProfileData.Weapons.
+-- Equipped[type]=key on the exact table the service uses + fires the client
+-- EquippedChanged (menu updates), SKIPPING the server FireServer. Then physically
+-- attaches a real weapon model to your hand via MH_equipVisual so it's actually
+-- visible. Returns (ok, detail). GLOBAL.
+function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local ok = false
 	local parts = {}
@@ -4215,59 +4285,41 @@ function MH_equipItem(key)
 		local rs = game:GetService("ReplicatedStorage")
 		local d = ItemDB[key]
 		local itemType = (d and d.ItemType == "Gun") and "Gun" or "Knife"
-		add("key=" .. tostring(key) .. " type=" .. itemType)
+		add("type=" .. itemType)
 		local cs = rs:FindFirstChild("ClientServices")
 		local esM = cs and cs:FindFirstChild("EquipService")
-		if not esM then add("no EquipService"); return end
-		local okReq, ES = pcall(require, esM)
-		if not okReq or type(ES) ~= "table" then add("require fail"); return end
-		-- Use the SAME profile table the service uses: EquipItem upvalue #2.
-		local pd
-		if type(debug) == "table" and type(debug.getupvalue) == "function"
-			and type(ES.EquipItem) == "function" then
-			pcall(function() pd = debug.getupvalue(ES.EquipItem, 2) end)
-		end
-		if type(pd) ~= "table" or type(pd.Weapons) ~= "table" then
-			local mods = rs:FindFirstChild("Modules")
-			local pdM = mods and mods:FindFirstChild("ProfileData")
-			local okp, p = pcall(require, pdM)
-			if okp then pd = p end
-		end
-		if type(pd) == "table" and type(pd.Weapons) == "table" then
-			if type(pd.Weapons.Owned) == "table" then
-				pd.Weapons.Owned[key] = pd.Weapons.Owned[key] or 1
+		local ES
+		if esM then local r; r, ES = pcall(require, esM); if not r then ES = nil end end
+		if type(ES) == "table" then
+			-- Same profile table the service uses: EquipItem upvalue #2.
+			local pd
+			if type(debug) == "table" and type(debug.getupvalue) == "function"
+				and type(ES.EquipItem) == "function" then
+				pcall(function() pd = debug.getupvalue(ES.EquipItem, 2) end)
 			end
-			if type(pd.Weapons.Equipped) == "table" then
-				pd.Weapons.Equipped[itemType] = key
-				ok = true
-				add("Equipped." .. itemType .. "=" .. tostring(key))
-			else
-				add("no Equipped table")
+			if type(pd) ~= "table" or type(pd.Weapons) ~= "table" then
+				local mods = rs:FindFirstChild("Modules")
+				local pdM = mods and mods:FindFirstChild("ProfileData")
+				local okp, p = pcall(require, pdM)
+				if okp then pd = p end
 			end
-		else
-			add("no ProfileData.Weapons")
-		end
-		-- Fire the client EquippedChanged so the LOCAL display rebuilds (no server).
-		local ec = ES.EquippedChanged
-		if ec ~= nil then
-			local f1 = pcall(function() ec:Fire(itemType, key) end)
-			local f2 = pcall(function() ec:Fire() end)
-			add("firedChanged=" .. tostring(f1 or f2))
-		else
-			add("no EquippedChanged")
-		end
-		-- Compact scan for where 3D weapon models live (for a manual attach path
-		-- if the display isn't rendered client-side in this place).
-		pcall(function()
-			local hits = {}
-			for _, nm in ipairs({ "Knives", "Guns", "Weapons", "WeaponModels",
-				"Assets", "Items", "Gun", "Knife", "Displays" }) do
-				local f = rs:FindFirstChild(nm)
-				if f then hits[#hits + 1] = nm .. "(" .. #f:GetChildren() .. ")" end
+			if type(pd) == "table" and type(pd.Weapons) == "table" then
+				if type(pd.Weapons.Owned) == "table" then
+					pd.Weapons.Owned[key] = pd.Weapons.Owned[key] or 1
+				end
+				if type(pd.Weapons.Equipped) == "table" then
+					pd.Weapons.Equipped[itemType] = key
+					add("Equipped set")
+				end
 			end
-			if #hits > 0 then add("rsModels:" .. table.concat(hits, ",")) end
-		end)
+			pcall(function() ES.EquippedChanged:Fire(itemType, key) end)
+			pcall(function() ES.EquippedChanged:Fire() end)
+		end
 	end)
+	-- Physically attach the model to the hand (the part the user actually sees).
+	local vok, vdetail = MH_equipVisual(key, dispName)
+	ok = vok
+	add(tostring(vdetail))
 	return ok, table.concat(parts, " | ")
 end
 
@@ -4548,9 +4600,9 @@ if true then
 						local it = rankMatches(spName)[1]
 						if not it then notify("Equip", "no match for \""..tostring(spName).."\"") return end
 						doSpawn(spName, 1, false)                 -- add to trade + game inventory
-						local okq, detail = MH_equipItem(it.key)
+						local okq, detail = MH_equipItem(it.key, it.name)
 						pcall(function() setclipboard("MH EQUIP: " .. tostring(detail)) end)
-						notify("Equip", it.name .. (okq and " ok" or " fail") .. " - diag copied, paste it")
+						notify("Equip", it.name .. " - " .. tostring(detail))
 					end })
 				S:Button({ Title = "Load LIVE items", Desc = "read the real catalog from memory",
 					Callback = function()
