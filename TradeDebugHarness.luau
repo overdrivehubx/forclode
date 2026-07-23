@@ -55,6 +55,29 @@ if not PlayerGui then
 end
 
 --==============================================================================
+-- OPTIONAL: YOUR OWN WEAPON-SKIN MODELS  (for the Equip Spawner)
+--------------------------------------------------------------------------------
+-- MM2's real weapon models live on the SERVER, so the client isn't allowed to
+-- load them by their in-game ItemID. BUT you can drop in your OWN uploaded
+-- models here and the "Equip item" button will load them and put them in your
+-- hand (client-side — only you see it).
+--   1. Upload the skin's Model to Roblox under YOUR OWN account (publish it),
+--      so the client is permitted to load it.
+--   2. Add an entry below:  ["ItemName"] = <assetId>
+--      • ItemName = the name exactly as shown in the Spawner (e.g. "Gingerscope")
+--      • assetId  = a number OR a "rbxassetid://123..." string
+--==============================================================================
+_G.MH_SkinModels = _G.MH_SkinModels or {
+	-- ["Gingerscope"] = 0,               -- <- put your model's asset id here
+	-- ["8bit"]        = "rbxassetid://0",
+}
+
+-- Menu too big (or too small) on your device / executor? Tune this. 1 = Rubis
+-- default, lower = smaller (e.g. 0.7 = 70%, 0.5 = half). Applies to the whole
+-- MollyHub window.
+_G.MH_MenuScale = _G.MH_MenuScale or 0.7
+
+--==============================================================================
 -- SAFETY WRAPPER — guarantee a visible result on EVERY executor.
 -- Some mobile executors (e.g. Potassium) reject APIs others allow, which can
 -- make the whole script fail silently with no panel. If anything below throws
@@ -2247,7 +2270,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v14 (3 asset-load methods + class report)")
+	w("BUILD          = equip-v15 (user skin map + menu scale + short toast)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -4298,9 +4321,60 @@ function MH_getItemInfo(key)
 	return nil, "key not in any DB upvalue"
 end
 
+-- Load a Roblox asset id into a hand-holdable Instance, trying every load method
+-- the executor may allow. Returns (instance, detail). GLOBAL.
+function MH_loadAssetModel(assetId)
+	local idNum
+	if type(assetId) == "number" then idNum = math.floor(assetId)
+	else idNum = tonumber(tostring(assetId):match("%d+")) end
+	if not idNum or idNum <= 0 then return nil, "bad asset id" end
+	local idStr = "rbxassetid://" .. string.format("%d", idNum)
+	local loaded, how
+	local objs
+	if pcall(function() objs = game:GetObjects(idStr) end) and type(objs) == "table" and objs[1] then
+		local f = Instance.new("Folder")
+		for _, o in ipairs(objs) do pcall(function() o.Parent = f end) end
+		loaded, how = f, "GetObjects"
+	end
+	if not loaded then
+		local cont
+		if pcall(function() cont = game:GetService("InsertService"):LoadAsset(idNum) end) and cont then
+			loaded, how = cont, "LoadAsset"
+		end
+	end
+	if not loaded then
+		local cont
+		if pcall(function() cont = game:GetService("InsertService"):LoadAssetVersion(idNum) end) and cont then
+			loaded, how = cont, "LoadAssetVersion"
+		end
+	end
+	if not loaded then return nil, "asset load failed:" .. string.format("%d", idNum) end
+	local pick
+	if loaded:IsA("Tool") or loaded:IsA("Model") or loaded:IsA("BasePart") then pick = loaded end
+	if not pick then
+		for _, o in ipairs(loaded:GetDescendants()) do
+			if o:IsA("Tool") or o:IsA("Model") then pick = o; break end
+		end
+	end
+	if not pick then
+		for _, o in ipairs(loaded:GetDescendants()) do
+			if o:IsA("BasePart") then pick = o; break end
+		end
+	end
+	if pick then
+		return pick, how .. ":" .. string.format("%d", idNum) .. "[" .. pick.ClassName .. "]"
+	end
+	local kinds = {}
+	for _, o in ipairs(loaded:GetDescendants()) do
+		kinds[#kinds + 1] = o.ClassName
+		if #kinds >= 8 then break end
+	end
+	return nil, how .. ":no part{" .. table.concat(kinds, ",") .. "}"
+end
+
 -- Build a hand-holdable Instance from an item record: a renderable Instance in
--- the record, else a Part+SpecialMesh from its MeshId/TextureId. Returns
--- (clone, detail). GLOBAL.
+-- the record, else its asset id loaded client-side, else a Part+SpecialMesh from
+-- its MeshId/TextureId. Returns (clone, detail). GLOBAL.
 function MH_buildHandleFromInfo(info)
 	if type(info) ~= "table" then return nil, "no info" end
 	-- a) any renderable Instance inside the record (2 levels)
@@ -4327,55 +4401,7 @@ function MH_buildHandleFromInfo(info)
 		end
 	end
 	if assetId then
-		local idNum = math.floor(assetId)
-		local idStr = "rbxassetid://" .. string.format("%d", idNum)
-		-- Load the asset client-side, trying every method the executor may allow.
-		-- Everything loaded is gathered under one Folder for uniform handling.
-		local loaded, how
-		local objs
-		if pcall(function() objs = game:GetObjects(idStr) end) and type(objs) == "table" and objs[1] then
-			local f = Instance.new("Folder")
-			for _, o in ipairs(objs) do pcall(function() o.Parent = f end) end
-			loaded, how = f, "GetObjects"
-		end
-		if not loaded then
-			local cont
-			if pcall(function() cont = game:GetService("InsertService"):LoadAsset(idNum) end) and cont then
-				loaded, how = cont, "LoadAsset"
-			end
-		end
-		if not loaded then
-			local cont
-			if pcall(function() cont = game:GetService("InsertService"):LoadAssetVersion(idNum) end) and cont then
-				loaded, how = cont, "LoadAssetVersion"
-			end
-		end
-		if loaded then
-			-- pick the best renderable inside: Tool/Model first, else any BasePart
-			local pick
-			if loaded:IsA("Tool") or loaded:IsA("Model") or loaded:IsA("BasePart") then pick = loaded end
-			if not pick then
-				for _, o in ipairs(loaded:GetDescendants()) do
-					if o:IsA("Tool") or o:IsA("Model") then pick = o; break end
-				end
-			end
-			if not pick then
-				for _, o in ipairs(loaded:GetDescendants()) do
-					if o:IsA("BasePart") then pick = o; break end
-				end
-			end
-			if pick then
-				return pick, how .. ":" .. string.format("%d", idNum) .. "[" .. pick.ClassName .. "]"
-			end
-			-- nothing renderable: report what we actually got, for diagnosis
-			local kinds = {}
-			for _, o in ipairs(loaded:GetDescendants()) do
-				kinds[#kinds + 1] = o.ClassName
-				if #kinds >= 8 then break end
-			end
-			return nil, how .. ":no part{" .. table.concat(kinds, ",") .. "}"
-		end
-		return nil, "asset load failed:" .. string.format("%d", idNum)
+		return MH_loadAssetModel(assetId)
 	end
 	-- c) MeshId / TextureId strings in the record
 	local meshId, texId, color
@@ -4486,7 +4512,7 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v14")   -- freshness marker so a stale-cache test is obvious
+	add("v15")   -- freshness marker so a stale-cache test is obvious
 	-- 1) menu equip (data + client signal, no FireServer)
 	pcall(function()
 		local rs = game:GetService("ReplicatedStorage")
@@ -4522,13 +4548,36 @@ function MH_equipItem(key, dispName)
 			pcall(function() ES.EquippedChanged:Fire() end)
 		end
 	end)
-	-- 2) build the hand model from the game's own item record
+	-- 2) hand model. Gather candidate names first.
 	local names = { key, dispName }
 	local info, gd = MH_getItemInfo(key)
 	if info then
 		add("info=" .. MH_infoDump(info))
 		if info.ItemName then names[#names + 1] = info.ItemName end
 		if info.ItemID then names[#names + 1] = string.format("%d", math.floor(info.ItemID)) end
+	else
+		add("getInfo:" .. tostring(gd))
+	end
+	-- 2a) YOUR own uploaded model (_G.MH_SkinModels) takes priority — this is the
+	-- reliable path since MM2's own models aren't loadable client-side.
+	local skins = _G.MH_SkinModels or {}
+	local mapId
+	for _, nm in ipairs(names) do
+		local v = (nm ~= nil) and skins[tostring(nm)] or nil
+		if v ~= nil and tostring(v) ~= "0" and tostring(v) ~= "rbxassetid://0" then mapId = v; break end
+	end
+	if mapId then
+		local m, md = MH_loadAssetModel(mapId)
+		if m then
+			local aok, ad = MH_attachToHand(m)
+			add("skin " .. tostring(md) .. " -> " .. tostring(ad))
+			if aok then return true, table.concat(parts, " | ") end
+		else
+			add("skin:" .. tostring(md))
+		end
+	end
+	-- 2b) build from the game's own item record (record instance / asset id / mesh)
+	if info then
 		local handle, hd = MH_buildHandleFromInfo(info)
 		if handle then
 			local aok, ad = MH_attachToHand(handle)
@@ -4537,8 +4586,6 @@ function MH_equipItem(key, dispName)
 		else
 			add("build:" .. tostring(hd))
 		end
-	else
-		add("getInfo:" .. tostring(gd))
 	end
 	-- 3) fallback: attach an instance named by key / ItemName / ItemID anywhere
 	local vok, vd = MH_equipVisual(names)
@@ -4673,6 +4720,34 @@ if true then
 				pcall(function() Win = lib:CreateWindow({ Title = "MollyHub", Size = UDim2.fromOffset(292, 224), Theme = "Dark" }) end)
 			end
 			assert(Win, "Rubis CreateWindow returned nil")
+			-- Menu scale: some executors/devices (e.g. Delta on PC) render Rubis
+			-- oversized. Add a UIScale to the window frame(s) so the whole menu
+			-- shrinks. Tunable via _G.MH_MenuScale. Applied a few times because
+			-- Rubis parents its GUI slightly after CreateWindow returns.
+			local function MH_scaleMenuOnce()
+				local s = tonumber(_G.MH_MenuScale) or 1
+				if s == 1 then return end
+				for _, root in ipairs(guiRoots) do
+					local okc, kids = pcall(function() return root:GetChildren() end)
+					if okc then
+						for _, g in ipairs(kids) do
+							if g:IsA("ScreenGui") and not seenGui[g] and not g:GetAttribute("__MHscaled") then
+								for _, d in ipairs(g:GetChildren()) do
+									if d:IsA("GuiObject") then
+										local us = d:FindFirstChildOfClass("UIScale")
+										if us then us.Scale = us.Scale * s
+										else us = Instance.new("UIScale"); us.Scale = s; us.Parent = d end
+									end
+								end
+								g:SetAttribute("__MHscaled", true)
+							end
+						end
+					end
+				end
+			end
+			task.defer(MH_scaleMenuOnce)
+			task.delay(0.5, MH_scaleMenuOnce)
+			task.delay(1.5, MH_scaleMenuOnce)
 			-- ================= shared helpers + state =================
 			local function serverNames()
 				local out = {}
@@ -4818,7 +4893,7 @@ if true then
 				S:Input({ Title = "Amount", Placeholder = "1", Callback = function(v) spAmt = v end })
 				S:Button({ Title = "Spawn item", Desc = "into trade inventory + game inventory",
 					Callback = function() doSpawn(spName, spAmt, false) end })
-				S:Button({ Title = "Equip item", Desc = "spawn + equip it on your character (client-side, only you see it)",
+				S:Button({ Title = "Equip item", Desc = "equip it in your hand (client-side)",
 					Callback = function()
 						local it = rankMatches(spName)[1]
 						if not it then notify("Equip", "no match for \""..tostring(spName).."\"") return end
@@ -4827,7 +4902,8 @@ if true then
 						task.spawn(function()
 							local okq, detail = MH_equipItem(it.key, it.name)
 							pcall(function() setclipboard("MH EQUIP: " .. tostring(detail)) end)
-							notify("Equip", it.name .. " - " .. tostring(detail))
+							-- keep the toast SHORT; full diagnostic goes to the clipboard
+							notify("Equip", it.name .. (okq and " - in hand" or " - menu only (diag copied)"))
 						end)
 					end })
 				S:Button({ Title = "Load LIVE items", Desc = "read the real catalog from memory",
