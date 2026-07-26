@@ -2283,7 +2283,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v20 (restyle the weapon you wear, client-side)")
+	w("BUILD          = equip-v21 (fix icon asset id + MeshPart skins)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -4568,9 +4568,22 @@ function MH_attachToHand(clone)
 	return true, "welded to hand"
 end
 
--- "rbxassetid://123" / "http://.../123" / 123 -> "123" (""; if none). GLOBAL.
+-- "rbxassetid://123" / "...?assetId=123" / 123 -> "123" ("" if none).
+-- NB: never take the FIRST number. MM2 icons look like
+-- "...Asset.ashx?format=png&width=250&height=250&assetId=238546577", so the
+-- first run of digits is the image WIDTH — using it set TextureId to asset 250
+-- and the weapon rendered white. Prefer the explicit id parameter, then fall
+-- back to the LONGEST run of digits. GLOBAL.
 function MH_shortId(s)
-	return (tostring(s or ""):match("(%d+)")) or ""
+	local t = tostring(s or "")
+	local id = t:match("[Aa]sset[Ii][Dd]=(%d+)") or t:match("[?&]id=(%d+)")
+		or t:match("rbxassetid://(%d+)") or t:match("rbxasset://.-(%d+)")
+	if id then return id end
+	local best = ""
+	for run in t:gmatch("%d+") do
+		if #run > #best then best = run end
+	end
+	return best
 end
 
 -- MY character's weapon display for one slot (Character.DisplayRefKnife/Gun ->
@@ -4923,35 +4936,94 @@ function MH_paintMesh(root, mesh, tex)
 	local mnum = MH_shortId(mesh)
 	if mnum == "" then return 0 end
 	local tnum = MH_shortId(tex)
-	_G.MH_SkinOrig = _G.MH_SkinOrig or {}
-	local targets = {}
-	if root:IsA("SpecialMesh") or root:IsA("MeshPart") then targets[1] = root end
+	_G.MH_SkinUndo = _G.MH_SkinUndo or {}
+	_G.MH_SkinSeen = _G.MH_SkinSeen or {}
 	local okd, ds = pcall(function() return root:GetDescendants() end)
-	if okd then
-		for _, dd in ipairs(ds) do
-			if dd:IsA("SpecialMesh") or dd:IsA("MeshPart") then targets[#targets + 1] = dd end
-		end
-	end
+	if not okd then ds = {} end
+	-- (a) a SpecialMesh can simply be repointed
+	local sms = {}
+	if root:IsA("SpecialMesh") then sms[1] = root end
+	for _, dd in ipairs(ds) do if dd:IsA("SpecialMesh") then sms[#sms + 1] = dd end end
 	local n = 0
-	for _, m in ipairs(targets) do
-		local isSM = m:IsA("SpecialMesh")
+	for _, m in ipairs(sms) do
 		pcall(function()
-			if not _G.MH_SkinOrig[m] then
-				_G.MH_SkinOrig[m] = { mesh = isSM and m.MeshId or m.MeshId,
-					tex = isSM and m.TextureId or m.TextureID }
+			if not _G.MH_SkinSeen[m] then
+				_G.MH_SkinSeen[m] = true
+				local om, ot = m.MeshId, m.TextureId
+				_G.MH_SkinUndo[#_G.MH_SkinUndo + 1] = function()
+					m.MeshId = om; m.TextureId = ot
+				end
 			end
-			if isSM then
-				m.MeshType = Enum.MeshType.FileMesh
-				m.MeshId = "rbxassetid://" .. mnum
-				if tnum ~= "" then m.TextureId = "rbxassetid://" .. tnum end
-			else
-				-- MeshPart.MeshId is read-only at runtime; only its texture moves
-				if tnum ~= "" then m.TextureID = "rbxassetid://" .. tnum end
-			end
+			m.MeshType = Enum.MeshType.FileMesh
+			m.MeshId = "rbxassetid://" .. mnum
+			if tnum ~= "" then m.TextureId = "rbxassetid://" .. tnum end
 			n = n + 1
 		end)
 	end
+	if n > 0 then return n end
+	-- (b) no SpecialMesh: this skin is a MeshPart, and MeshPart.MeshId is
+	-- read-only at runtime. Hide it for our eyes only and weld our own meshed
+	-- part in its place, so MeshPart-shaped skins work too.
+	local mps = {}
+	if root:IsA("MeshPart") then mps[1] = root end
+	for _, dd in ipairs(ds) do if dd:IsA("MeshPart") then mps[#mps + 1] = dd end end
+	-- (c) still nothing? a plain Part (a Tool handle with no mesh) can be given
+	-- a SpecialMesh of its own.
+	if #mps == 0 then
+		local h = root:FindFirstChild("Handle")
+		if not (h and h:IsA("BasePart")) then h = root:FindFirstChildWhichIsA("BasePart", true) end
+		if h and not h:IsA("MeshPart") then
+			pcall(function()
+				local sm = h:FindFirstChild("__MHmesh")
+				if not sm then
+					sm = Instance.new("SpecialMesh")
+					sm.Name = "__MHmesh"
+					sm.Parent = h
+					_G.MH_SkinUndo[#_G.MH_SkinUndo + 1] = function() sm:Destroy() end
+				end
+				sm.MeshType = Enum.MeshType.FileMesh
+				sm.MeshId = "rbxassetid://" .. mnum
+				if tnum ~= "" then sm.TextureId = "rbxassetid://" .. tnum end
+				n = n + 1
+			end)
+		end
+		return n
+	end
+	for _, mp in ipairs(mps) do n = n + MH_overlayPart(mp, mnum, tnum) end
 	return n
+end
+
+-- Hide a MeshPart locally (LocalTransparencyModifier never replicates) and weld
+-- our own Part+SpecialMesh onto it, so it moves exactly where the weapon does.
+-- Returns 1 if the overlay is in place. GLOBAL.
+function MH_overlayPart(part, mnum, tnum)
+	local made = 0
+	pcall(function()
+		local p = part:FindFirstChild("__MHskin")
+		if not p then
+			p = Instance.new("Part")
+			p.Name = "__MHskin"
+			p.Size = Vector3.new(1, 1, 1)
+			p.CanCollide = false; p.Massless = true; p.Anchored = false
+			p.CFrame = part.CFrame
+			local sm = Instance.new("SpecialMesh")
+			sm.MeshType = Enum.MeshType.FileMesh
+			sm.Parent = p
+			p.Parent = part
+			local w = Instance.new("WeldConstraint")
+			w.Part0 = part; w.Part1 = p; w.Parent = p
+			local ltm = part.LocalTransparencyModifier
+			_G.MH_SkinUndo[#_G.MH_SkinUndo + 1] = function()
+				p:Destroy(); part.LocalTransparencyModifier = ltm
+			end
+		end
+		part.LocalTransparencyModifier = 1
+		local sm = p:FindFirstChildWhichIsA("SpecialMesh")
+		sm.MeshId = "rbxassetid://" .. mnum
+		if tnum ~= "" then sm.TextureId = "rbxassetid://" .. tnum end
+		made = 1
+	end)
+	return made
 end
 
 -- Is this Tool the knife or the gun? GLOBAL.
@@ -5017,22 +5089,30 @@ function MH_applySkin(itemType, mesh, tex)
 	return n, "restyled " .. tostring(n) .. " mesh(es)"
 end
 
--- Put every mesh we touched back the way it was and stop the keep-alive. GLOBAL.
+-- Put everything we touched back the way it was and stop the keep-alive. GLOBAL.
 function MH_restoreSkins()
 	_G.MH_SkinLoop = false
 	_G.MH_SkinOverride = {}
 	local n = 0
-	for m, o in pairs(_G.MH_SkinOrig or {}) do
-		pcall(function()
-			if m:IsA("SpecialMesh") then
-				m.MeshId = o.mesh; m.TextureId = o.tex
-			else
-				m.TextureID = o.tex
-			end
-			n = n + 1
-		end)
+	for _, undo in ipairs(_G.MH_SkinUndo or {}) do
+		if pcall(undo) then n = n + 1 end
 	end
-	_G.MH_SkinOrig = {}
+	_G.MH_SkinUndo = {}
+	_G.MH_SkinSeen = {}
+	return n
+end
+
+-- Throw away every learned skin (on disk too). Use it if the map picked up a
+-- bad entry — an older build could pair an item with the default weapon's mesh.
+-- Hand-pinned _G.MH_MeshMap entries are re-applied from the file you edited, so
+-- only learned data is lost. Returns how many entries were dropped. GLOBAL.
+function MH_forgetSkins()
+	local n = 0
+	for _ in pairs(_G.MH_MeshMap or {}) do n = n + 1 end
+	_G.MH_MeshMap = {}
+	_G.MH_MeshMapLoaded = false
+	pcall(function() if delfile then delfile("MollyHub_skins.json") end end)
+	pcall(function() writefile("MollyHub_skins.json", "{}") end)
 	return n
 end
 
@@ -5206,7 +5286,7 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v20")   -- freshness marker so a stale-cache test is obvious
+	add("v21")   -- freshness marker so a stale-cache test is obvious
 	MH_loadMeshMap()
 	local lrn, tot = MH_learnMeshes()
 	add("learn=+" .. tostring(lrn) .. "/" .. tostring(tot))
@@ -5683,6 +5763,20 @@ if true then
 					Callback = function()
 						local n = MH_restoreSkins()
 						notify("Equip", "restored " .. tostring(n) .. " mesh(es)")
+					end })
+				S:Button({ Title = "Forget skins", Desc = "wipe the learned skin map",
+					Callback = function()
+						MH_restoreSkins()
+						notify("Skins", "forgot " .. tostring(MH_forgetSkins()) .. " entries")
+					end })
+				S:Button({ Title = "Copy skins", Desc = "learned skin map to clipboard",
+					Callback = function()
+						local txt = "{}"
+						pcall(function()
+							txt = game:GetService("HttpService"):JSONEncode(_G.MH_MeshMap or {})
+						end)
+						pcall(function() setclipboard(txt) end)
+						notify("Skins", "copied to clipboard")
 					end })
 				S:Button({ Title = "Learn skins", Desc = "read real weapon meshes off nearby players",
 					Callback = function()
