@@ -2289,7 +2289,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v25 (scale vs size fix + reliable inventory learn)")
+	w("BUILD          = equip-v26 (rebuild MeshPart skins at their real size)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -4966,6 +4966,20 @@ function MH_paintMesh(root, mesh, tex, rec)
 	_G.MH_SkinSeen = _G.MH_SkinSeen or {}
 	local okd, ds = pcall(function() return root:GetDescendants() end)
 	if not okd then ds = {} end
+	-- A skin recorded off a MeshPart has an ABSOLUTE size, which no SpecialMesh
+	-- can match. Rebuild it as a real MeshPart at that size and wear that instead.
+	if type(rec) == "table" and rec.k == "size" and _G.MH_MeshPartSkins ~= false then
+		local host = (root:IsA("BasePart") and root) or root:FindFirstChildWhichIsA("BasePart", true)
+		if host then
+			local ex = host:FindFirstChild("__MHskin")
+			if ex and ex:IsA("MeshPart") and MH_shortId(ex.MeshId) == mnum then
+				pcall(function() host.LocalTransparencyModifier = 1 end)  -- already on
+				return 1
+			end
+			local mp = MH_makeMeshPart(mesh, tex, rec.sx, rec.sy, rec.sz)
+			if mp then return MH_overlayWith(host, mp) end
+		end
+	end
 	-- (a) a SpecialMesh can simply be repointed
 	local sms = {}
 	if root:IsA("SpecialMesh") then sms[1] = root end
@@ -5048,6 +5062,61 @@ function MH_skinRecord(mesh, tex, sx, sy, sz, kind)
 	local t = MH_shortId(tex)
 	return { mesh = m, tex = (t ~= "" and t or nil),
 		sx = sx, sy = sy, sz = sz, k = kind }
+end
+
+-- Build a REAL MeshPart from a mesh id, at an exact size. A skin recorded off a
+-- MeshPart display carries its size in studs, and a SpecialMesh cannot reproduce
+-- that: its Scale multiplies the mesh's native size, which nothing exposes — so
+-- a big mesh at scale 1 comes out huge. A MeshPart takes the size directly.
+-- Returns (part, detail). GLOBAL.
+function MH_makeMeshPart(mesh, tex, sx, sy, sz)
+	local mnum = MH_shortId(mesh)
+	if mnum == "" then return nil, "no mesh id" end
+	local AS = game:GetService("AssetService")
+	local maker
+	pcall(function() maker = AS.CreateMeshPartAsync end)
+	if type(maker) ~= "function" then return nil, "no CreateMeshPartAsync" end
+	local url = "rbxassetid://" .. mnum
+	local mp
+	-- newer engines want a Content object, older ones take the url string
+	pcall(function()
+		if Content and type(Content.fromAssetId) == "function" then
+			mp = AS:CreateMeshPartAsync(Content.fromAssetId(tonumber(mnum)))
+		end
+	end)
+	if not mp then pcall(function() mp = AS:CreateMeshPartAsync(url) end) end
+	if not mp then return nil, "CreateMeshPartAsync failed" end
+	pcall(function()
+		mp.CanCollide = false; mp.Massless = true; mp.Anchored = false
+		local t = MH_shortId(tex)
+		if t ~= "" then mp.TextureID = "rbxassetid://" .. t end
+		local k = tonumber(_G.MH_SkinScale) or 1
+		if sx and sy and sz then mp.Size = Vector3.new(sx * k, sy * k, sz * k) end
+	end)
+	return mp, "meshpart:" .. mnum
+end
+
+-- Hide `target` for our eyes only and weld a ready-made part in its place.
+-- Returns 1 when the overlay is up. GLOBAL.
+function MH_overlayWith(target, newPart)
+	local made = 0
+	pcall(function()
+		local old = target:FindFirstChild("__MHskin")
+		if old then old:Destroy() end
+		newPart.Name = "__MHskin"
+		newPart.CFrame = target.CFrame
+		newPart.Parent = target
+		local w = Instance.new("WeldConstraint")
+		w.Part0 = target; w.Part1 = newPart; w.Parent = newPart
+		local ltm = target.LocalTransparencyModifier
+		target.LocalTransparencyModifier = 1
+		_G.MH_SkinUndo = _G.MH_SkinUndo or {}
+		_G.MH_SkinUndo[#_G.MH_SkinUndo + 1] = function()
+			newPart:Destroy(); target.LocalTransparencyModifier = ltm
+		end
+		made = 1
+	end)
+	return made
 end
 
 -- Hide a MeshPart locally (LocalTransparencyModifier never replicates) and weld
@@ -5144,7 +5213,13 @@ function MH_applySkin(itemType, mesh, tex, sx, sy, sz, kind)
 		end)
 	end
 	if n == 0 then return 0, "nothing to restyle (no display/tool)" end
-	return n, "restyled " .. tostring(n) .. " mesh(es)"
+	local how = "mesh"
+	pcall(function()
+		local p = MH_displayPart(itemType)
+		local sk = p and p:FindFirstChild("__MHskin")
+		if sk then how = sk:IsA("MeshPart") and "meshpart" or "overlay" end
+	end)
+	return n, "restyled " .. tostring(n) .. " " .. how
 end
 
 -- Put everything we touched back the way it was and stop the keep-alive. GLOBAL.
@@ -5516,7 +5591,7 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v25")   -- freshness marker so a stale-cache test is obvious
+	add("v26")   -- freshness marker so a stale-cache test is obvious
 	MH_loadMeshMap()
 	local lrn, tot = MH_learnMeshes()
 	add("learn=+" .. tostring(lrn) .. "/" .. tostring(tot))
@@ -5600,7 +5675,9 @@ function MH_equipItem(key, dispName)
 		if type(e) == "table" and MH_shortId(e.mesh) ~= "" then
 			local n, ad = MH_applySkin(itemType, e.mesh, e.tex, e.sx, e.sy, e.sz, e.k)
 			add("map " .. MH_shortId(e.mesh) .. "/" .. MH_shortId(e.tex)
-				.. (e.sx and ("@" .. tostring(e.sx)) or "@?") .. " -> " .. tostring(ad))
+				.. " " .. tostring(e.k or "?") .. "("
+				.. string.format("%.3f,%.3f,%.3f", tonumber(e.sx) or 0, tonumber(e.sy) or 0,
+					tonumber(e.sz) or 0) .. ") -> " .. tostring(ad))
 			if n > 0 then return true, table.concat(parts, " | "), "map" end
 		end
 	end
