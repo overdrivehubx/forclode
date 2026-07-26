@@ -82,9 +82,15 @@ _G.MH_MenuScale = _G.MH_MenuScale or 0.7
 -- the surest way to get an item into your hand. The Equip button checks this
 -- FIRST. Ids can be read off any weapon the client already shows — the equip
 -- diagnostic's harvest[...] section lists them as mesh+texture pairs.
+-- Entries also carry the mesh SCALE (sx/sy/sz). MM2 sets a different scale per
+-- weapon, so a skin swapped in without it renders at the previous item's size.
 _G.MH_MeshMap = _G.MH_MeshMap or {
-	-- ["Gingerscope"] = { mesh = 0, tex = 0 },
+	-- ["Gingerscope"] = { mesh = 0, tex = 0, sx = 1, sy = 1, sz = 1 },
 }
+
+-- Weapon looking too big or too small? Multiplies every skin's scale. 1 = the
+-- size the game itself uses.
+_G.MH_SkinScale = _G.MH_SkinScale or 1
 
 -- Where the equipped weapon sits in your hand: {x, y, z, rotX, rotY, rotZ} —
 -- studs and degrees. Tweak if the model floats or points the wrong way.
@@ -2283,7 +2289,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v22 (harvest real skins from your own inventory)")
+	w("BUILD          = equip-v23 (skins carry their mesh scale)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -4598,17 +4604,31 @@ function MH_displayPart(itemType)
 	local plr = game:GetService("Players").LocalPlayer
 	local char = plr and plr.Character
 	if not char then return nil, "", "" end
-	local ov = char:FindFirstChild("DisplayRef" .. tostring(itemType))
-	local part = (ov and ov:IsA("ObjectValue")) and ov.Value or nil
-	if not part then return nil, "", "" end
-	local mid, tid = "", ""
-	local m = part:FindFirstChildWhichIsA("SpecialMesh", true)
+	return MH_displayPart2(char, itemType)
+end
+
+-- Read a display's mesh id, texture id AND its SCALE. The scale matters: a
+-- SpecialMesh renders at (native mesh size x Scale), and MM2 sets a different
+-- Scale per weapon — so repointing MeshId while leaving the previous item's
+-- Scale in place is what made a swapped-in knife come out huge.
+-- Returns (mesh, tex, sx, sy, sz). GLOBAL.
+function MH_meshFieldsOf(part)
+	local mid, tid, sx, sy, sz = "", "", nil, nil, nil
+	if not part then return mid, tid end
+	local m = (part:IsA("SpecialMesh") and part) or part:FindFirstChildWhichIsA("SpecialMesh", true)
 	if m then
-		pcall(function() mid = tostring(m.MeshId); tid = tostring(m.TextureId) end)
+		pcall(function()
+			mid, tid = tostring(m.MeshId), tostring(m.TextureId)
+			sx, sy, sz = m.Scale.X, m.Scale.Y, m.Scale.Z
+		end)
 	elseif part:IsA("MeshPart") then
-		pcall(function() mid = tostring(part.MeshId); tid = tostring(part.TextureID) end)
+		-- a MeshPart carries its size directly instead of a mesh scale
+		pcall(function()
+			mid, tid = tostring(part.MeshId), tostring(part.TextureID)
+			sx, sy, sz = part.Size.X, part.Size.Y, part.Size.Z
+		end)
 	end
-	return part, mid, tid
+	return mid, tid, sx, sy, sz
 end
 
 -- Collect the mesh/texture ids of every weapon display the client can already
@@ -4935,11 +4955,12 @@ end
 
 -- Repoint every mesh under `root` at our skin, remembering the originals so the
 -- change can be undone. Returns how many meshes changed. GLOBAL.
-function MH_paintMesh(root, mesh, tex)
+function MH_paintMesh(root, mesh, tex, rec)
 	if not root then return 0 end
 	local mnum = MH_shortId(mesh)
 	if mnum == "" then return 0 end
 	local tnum = MH_shortId(tex)
+	local scale = MH_scaleOf(rec)
 	_G.MH_SkinUndo = _G.MH_SkinUndo or {}
 	_G.MH_SkinSeen = _G.MH_SkinSeen or {}
 	local okd, ds = pcall(function() return root:GetDescendants() end)
@@ -4953,14 +4974,16 @@ function MH_paintMesh(root, mesh, tex)
 		pcall(function()
 			if not _G.MH_SkinSeen[m] then
 				_G.MH_SkinSeen[m] = true
-				local om, ot = m.MeshId, m.TextureId
+				local om, ot, os = m.MeshId, m.TextureId, m.Scale
 				_G.MH_SkinUndo[#_G.MH_SkinUndo + 1] = function()
-					m.MeshId = om; m.TextureId = ot
+					m.MeshId = om; m.TextureId = ot; m.Scale = os
 				end
 			end
 			m.MeshType = Enum.MeshType.FileMesh
 			m.MeshId = "rbxassetid://" .. mnum
 			if tnum ~= "" then m.TextureId = "rbxassetid://" .. tnum end
+			-- the item's own scale, else keep whatever the game had
+			if scale then m.Scale = scale end
 			n = n + 1
 		end)
 	end
@@ -4988,19 +5011,43 @@ function MH_paintMesh(root, mesh, tex)
 				sm.MeshType = Enum.MeshType.FileMesh
 				sm.MeshId = "rbxassetid://" .. mnum
 				if tnum ~= "" then sm.TextureId = "rbxassetid://" .. tnum end
+				if scale then sm.Scale = scale end
 				n = n + 1
 			end)
 		end
 		return n
 	end
-	for _, mp in ipairs(mps) do n = n + MH_overlayPart(mp, mnum, tnum) end
+	for _, mp in ipairs(mps) do n = n + MH_overlayPart(mp, mnum, tnum, scale) end
 	return n
+end
+
+-- The scale stored with a learned skin, times your own _G.MH_SkinScale nudge.
+-- nil means "leave the scale alone". GLOBAL.
+function MH_scaleOf(rec)
+	local k = tonumber(_G.MH_SkinScale) or 1
+	if type(rec) ~= "table" then
+		if k == 1 then return nil end
+		return nil
+	end
+	local x, y, z = tonumber(rec.sx), tonumber(rec.sy), tonumber(rec.sz)
+	if not (x and y and z) then return nil end
+	if x <= 0 or y <= 0 or z <= 0 then return nil end
+	return Vector3.new(x * k, y * k, z * k)
+end
+
+-- Record a skin's mesh, texture and scale in one place, so every learner writes
+-- the same shape. GLOBAL.
+function MH_skinRecord(mesh, tex, sx, sy, sz)
+	local m = MH_shortId(mesh)
+	if m == "" then return nil end
+	local t = MH_shortId(tex)
+	return { mesh = m, tex = (t ~= "" and t or nil), sx = sx, sy = sy, sz = sz }
 end
 
 -- Hide a MeshPart locally (LocalTransparencyModifier never replicates) and weld
 -- our own Part+SpecialMesh onto it, so it moves exactly where the weapon does.
 -- Returns 1 if the overlay is in place. GLOBAL.
-function MH_overlayPart(part, mnum, tnum)
+function MH_overlayPart(part, mnum, tnum, scale)
 	local made = 0
 	pcall(function()
 		local p = part:FindFirstChild("__MHskin")
@@ -5025,6 +5072,7 @@ function MH_overlayPart(part, mnum, tnum)
 		local sm = p:FindFirstChildWhichIsA("SpecialMesh")
 		sm.MeshId = "rbxassetid://" .. mnum
 		if tnum ~= "" then sm.TextureId = "rbxassetid://" .. tnum end
+		if scale then sm.Scale = scale end
 		made = 1
 	end)
 	return made
@@ -5050,13 +5098,13 @@ function MH_applySkinNow()
 		local e = ov[slot]
 		if type(e) == "table" and MH_shortId(e.mesh) ~= "" then
 			local part = MH_displayPart(slot)
-			if part then n = n + MH_paintMesh(part, e.mesh, e.tex) end
+			if part then n = n + MH_paintMesh(part, e.mesh, e.tex, e) end
 			local bp = plr:FindFirstChildOfClass("Backpack")
 			for _, src in ipairs({ char, bp }) do
 				if src then
 					for _, t in ipairs(src:GetChildren()) do
 						if t:IsA("Tool") and MH_toolSlot(t) == slot then
-							n = n + MH_paintMesh(t, e.mesh, e.tex)
+							n = n + MH_paintMesh(t, e.mesh, e.tex, e)
 						end
 					end
 				end
@@ -5069,10 +5117,10 @@ end
 -- Set the skin for a slot and keep it applied: the game rebuilds the display on
 -- respawn and hands out a fresh Tool every round, so a light keep-alive loop
 -- re-applies it. Returns (meshes changed, detail). GLOBAL.
-function MH_applySkin(itemType, mesh, tex)
+function MH_applySkin(itemType, mesh, tex, sx, sy, sz)
 	if MH_shortId(mesh) == "" then return 0, "no mesh id" end
 	_G.MH_SkinOverride = _G.MH_SkinOverride or {}
-	_G.MH_SkinOverride[itemType] = { mesh = MH_shortId(mesh), tex = MH_shortId(tex) }
+	_G.MH_SkinOverride[itemType] = MH_skinRecord(mesh, tex, sx, sy, sz)
 	-- a stray part welded on by an older build would now sit next to the weapon
 	pcall(function()
 		local c = game:GetService("Players").LocalPlayer.Character
@@ -5150,12 +5198,13 @@ function MH_learnMeshes()
 						end
 					end
 				end
-				local _, mid, tid = MH_displayPart2(c, slot)
-				mid, tid = MH_shortId(mid), MH_shortId(tid)
-				if wornKey and mid ~= "" then
+				local _, mid, tid, sx, sy, sz = MH_displayPart2(c, slot)
+				if wornKey and MH_shortId(mid) ~= "" then
 					local cur = map[wornKey]
-					if type(cur) ~= "table" or MH_shortId(cur.mesh) == "" then
-						map[wornKey] = { mesh = mid, tex = (tid ~= "" and tid or nil) }
+					-- re-learn entries saved before we recorded scale, otherwise the
+					-- swapped-in weapon keeps the previous item's size
+					if type(cur) ~= "table" or MH_shortId(cur.mesh) == "" or not cur.sx then
+						map[wornKey] = MH_skinRecord(mid, tid, sx, sy, sz)
 						learned = learned + 1
 					end
 				end
@@ -5173,14 +5222,8 @@ function MH_displayPart2(char, itemType)
 	local ov = char:FindFirstChild("DisplayRef" .. tostring(itemType))
 	local part = (ov and ov:IsA("ObjectValue")) and ov.Value or nil
 	if not part then return nil, "", "" end
-	local mid, tid = "", ""
-	local m = part:FindFirstChildWhichIsA("SpecialMesh", true)
-	if m then
-		pcall(function() mid = tostring(m.MeshId); tid = tostring(m.TextureId) end)
-	elseif part:IsA("MeshPart") then
-		pcall(function() mid = tostring(part.MeshId); tid = tostring(part.TextureID) end)
-	end
-	return part, mid, tid
+	local mid, tid, sx, sy, sz = MH_meshFieldsOf(part)
+	return part, mid, tid, sx, sy, sz
 end
 
 -- Persist / restore the learned skin map. GLOBAL.
@@ -5259,7 +5302,7 @@ function MH_scanWorldMeshes(names)
 	for _, n in ipairs(names or {}) do
 		if n ~= nil and tostring(n) ~= "" then want[tostring(n):lower()] = true end
 	end
-	local mesh, tex, where
+	local mesh, tex, where, sx, sy, sz
 	local function identify(inst)
 		if want[tostring(inst.Name):lower()] then return true end
 		local oka, at = pcall(function() return inst:GetAttributes() end)
@@ -5281,15 +5324,12 @@ function MH_scanWorldMeshes(names)
 		if okD then
 			for _, dd in ipairs(ds) do
 				if (dd:IsA("SpecialMesh") or dd:IsA("MeshPart")) and identify(dd) then
-					pcall(function()
-						if dd:IsA("SpecialMesh") then
-							mesh, tex = MH_shortId(dd.MeshId), MH_shortId(dd.TextureId)
-						else
-							mesh, tex = MH_shortId(dd.MeshId), MH_shortId(dd.TextureID)
-						end
-						where = dd:GetFullName()
-					end)
-					if mesh and mesh ~= "" then return mesh, tex, "world:" .. tostring(where) end
+					local m2, t2, a, b, c = MH_meshFieldsOf(dd)
+					mesh, tex, sx, sy, sz = MH_shortId(m2), MH_shortId(t2), a, b, c
+					pcall(function() where = dd:GetFullName() end)
+					if mesh ~= "" then
+						return mesh, tex, "world:" .. tostring(where), sx, sy, sz
+					end
 				end
 			end
 		end
@@ -5405,17 +5445,16 @@ function MH_learnOwned(onProgress)
 	for _, k in ipairs(keys) do
 		if _G.MH_LearnStop then break end
 		local cur = map[k]
-		if type(cur) ~= "table" or MH_shortId(cur.mesh) == "" then
+		if type(cur) ~= "table" or MH_shortId(cur.mesh) == "" or not cur.sx then
 			local d = ItemDB[k]
 			local slot = (d and d.ItemType == "Gun") and "Gun" or "Knife"
 			tried = tried + 1
 			local ok = MH_equipReal(k, slot)
 			if ok then
 				task.wait(0.2)                       -- let the display rebuild
-				local _, mid, tid = MH_displayPart(slot)
-				mid, tid = MH_shortId(mid), MH_shortId(tid)
-				if mid ~= "" then
-					map[k] = { mesh = mid, tex = (tid ~= "" and tid or nil) }
+				local _, mid, tid, sx, sy, sz = MH_displayPart(slot)
+				if MH_shortId(mid) ~= "" then
+					map[k] = MH_skinRecord(mid, tid, sx, sy, sz)
 					learned = learned + 1
 					if learned % 10 == 0 then MH_saveMeshMap() end
 				end
@@ -5440,7 +5479,7 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v22")   -- freshness marker so a stale-cache test is obvious
+	add("v23")   -- freshness marker so a stale-cache test is obvious
 	MH_loadMeshMap()
 	local lrn, tot = MH_learnMeshes()
 	add("learn=+" .. tostring(lrn) .. "/" .. tostring(tot))
@@ -5522,8 +5561,9 @@ function MH_equipItem(key, dispName)
 	for _, nm in ipairs(names) do
 		local e = (nm ~= nil) and mm[tostring(nm)] or nil
 		if type(e) == "table" and MH_shortId(e.mesh) ~= "" then
-			local n, ad = MH_applySkin(itemType, e.mesh, e.tex)
-			add("map " .. MH_shortId(e.mesh) .. "/" .. MH_shortId(e.tex) .. " -> " .. tostring(ad))
+			local n, ad = MH_applySkin(itemType, e.mesh, e.tex, e.sx, e.sy, e.sz)
+			add("map " .. MH_shortId(e.mesh) .. "/" .. MH_shortId(e.tex)
+				.. (e.sx and ("@" .. tostring(e.sx)) or "@?") .. " -> " .. tostring(ad))
 			if n > 0 then return true, table.concat(parts, " | "), "map" end
 		end
 	end
@@ -5573,9 +5613,9 @@ function MH_equipItem(key, dispName)
 	end
 	-- 3) our item's mesh sitting somewhere in the world (a lobby shop stand, a
 	-- round weapon) identified by name, ancestor name or attribute
-	local wMesh, wTex, wd2 = MH_scanWorldMeshes(names)
+	local wMesh, wTex, wd2, wsx, wsy, wsz = MH_scanWorldMeshes(names)
 	if wMesh then
-		local n, ad = MH_applySkin(itemType, wMesh, wTex)
+		local n, ad = MH_applySkin(itemType, wMesh, wTex, wsx, wsy, wsz)
 		add(tostring(wd2) .. " " .. wMesh .. " -> " .. tostring(ad))
 		if n > 0 then return true, table.concat(parts, " | "), "world" end
 	else
