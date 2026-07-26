@@ -84,8 +84,22 @@ _G.MH_MenuScale = _G.MH_MenuScale or 0.7
 -- diagnostic's harvest[...] section lists them as mesh+texture pairs.
 -- Entries also carry the mesh SCALE (sx/sy/sz). MM2 sets a different scale per
 -- weapon, so a skin swapped in without it renders at the previous item's size.
+-- Full shape of an entry (only mesh is required):
+--   mesh, tex          asset ids
+--   sx, sy, sz + k     the mesh Scale ("scale") or the part Size in studs ("size")
+--   ox, oy, oz         mesh Offset          vx, vy, vz  mesh VertexColor
+--   cf                 12 CFrame numbers: where it sits on your body
+--   grip               12 CFrame numbers: how it sits in your hand
 _G.MH_MeshMap = _G.MH_MeshMap or {
-	-- ["Gingerscope"] = { mesh = 0, tex = 0, sx = 1, sy = 1, sz = 1 },
+	-- Verified by hand AND matched independently by the skin learner, which read
+	-- the same two ids off the game. Kept as a worked example of the format.
+	["Gingerscope"] = {
+		mesh = "15374602183", tex = "15409041564",
+		sx = 0.084, sy = 0.084, sz = 0.084, k = "scale",
+		ox = 0, oy = 0, oz = 0, vx = 1, vy = 1, vz = 1,
+		cf = { 0.13, 0, 0.075, 1, 0, 0, 0, 0.707388222, 0.706825197, 0, -0.706825197, 0.707388222 },
+		grip = { 0, -0.4, 0.9, 1, 0, 0, 0, 1, 0, 0, 0, 1 },
+	},
 }
 
 -- Weapon looking too big or too small? Multiplies every skin's scale. 1 = the
@@ -2289,7 +2303,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v31 (skip our own fake items; do not learn our own paint)")
+	w("BUILD          = equip-v32 (full skin: offset, vertex colour, placement, grip)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -4636,6 +4650,42 @@ function MH_meshFieldsOf(part)
 	return mid, tid, sx, sy, sz, kind
 end
 
+-- CFrame <-> a plain array of its 12 components, so it survives JSON. GLOBAL.
+function MH_cfTo(cf)
+	local t
+	pcall(function() t = { cf:GetComponents() } end)
+	return t
+end
+function MH_cfFrom(t)
+	if type(t) ~= "table" or #t < 12 then return nil end
+	local cf
+	pcall(function() cf = CFrame.new(table.unpack(t)) end)
+	return cf
+end
+
+-- Read EVERYTHING that makes a weapon look like itself, not just its mesh:
+-- the mesh's Offset and VertexColor, and the Attachment CFrame that decides
+-- where the weapon sits on the body. Skipping these is why a swapped weapon
+-- could sit at the wrong angle even with the right mesh. GLOBAL.
+function MH_readSkin(part)
+	if not part then return nil end
+	local mid, tid, sx, sy, sz, kind = MH_meshFieldsOf(part)
+	local rec = MH_skinRecord(mid, tid, sx, sy, sz, kind)
+	if not rec then return nil end
+	local m = (part:IsA("SpecialMesh") and part) or part:FindFirstChildWhichIsA("SpecialMesh", true)
+	if m then
+		pcall(function()
+			rec.ox, rec.oy, rec.oz = m.Offset.X, m.Offset.Y, m.Offset.Z
+			rec.vx, rec.vy, rec.vz = m.VertexColor.X, m.VertexColor.Y, m.VertexColor.Z
+		end)
+	end
+	pcall(function()
+		local at = part:FindFirstChildWhichIsA("Attachment")
+		if at then rec.cf = MH_cfTo(at.CFrame) end
+	end)
+	return rec
+end
+
 -- Collect the mesh/texture ids of every weapon display the client can already
 -- see (Workspace.WeaponDisplays + every character's DisplayRef parts). Pure
 -- diagnostics: it proves whether real weapon meshes exist client-side and shows
@@ -4995,9 +5045,10 @@ function MH_paintMesh(root, mesh, tex, rec)
 		pcall(function()
 			if not _G.MH_SkinSeen[m] then
 				_G.MH_SkinSeen[m] = true
-				local om, ot, os = m.MeshId, m.TextureId, m.Scale
+				local om, ot, os, oo, ov = m.MeshId, m.TextureId, m.Scale, m.Offset, m.VertexColor
 				_G.MH_SkinUndo[#_G.MH_SkinUndo + 1] = function()
 					m.MeshId = om; m.TextureId = ot; m.Scale = os
+					m.Offset = oo; m.VertexColor = ov
 				end
 			end
 			m.MeshType = Enum.MeshType.FileMesh
@@ -5005,7 +5056,30 @@ function MH_paintMesh(root, mesh, tex, rec)
 			if tnum ~= "" then m.TextureId = "rbxassetid://" .. tnum end
 			-- the item's own scale, else keep whatever the game had
 			if scale then m.Scale = scale end
+			if type(rec) == "table" then
+				if rec.ox and rec.oy and rec.oz then m.Offset = Vector3.new(rec.ox, rec.oy, rec.oz) end
+				if rec.vx and rec.vy and rec.vz then
+					m.VertexColor = Vector3.new(rec.vx, rec.vy, rec.vz)
+				end
+			end
 			n = n + 1
+		end)
+	end
+	-- Where the weapon sits on the body is the display Attachment's CFrame, and
+	-- it is per-weapon too — the right mesh at the wrong attachment hangs at the
+	-- wrong angle.
+	if n > 0 and type(rec) == "table" and rec.cf then
+		pcall(function()
+			local at = root:FindFirstChildWhichIsA("Attachment")
+			if not at then return end
+			local want = MH_cfFrom(rec.cf)
+			if not want then return end
+			if not _G.MH_SkinSeen[at] then
+				_G.MH_SkinSeen[at] = true
+				local was = at.CFrame
+				_G.MH_SkinUndo[#_G.MH_SkinUndo + 1] = function() at.CFrame = was end
+			end
+			at.CFrame = want
 		end)
 	end
 	if n > 0 then return n end
@@ -5202,6 +5276,19 @@ function MH_applySkinNow()
 					for _, t in ipairs(src:GetChildren()) do
 						if t:IsA("Tool") and MH_toolSlot(t) == slot then
 							n = n + MH_paintMesh(t, e.mesh, e.tex, e)
+							-- how the weapon sits in the hand is the Tool's own Grip
+							if e.grip then
+								pcall(function()
+									local want = MH_cfFrom(e.grip)
+									if not want then return end
+									if not _G.MH_SkinSeen[t] then
+										_G.MH_SkinSeen[t] = true
+										local was = t.Grip
+										_G.MH_SkinUndo[#_G.MH_SkinUndo + 1] = function() t.Grip = was end
+									end
+									t.Grip = want
+								end)
+							end
 						end
 					end
 				end
@@ -5214,10 +5301,17 @@ end
 -- Set the skin for a slot and keep it applied: the game rebuilds the display on
 -- respawn and hands out a fresh Tool every round, so a light keep-alive loop
 -- re-applies it. Returns (meshes changed, detail). GLOBAL.
-function MH_applySkin(itemType, mesh, tex, sx, sy, sz, kind)
+function MH_applySkin(itemType, mesh, tex, sx, sy, sz, kind, rec)
 	if MH_shortId(mesh) == "" then return 0, "no mesh id" end
 	_G.MH_SkinOverride = _G.MH_SkinOverride or {}
-	_G.MH_SkinOverride[itemType] = MH_skinRecord(mesh, tex, sx, sy, sz, kind)
+	local use = MH_skinRecord(mesh, tex, sx, sy, sz, kind)
+	-- carry the placement fields through: a mesh alone is not the whole look
+	if type(rec) == "table" and use then
+		for _, f in ipairs({ "ox", "oy", "oz", "vx", "vy", "vz", "cf", "grip" }) do
+			use[f] = rec[f]
+		end
+	end
+	_G.MH_SkinOverride[itemType] = use
 	-- a stray part welded on by an older build would now sit next to the weapon
 	pcall(function()
 		local c = game:GetService("Players").LocalPlayer.Character
@@ -5304,13 +5398,13 @@ function MH_learnMeshes()
 						end
 					end
 				end
-				local _, mid, tid, sx, sy, sz, kind = MH_displayPart2(c, slot)
+				local dpart, mid = MH_displayPart2(c, slot)
 				if wornKey and MH_shortId(mid) ~= "" then
 					local cur = map[wornKey]
 					-- re-learn entries saved before we recorded scale, otherwise the
 					-- swapped-in weapon keeps the previous item's size
 					if type(cur) ~= "table" or MH_shortId(cur.mesh) == "" or not cur.k or cur.g then
-						map[wornKey] = MH_skinRecord(mid, tid, sx, sy, sz, kind)
+						map[wornKey] = MH_readSkin(dpart)
 						learned = learned + 1
 					end
 				end
@@ -5638,22 +5732,22 @@ function MH_learnOwned(onProgress)
 				-- already wearing it? then the display is ALREADY this item, and
 				-- waiting for it to change would time out on correct data
 				if plr:GetAttribute("Equipped" .. slot) == k and MH_shortId(was0) ~= "" then
-					local _, mid, tid, sx, sy, sz, kind = MH_displayPart(slot)
-					map[k] = MH_skinRecord(mid, tid, sx, sy, sz, kind)
+					local dpart = MH_displayPart(slot)
+					map[k] = MH_readSkin(dpart)
 					learned = learned + 1
 					got = true
 				elseif MH_equipReal(k, slot, wait4) then
 					-- Wait for the display to actually CHANGE. A fixed sleep recorded
 					-- whatever was still on the body, so a slow rebuild filed the
 					-- PREVIOUS item's mesh and scale under this key.
-					local mid, tid, sx, sy, sz, kind
+					local dpart, mid
 					for _ = 1, 16 do
 						task.wait(0.1)
-						_, mid, tid, sx, sy, sz, kind = MH_displayPart(slot)
+						dpart, mid = MH_displayPart(slot)
 						if MH_shortId(mid) ~= "" and tostring(mid) ~= tostring(was0) then break end
 					end
 					if MH_shortId(mid) ~= "" and tostring(mid) ~= tostring(was0) then
-						map[k] = MH_skinRecord(mid, tid, sx, sy, sz, kind)
+						map[k] = MH_readSkin(dpart)
 						learned = learned + 1
 						got = true
 						if learned % 10 == 0 then MH_saveMeshMap() end
@@ -5706,7 +5800,7 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v31")   -- freshness marker so a stale-cache test is obvious
+	add("v32")   -- freshness marker so a stale-cache test is obvious
 	MH_loadMeshMap()
 	local lrn, tot = MH_learnMeshes()
 	add("learn=+" .. tostring(lrn) .. "/" .. tostring(tot))
@@ -5790,7 +5884,7 @@ function MH_equipItem(key, dispName)
 	for _, nm in ipairs(names) do
 		local e = (nm ~= nil) and MH_normRec(mm[tostring(nm)]) or nil
 		if type(e) == "table" and MH_shortId(e.mesh) ~= "" then
-			local n, ad = MH_applySkin(itemType, e.mesh, e.tex, e.sx, e.sy, e.sz, e.k)
+			local n, ad = MH_applySkin(itemType, e.mesh, e.tex, e.sx, e.sy, e.sz, e.k, e)
 			add("map " .. MH_shortId(e.mesh) .. "/" .. MH_shortId(e.tex)
 				.. " " .. tostring(e.k or "?") .. "("
 				.. string.format("%.3f,%.3f,%.3f", tonumber(e.sx) or 0, tonumber(e.sy) or 0,
