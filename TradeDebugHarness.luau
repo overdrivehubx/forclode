@@ -77,6 +77,10 @@ _G.MH_SkinModels = _G.MH_SkinModels or {
 -- MollyHub window.
 _G.MH_MenuScale = _G.MH_MenuScale or 0.7
 
+-- Where the equipped weapon sits in your hand: {x, y, z, rotX, rotY, rotZ} —
+-- studs and degrees. Tweak if the model floats or points the wrong way.
+_G.MH_HandOffset = _G.MH_HandOffset or { 0, -1, 0, 0, 0, 0 }
+
 --==============================================================================
 -- SAFETY WRAPPER — guarantee a visible result on EVERY executor.
 -- Some mobile executors (e.g. Potassium) reject APIs others allow, which can
@@ -2270,7 +2274,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v16 (try ItemID as mesh, renders on any account)")
+	w("BUILD          = equip-v17 (marker swap -> let the game build the display)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -2335,6 +2339,56 @@ function MH_Dump()
 				pcall(function() mid = tostring(m.MeshId) end)
 				pcall(function() tid = tostring(m.TextureId) end)
 				w("-- MY " .. rn .. ": mesh=" .. mid .. " tex=" .. tid .. " --")
+			end
+		end
+	end)
+	-- Every weapon mesh the client can already see + the replicated state that
+	-- drives it. This is what tells us how to make the 3D model appear.
+	pcall(function()
+		w("-- weapon meshes visible on the client --")
+		w("  " .. MH_harvestDisplays(24))
+		local wd = workspace:FindFirstChild("WeaponDisplays")
+		if wd then w("-- Workspace.WeaponDisplays --"); dump(wd, 0, 4, 10)
+		else w("-- Workspace.WeaponDisplays: <none> --") end
+		for _, src in ipairs({ LocalPlayer, LocalPlayer.Character }) do
+			if src then
+				local ok, at = pcall(function() return src:GetAttributes() end)
+				local list = {}
+				if ok and type(at) == "table" then
+					for k, v in pairs(at) do list[#list + 1] = tostring(k) .. "=" .. tostring(v) end
+				end
+				table.sort(list)
+				w("-- attributes of " .. src.Name .. " (" .. src.ClassName .. "): "
+					.. (#list > 0 and table.concat(list, ", ") or "<none>"))
+			end
+		end
+		local vals = {}
+		for _, src in ipairs({ LocalPlayer, LocalPlayer.Character }) do
+			if src then
+				for _, dd in ipairs(src:GetChildren()) do
+					if dd:IsA("ValueBase") then
+						vals[#vals + 1] = dd.ClassName .. " " .. dd.Name .. "=" .. tostring(dd.Value)
+					end
+				end
+			end
+		end
+		w("-- Value objects on player/character: " .. (#vals > 0 and table.concat(vals, ", ") or "<none>"))
+	end)
+	-- Every client service and the keys it exposes — the weapon-display builder
+	-- has to be one of these.
+	pcall(function()
+		local cs = game:GetService("ReplicatedStorage"):FindFirstChild("ClientServices")
+		if not cs then return end
+		w("-- ClientServices modules --")
+		for _, m in ipairs(cs:GetChildren()) do
+			if m:IsA("ModuleScript") then
+				local okReq, mod = pcall(require, m)
+				local keys = {}
+				if okReq and type(mod) == "table" then
+					for k, v in pairs(mod) do keys[#keys + 1] = tostring(k) .. ":" .. type(v) end
+					table.sort(keys)
+				end
+				w("  " .. m.Name .. " -> " .. (#keys > 0 and table.concat(keys, ", ") or type(mod)))
 			end
 		end
 	end)
@@ -4475,23 +4529,268 @@ function MH_attachToHand(clone)
 	end
 	local hand = char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm")
 	if not hand then clone:Destroy(); return false, "no right hand" end
-	local prim = (clone:IsA("BasePart") and clone) or clone.PrimaryPart
-		or clone:FindFirstChild("Handle") or clone:FindFirstChildWhichIsA("BasePart", true)
+	-- NB: .PrimaryPart only exists on Model — a Folder/Part clone would throw.
+	local prim
+	if clone:IsA("BasePart") then
+		prim = clone
+	else
+		pcall(function() prim = clone.PrimaryPart end)
+		if not prim then
+			local h = clone:FindFirstChild("Handle")
+			if h and h:IsA("BasePart") then prim = h end
+		end
+		prim = prim or clone:FindFirstChildWhichIsA("BasePart", true)
+	end
 	if not prim then clone:Destroy(); return false, "no primary part" end
 	if clone:IsA("Model") and not clone.PrimaryPart then pcall(function() clone.PrimaryPart = prim end) end
+	-- unanchor everything, otherwise the weld can't move it with the arm
+	for _, p in ipairs(clone:GetDescendants()) do
+		if p:IsA("BasePart") then pcall(function() p.Anchored = false end) end
+	end
+	pcall(function() prim.Anchored = false end)
+	local o = _G.MH_HandOffset or { 0, -1, 0, 0, 0, 0 }
 	local w = Instance.new("Weld")
 	w.Part0 = hand
 	w.Part1 = prim
-	w.C0 = CFrame.new(0, -1, 0)
+	w.C0 = CFrame.new(o[1] or 0, o[2] or -1, o[3] or 0)
+		* CFrame.Angles(math.rad(o[4] or 0), math.rad(o[5] or 0), math.rad(o[6] or 0))
 	w.Parent = prim
 	clone.Parent = char
 	return true, "welded to hand"
 end
 
+-- "rbxassetid://123" / "http://.../123" / 123 -> "123" (""; if none). GLOBAL.
+function MH_shortId(s)
+	return (tostring(s or ""):match("(%d+)")) or ""
+end
+
+-- MY character's weapon display for one slot (Character.DisplayRefKnife/Gun ->
+-- a Part carrying the weapon's SpecialMesh). This is how MM2 shows the equipped
+-- weapon on the body, so its mesh ids are REAL weapon meshes.
+-- Returns (part, meshId, texId). GLOBAL.
+function MH_displayPart(itemType)
+	local plr = game:GetService("Players").LocalPlayer
+	local char = plr and plr.Character
+	if not char then return nil, "", "" end
+	local ov = char:FindFirstChild("DisplayRef" .. tostring(itemType))
+	local part = (ov and ov:IsA("ObjectValue")) and ov.Value or nil
+	if not part then return nil, "", "" end
+	local mid, tid = "", ""
+	local m = part:FindFirstChildWhichIsA("SpecialMesh", true)
+	if m then
+		pcall(function() mid = tostring(m.MeshId); tid = tostring(m.TextureId) end)
+	elseif part:IsA("MeshPart") then
+		pcall(function() mid = tostring(part.MeshId); tid = tostring(part.TextureID) end)
+	end
+	return part, mid, tid
+end
+
+-- Collect the mesh/texture ids of every weapon display the client can already
+-- see (Workspace.WeaponDisplays + every character's DisplayRef parts). Pure
+-- diagnostics: it proves whether real weapon meshes exist client-side and shows
+-- their ids. Returns a short string. GLOBAL.
+function MH_harvestDisplays(limit)
+	limit = limit or 10
+	local out, seen = {}, {}
+	local function grab(tag, root)
+		if not root then return end
+		local list = {}
+		local okd, ds = pcall(function() return root:GetDescendants() end)
+		if okd then for _, dd in ipairs(ds) do list[#list + 1] = dd end end
+		if root:IsA("BasePart") then list[#list + 1] = root end
+		for _, dd in ipairs(list) do
+			if #out >= limit then return end
+			local mid, tid = "", ""
+			if dd:IsA("SpecialMesh") then
+				pcall(function() mid = tostring(dd.MeshId); tid = tostring(dd.TextureId) end)
+			elseif dd:IsA("MeshPart") then
+				pcall(function() mid = tostring(dd.MeshId); tid = tostring(dd.TextureID) end)
+			end
+			mid = MH_shortId(mid)
+			if mid ~= "" and not seen[mid] then
+				seen[mid] = true
+				local nm = tostring((dd.Parent and dd.Parent.Name) or dd.Name)
+				out[#out + 1] = tag .. "/" .. nm .. "=" .. mid
+					.. (MH_shortId(tid) ~= "" and ("+" .. MH_shortId(tid)) or "")
+			end
+		end
+	end
+	pcall(function() grab("WD", workspace:FindFirstChild("WeaponDisplays")) end)
+	pcall(function()
+		for _, p in ipairs(game:GetService("Players"):GetPlayers()) do
+			local c = p.Character
+			if c then
+				for _, rn in ipairs({ "DisplayRefKnife", "DisplayRefGun" }) do
+					local ov = c:FindFirstChild(rn)
+					if ov and ov:IsA("ObjectValue") and ov.Value then
+						grab(p.Name .. ":" .. rn:sub(11), ov.Value)
+					end
+				end
+			end
+		end
+	end)
+	if #out == 0 then return "none" end
+	return table.concat(out, " ")
+end
+
+-- The 3D display is driven by REPLICATED state, not by ProfileData — so find
+-- whatever attribute / StringValue currently holds the really-equipped key and
+-- overwrite it locally with ours. If the display builder is client-side it will
+-- rebuild the weapon FROM THE GAME'S OWN mesh database (which knows every item),
+-- which is exactly what we can't do by hand. Client-only: writes to replicated
+-- values never travel back up. Returns (hits, detail). GLOBAL.
+function MH_markerSwap(realKey, newKey, itemType)
+	local plr = game:GetService("Players").LocalPlayer
+	if not plr then return 0, "no player" end
+	local hits = {}
+	local targets = { plr }
+	for _, c in ipairs(plr:GetChildren()) do
+		if not c:IsA("PlayerGui") and not c:IsA("StarterGear") then targets[#targets + 1] = c end
+	end
+	local char = plr.Character
+	if char then
+		targets[#targets + 1] = char
+		local okd, ds = pcall(function() return char:GetDescendants() end)
+		if okd then for _, dd in ipairs(ds) do targets[#targets + 1] = dd end end
+	end
+	pcall(function()
+		local wd = workspace:FindFirstChild("WeaponDisplays")
+		if wd then for _, dd in ipairs(wd:GetDescendants()) do targets[#targets + 1] = dd end end
+	end)
+	local realLow = realKey and tostring(realKey):lower() or nil
+	local slotLow = tostring(itemType):lower()
+	for _, inst in ipairs(targets) do
+		-- (a) attributes holding the equipped key
+		local oka, attrs = pcall(function() return inst:GetAttributes() end)
+		if oka and type(attrs) == "table" then
+			for an, av in pairs(attrs) do
+				local aLow = tostring(an):lower()
+				local matchVal = realLow and type(av) == "string" and av:lower() == realLow
+				local matchName = (aLow == slotLow or aLow == "equipped" .. slotLow
+					or aLow == slotLow .. "skin" or aLow == "current" .. slotLow)
+					and type(av) == "string"
+				if matchVal or matchName then
+					if pcall(function() inst:SetAttribute(an, newKey) end) then
+						hits[#hits + 1] = "@" .. inst.Name .. "." .. tostring(an)
+					end
+				end
+			end
+		end
+		-- (b) StringValues holding the equipped key
+		if inst:IsA("StringValue") then
+			local nLow = inst.Name:lower()
+			if (realLow and tostring(inst.Value):lower() == realLow)
+				or nLow == slotLow or nLow == "equipped" .. slotLow then
+				if pcall(function() inst.Value = newKey end) then
+					hits[#hits + 1] = "$" .. inst.Name
+				end
+			end
+		end
+		if #hits >= 12 then break end
+	end
+	if #hits == 0 then return 0, "no marker (real=" .. tostring(realKey) .. ")" end
+	return #hits, table.concat(hits, ",")
+end
+
+-- Hunt the CLIENT's own module tree for a mesh/texture id filed under this item.
+-- MM2's item cards carry no mesh field, but the code that builds weapon displays
+-- must get the mesh from somewhere client-side, so look inside every plausible
+-- ModuleScript (its returned table AND its functions' upvalue tables, which is
+-- where MM2 hides its databases). Returns (meshId, texId, detail). GLOBAL.
+function MH_scanMeshDB(key, names)
+	local want = { [tostring(key):lower()] = true }
+	for _, n in ipairs(names or {}) do
+		if n ~= nil and tostring(n) ~= "" then want[tostring(n):lower()] = true end
+	end
+	local mods = {}
+	pcall(function()
+		for _, dd in ipairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
+			if dd:IsA("ModuleScript") then
+				local ln = dd.Name:lower()
+				if ln:find("weapon") or ln:find("mesh") or ln:find("display") or ln:find("skin")
+					or ln:find("cosmetic") or ln:find("item") or ln:find("asset")
+					or ln:find("model") or ln:find("knife") or ln:find("gun") or ln:find("equip") then
+					mods[#mods + 1] = dd
+					if #mods >= 30 then break end
+				end
+			end
+		end
+	end)
+	local meshId, texId, where
+	local function harvest(rec, tag)
+		if type(rec) ~= "table" then return end
+		for k, v in pairs(rec) do
+			local lk = tostring(k):lower()
+			if type(v) == "string" or type(v) == "number" then
+				local sv = tostring(v)
+				if sv:match("%d%d%d%d%d+") then
+					if lk:find("mesh") and not meshId then meshId = sv; where = tag end
+					if (lk:find("tex") or lk:find("decal")) and not texId then texId = sv end
+				end
+			end
+		end
+	end
+	local function walk(t, depth, seen, tag)
+		if depth > 4 or seen[t] then return end
+		seen[t] = true
+		for k, v in pairs(t) do
+			if type(v) == "table" then
+				if type(k) == "string" and want[k:lower()] then harvest(v, tag .. "." .. k) end
+				if not meshId then walk(v, depth + 1, seen, tag) end
+			end
+		end
+	end
+	local hasUv = type(debug) == "table" and type(debug.getupvalue) == "function"
+	for _, m in ipairs(mods) do
+		local okr, mod = pcall(require, m)
+		if okr and type(mod) == "table" then
+			pcall(function() walk(mod, 0, {}, m.Name) end)
+			if not meshId and hasUv then
+				for k, v in pairs(mod) do
+					if type(v) == "function" then
+						for i = 1, 8 do
+							local oku, uv = pcall(debug.getupvalue, v, i)
+							if not oku then break end
+							if type(uv) == "table" then
+								pcall(function() walk(uv, 0, {}, m.Name .. ":" .. tostring(k)) end)
+							end
+						end
+					end
+					if meshId then break end
+				end
+			end
+		end
+		if meshId then break end
+	end
+	if not meshId then return nil, nil, "no mesh in " .. #mods .. " mods" end
+	return meshId, texId, "db:" .. tostring(where)
+end
+
+-- Part + SpecialMesh from raw ids. Meshes and textures render on ANY account
+-- (unlike Models, which are ownership-gated), so this is the one build path that
+-- can work for an item we don't own. Returns (part, detail). GLOBAL.
+function MH_buildMeshPart(meshId, texId, tag)
+	local mnum = MH_shortId(meshId)
+	if mnum == "" then return nil, "no mesh id" end
+	local part = Instance.new("Part")
+	part.Size = Vector3.new(1, 1, 1)
+	part.CanCollide = false
+	part.Massless = true
+	part.Anchored = false
+	local m = Instance.new("SpecialMesh")
+	m.MeshType = Enum.MeshType.FileMesh
+	m.MeshId = "rbxassetid://" .. mnum
+	local tnum = MH_shortId(texId)
+	if tnum ~= "" then m.TextureId = "rbxassetid://" .. tnum end
+	m.Parent = part
+	return part, (tag or "mesh") .. ":" .. mnum .. (tnum ~= "" and ("/" .. tnum) or "")
+end
+
 -- Fallback: find a weapon Instance whose name matches ANY of the given candidate
 -- names (item key, display name, ItemName, numeric ItemID) anywhere the client
 -- can reach — including the whole Workspace in case a round is live — and attach
--- it. Returns (ok, detail). GLOBAL.
+-- it. Matches ANY class (MM2's weapon visuals are Parts with a SpecialMesh, not
+-- Tools/MeshParts, so a class filter would miss them). Returns (ok, detail). GLOBAL.
 function MH_equipVisual(names)
 	local want = {}
 	for _, n in ipairs(names) do
@@ -4500,16 +4799,15 @@ function MH_equipVisual(names)
 	local found
 	local roots = { game:GetService("ReplicatedStorage"), workspace }
 	local rf = game:GetService("ReplicatedFirst"); if rf then roots[#roots + 1] = rf end
+	pcall(function() roots[#roots + 1] = game:GetService("Lighting") end)
 	for _, root in ipairs(roots) do
 		local okD, ds = pcall(function() return root:GetDescendants() end)
 		if okD then
 			for _, inst in ipairs(ds) do
-				if inst:IsA("Tool") or inst:IsA("Model") or inst:IsA("MeshPart") then
-					if want[inst.Name:lower()] then
-						if inst:IsA("BasePart") or inst.PrimaryPart
-							or inst:FindFirstChildWhichIsA("BasePart", true) then
-							found = inst; break
-						end
+				if want[inst.Name:lower()] and not inst:IsA("GuiBase") and not inst:IsA("GuiObject")
+					and not inst:IsA("LuaSourceContainer") and not inst:IsA("ValueBase") then
+					if inst:IsA("BasePart") or inst:FindFirstChildWhichIsA("BasePart", true) then
+						found = inst; break
 					end
 				end
 			end
@@ -4529,13 +4827,33 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v16")   -- freshness marker so a stale-cache test is obvious
+	add("v17")   -- freshness marker so a stale-cache test is obvious
+	local d0 = ItemDB[key]
+	local itemType = (d0 and d0.ItemType == "Gun") and "Gun" or "Knife"
+	add("type=" .. itemType)
+	-- Snapshot what the game REALLY has equipped + the mesh its display shows
+	-- right now, so we can (a) find the replicated markers that hold that key and
+	-- (b) tell whether the display actually rebuilt for our item.
+	local realKey
+	pcall(function()
+		local cs = game:GetService("ReplicatedStorage"):FindFirstChild("ClientServices")
+		local esM = cs and cs:FindFirstChild("EquipService")
+		if not esM then return end
+		local okr, ES = pcall(require, esM)
+		if okr and type(ES) == "table" and type(ES.EquipItem) == "function"
+			and type(debug) == "table" and type(debug.getupvalue) == "function" then
+			local pd
+			pcall(function() pd = debug.getupvalue(ES.EquipItem, 2) end)
+			if type(pd) == "table" and type(pd.Weapons) == "table"
+				and type(pd.Weapons.Equipped) == "table" then
+				realKey = pd.Weapons.Equipped[itemType]
+			end
+		end
+	end)
+	local _, mesh0 = MH_displayPart(itemType)
 	-- 1) menu equip (data + client signal, no FireServer)
 	pcall(function()
 		local rs = game:GetService("ReplicatedStorage")
-		local d = ItemDB[key]
-		local itemType = (d and d.ItemType == "Gun") and "Gun" or "Knife"
-		add("type=" .. itemType)
 		local cs = rs:FindFirstChild("ClientServices")
 		local esM = cs and cs:FindFirstChild("EquipService")
 		local ES
@@ -4575,6 +4893,31 @@ function MH_equipItem(key, dispName)
 	else
 		add("getInfo:" .. tostring(gd))
 	end
+	-- 1b) BEST SHOT: make the GAME build the weapon for us. Overwrite the
+	-- replicated markers that hold the equipped key, wait a few frames, and see if
+	-- our DisplayRef part rebuilt with a different mesh — if it did, the game just
+	-- resolved our item's real mesh and we only have to copy it into the hand.
+	local mk, mkd = MH_markerSwap(realKey, key, itemType)
+	add("mk" .. tostring(mk) .. ":" .. tostring(mkd))
+	local dPart, dMesh, dTex
+	for _ = 1, 12 do
+		task.wait(0.05)
+		dPart, dMesh, dTex = MH_displayPart(itemType)
+		if dMesh ~= "" and dMesh ~= mesh0 then break end
+	end
+	add("disp=" .. (MH_shortId(dMesh) ~= "" and MH_shortId(dMesh) or "none")
+		.. (dMesh ~= "" and dMesh == mesh0 and "(same)" or ""))
+	-- the real weapon meshes the client can already see. Non-empty here means the
+	-- meshes ARE reachable and we only need the right id per item.
+	add("harvest[" .. MH_harvestDisplays(8) .. "]")
+	if dPart and dMesh ~= "" and dMesh ~= mesh0 then
+		local mp, mpd = MH_buildMeshPart(dMesh, dTex, "display")
+		if mp then
+			local aok, ad = MH_attachToHand(mp)
+			add(tostring(mpd) .. " -> " .. tostring(ad))
+			if aok then return true, table.concat(parts, " | "), "display" end
+		end
+	end
 	-- 2a) YOUR own uploaded model (_G.MH_SkinModels) takes priority — this is the
 	-- reliable path since MM2's own models aren't loadable client-side.
 	local skins = _G.MH_SkinModels or {}
@@ -4588,26 +4931,44 @@ function MH_equipItem(key, dispName)
 		if m then
 			local aok, ad = MH_attachToHand(m)
 			add("skin " .. tostring(md) .. " -> " .. tostring(ad))
-			if aok then return true, table.concat(parts, " | ") end
+			if aok then return true, table.concat(parts, " | "), "skin" end
 		else
 			add("skin:" .. tostring(md))
 		end
 	end
-	-- 2b) build from the game's own item record (record instance / asset id / mesh)
+	-- 2b) a mesh id filed under this item anywhere in the client's own modules
+	local mId, tId, sd = MH_scanMeshDB(key, names)
+	if mId then
+		local mp, mpd = MH_buildMeshPart(mId, tId, "dbmesh")
+		if mp then
+			local aok, ad = MH_attachToHand(mp)
+			add(tostring(sd) .. " " .. tostring(mpd) .. " -> " .. tostring(ad))
+			if aok then return true, table.concat(parts, " | "), "dbmesh" end
+		end
+	else
+		add("scan:" .. tostring(sd))
+	end
+	-- 3) attach an instance named by key / ItemName / ItemID anywhere on the client
+	local vok, vd = MH_equipVisual(names)
+	add("nameSearch:" .. tostring(vd))
+	if vok then return true, table.concat(parts, " | "), "name" end
+	-- 4) last resort, and a GUESS: treat the item record's ItemID as a mesh id.
+	-- It attaches something either way, so it is reported as "guess" — if nothing
+	-- shows up in your hand, that id was a model id, not a mesh id.
 	if info then
 		local handle, hd = MH_buildHandleFromInfo(info)
 		if handle then
 			local aok, ad = MH_attachToHand(handle)
 			add("build " .. tostring(hd) .. " -> " .. tostring(ad))
-			if aok then return true, table.concat(parts, " | ") end
+			if aok then return true, table.concat(parts, " | "), "guess" end
 		else
 			add("build:" .. tostring(hd))
 		end
 	end
-	-- 3) fallback: attach an instance named by key / ItemName / ItemID anywhere
-	local vok, vd = MH_equipVisual(names)
-	add("nameSearch:" .. tostring(vd))
-	return vok, table.concat(parts, " | ")
+	-- diagnostics: the real weapon meshes the client can already see. If this is
+	-- non-empty the meshes ARE reachable and we only need the right id per item.
+	add("harvest[" .. MH_harvestDisplays(8) .. "]")
+	return false, table.concat(parts, " | ")
 end
 
 -- Rank catalog matches for a typed name: exact key/name > prefix > contains.
@@ -4917,10 +5278,11 @@ if true then
 						doSpawn(spName, 1, false)                 -- add to trade + game inventory
 						-- task.spawn: MH_equipItem may yield (game:GetObjects loads the asset)
 						task.spawn(function()
-							local okq, detail = MH_equipItem(it.key, it.name)
+							local okq, detail, how = MH_equipItem(it.key, it.name)
 							pcall(function() setclipboard("MH EQUIP: " .. tostring(detail)) end)
 							-- keep the toast SHORT; full diagnostic goes to the clipboard
-							notify("Equip", it.name .. (okq and " - in hand" or " - menu only (diag copied)"))
+							notify("Equip", it.name .. (okq and (" - in hand [" .. tostring(how) .. "]")
+								or " - menu only (diag copied)"))
 						end)
 					end })
 				S:Button({ Title = "Load LIVE items", Desc = "read the real catalog from memory",
