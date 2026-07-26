@@ -2283,7 +2283,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v19 (learn skins from players + base-mesh fallback)")
+	w("BUILD          = equip-v20 (restyle the weapon you wear, client-side)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -4907,6 +4907,135 @@ function MH_meshDBLookup(anchorMesh, anchorKeys, wantNames)
 	return nil, nil, tag .. " no entry; keys{" .. table.concat(sample, ",") .. "}"
 end
 
+--==============================================================================
+-- CLIENT-SIDE SKIN SWAP
+-- Not "spawn a weapon in your hand" — RESTYLE the weapon you are already
+-- wearing. MM2 draws your equipped weapon on your body through
+-- Character.DisplayRefKnife/Gun, and hands you a Tool when a round starts. Both
+-- carry a mesh we can repoint locally, so one equipped gun visually becomes
+-- another, for your eyes only. Nothing is sent to the server.
+--==============================================================================
+
+-- Repoint every mesh under `root` at our skin, remembering the originals so the
+-- change can be undone. Returns how many meshes changed. GLOBAL.
+function MH_paintMesh(root, mesh, tex)
+	if not root then return 0 end
+	local mnum = MH_shortId(mesh)
+	if mnum == "" then return 0 end
+	local tnum = MH_shortId(tex)
+	_G.MH_SkinOrig = _G.MH_SkinOrig or {}
+	local targets = {}
+	if root:IsA("SpecialMesh") or root:IsA("MeshPart") then targets[1] = root end
+	local okd, ds = pcall(function() return root:GetDescendants() end)
+	if okd then
+		for _, dd in ipairs(ds) do
+			if dd:IsA("SpecialMesh") or dd:IsA("MeshPart") then targets[#targets + 1] = dd end
+		end
+	end
+	local n = 0
+	for _, m in ipairs(targets) do
+		local isSM = m:IsA("SpecialMesh")
+		pcall(function()
+			if not _G.MH_SkinOrig[m] then
+				_G.MH_SkinOrig[m] = { mesh = isSM and m.MeshId or m.MeshId,
+					tex = isSM and m.TextureId or m.TextureID }
+			end
+			if isSM then
+				m.MeshType = Enum.MeshType.FileMesh
+				m.MeshId = "rbxassetid://" .. mnum
+				if tnum ~= "" then m.TextureId = "rbxassetid://" .. tnum end
+			else
+				-- MeshPart.MeshId is read-only at runtime; only its texture moves
+				if tnum ~= "" then m.TextureID = "rbxassetid://" .. tnum end
+			end
+			n = n + 1
+		end)
+	end
+	return n
+end
+
+-- Is this Tool the knife or the gun? GLOBAL.
+function MH_toolSlot(tool)
+	local n = tostring(tool.Name):lower()
+	if n:find("gun") or n:find("revolver") or n:find("pistol") then return "Gun" end
+	if n:find("knife") or n:find("blade") then return "Knife" end
+	return nil
+end
+
+-- Push the stored skins onto everything that shows them right now: the body
+-- display and any Tool you are holding. Safe to call repeatedly. GLOBAL.
+function MH_applySkinNow()
+	local ov = _G.MH_SkinOverride or {}
+	local plr = game:GetService("Players").LocalPlayer
+	local char = plr and plr.Character
+	if not char then return 0 end
+	local n = 0
+	for _, slot in ipairs({ "Knife", "Gun" }) do
+		local e = ov[slot]
+		if type(e) == "table" and MH_shortId(e.mesh) ~= "" then
+			local part = MH_displayPart(slot)
+			if part then n = n + MH_paintMesh(part, e.mesh, e.tex) end
+			local bp = plr:FindFirstChildOfClass("Backpack")
+			for _, src in ipairs({ char, bp }) do
+				if src then
+					for _, t in ipairs(src:GetChildren()) do
+						if t:IsA("Tool") and MH_toolSlot(t) == slot then
+							n = n + MH_paintMesh(t, e.mesh, e.tex)
+						end
+					end
+				end
+			end
+		end
+	end
+	return n
+end
+
+-- Set the skin for a slot and keep it applied: the game rebuilds the display on
+-- respawn and hands out a fresh Tool every round, so a light keep-alive loop
+-- re-applies it. Returns (meshes changed, detail). GLOBAL.
+function MH_applySkin(itemType, mesh, tex)
+	if MH_shortId(mesh) == "" then return 0, "no mesh id" end
+	_G.MH_SkinOverride = _G.MH_SkinOverride or {}
+	_G.MH_SkinOverride[itemType] = { mesh = MH_shortId(mesh), tex = MH_shortId(tex) }
+	-- a stray part welded on by an older build would now sit next to the weapon
+	pcall(function()
+		local c = game:GetService("Players").LocalPlayer.Character
+		local old = c and c:FindFirstChild("__MHequip")
+		if old then old:Destroy() end
+	end)
+	local n = MH_applySkinNow()
+	if not _G.MH_SkinLoop then
+		_G.MH_SkinLoop = true
+		task.spawn(function()
+			while _G.MH_SkinLoop do
+				task.wait(0.5)
+				pcall(MH_applySkinNow)
+			end
+		end)
+	end
+	if n == 0 then return 0, "nothing to restyle (no display/tool)" end
+	return n, "restyled " .. tostring(n) .. " mesh(es)"
+end
+
+-- Put every mesh we touched back the way it was and stop the keep-alive. GLOBAL.
+function MH_restoreSkins()
+	_G.MH_SkinLoop = false
+	_G.MH_SkinOverride = {}
+	local n = 0
+	for m, o in pairs(_G.MH_SkinOrig or {}) do
+		pcall(function()
+			if m:IsA("SpecialMesh") then
+				m.MeshId = o.mesh; m.TextureId = o.tex
+			else
+				m.TextureID = o.tex
+			end
+			n = n + 1
+		end)
+	end
+	_G.MH_SkinOrig = {}
+	return n
+end
+
 -- LEARN skins from the players around you. Every player's weapon display is a
 -- replicated instance carrying the real mesh + texture of what they wear, and
 -- the key they wear is on an attribute next to it — so pair the two and we get
@@ -4916,8 +5045,13 @@ function MH_learnMeshes()
 	local map = _G.MH_MeshMap or {}
 	_G.MH_MeshMap = map
 	local learned, total = 0, 0
+	local me = game:GetService("Players").LocalPlayer
 	for _, p in ipairs(game:GetService("Players"):GetPlayers()) do
 		local c = p.Character
+		-- never learn from YOURSELF: our own equipped-key attribute is the one an
+		-- older build overwrote with a fake key, which would pair that item with
+		-- the default weapon's mesh and poison the saved map.
+		if p == me then c = nil end
 		if c then
 			for _, slot in ipairs({ "Knife", "Gun" }) do
 				local wornKey
@@ -4968,7 +5102,7 @@ end
 -- Persist / restore the learned skin map. GLOBAL.
 function MH_saveMeshMap()
 	pcall(function()
-		writefile("MollyHub_meshmap.json",
+		writefile("MollyHub_skins.json",
 			game:GetService("HttpService"):JSONEncode(_G.MH_MeshMap or {}))
 	end)
 end
@@ -4976,8 +5110,8 @@ function MH_loadMeshMap()
 	if _G.MH_MeshMapLoaded then return end
 	_G.MH_MeshMapLoaded = true
 	pcall(function()
-		if not (isfile and isfile("MollyHub_meshmap.json") and readfile) then return end
-		local saved = game:GetService("HttpService"):JSONDecode(readfile("MollyHub_meshmap.json"))
+		if not (isfile and isfile("MollyHub_skins.json") and readfile) then return end
+		local saved = game:GetService("HttpService"):JSONDecode(readfile("MollyHub_skins.json"))
 		if type(saved) ~= "table" then return end
 		local map = _G.MH_MeshMap or {}
 		_G.MH_MeshMap = map
@@ -5072,7 +5206,7 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v19")   -- freshness marker so a stale-cache test is obvious
+	add("v20")   -- freshness marker so a stale-cache test is obvious
 	MH_loadMeshMap()
 	local lrn, tot = MH_learnMeshes()
 	add("learn=+" .. tostring(lrn) .. "/" .. tostring(tot))
@@ -5141,42 +5275,22 @@ function MH_equipItem(key, dispName)
 	else
 		add("getInfo:" .. tostring(gd))
 	end
-	-- 1b) BEST SHOT: make the GAME build the weapon for us. Overwrite the
-	-- replicated markers that hold the equipped key, wait a few frames, and see if
-	-- our DisplayRef part rebuilt with a different mesh — if it did, the game just
-	-- resolved our item's real mesh and we only have to copy it into the hand.
-	local mk, mkd = MH_markerSwap(realKey, key, itemType)
-	add("mk" .. tostring(mk) .. ":" .. tostring(mkd))
-	local dPart, dMesh, dTex
-	for _ = 1, 12 do
-		task.wait(0.05)
-		dPart, dMesh, dTex = MH_displayPart(itemType)
-		if dMesh ~= "" and dMesh ~= mesh0 then break end
-	end
-	add("disp=" .. (MH_shortId(dMesh) ~= "" and MH_shortId(dMesh) or "none")
-		.. (dMesh ~= "" and dMesh == mesh0 and "(same)" or ""))
+	-- NB: no marker swap any more. Overwriting the replicated equipped-key
+	-- attribute never rebuilt the display (it is built server-side), and it fed a
+	-- fake key back into the skin learner, which then paired our item with the
+	-- default weapon's mesh. Leave the game's own state alone.
+	add("disp=" .. (MH_shortId(mesh0) ~= "" and MH_shortId(mesh0) or "none"))
 	-- the real weapon meshes the client can already see. Non-empty here means the
 	-- meshes ARE reachable and we only need the right id per item.
 	add("harvest[" .. MH_harvestDisplays(8) .. "]")
-	if dPart and dMesh ~= "" and dMesh ~= mesh0 then
-		local mp, mpd = MH_buildMeshPart(dMesh, dTex, "display")
-		if mp then
-			local aok, ad = MH_attachToHand(mp)
-			add(tostring(mpd) .. " -> " .. tostring(ad))
-			if aok then return true, table.concat(parts, " | "), "display" end
-		end
-	end
-	-- 2a0) a mesh you already know for this item (_G.MH_MeshMap) — always wins.
+	-- 2a0) a skin you already know for this item (_G.MH_MeshMap) — always wins.
 	local mm = _G.MH_MeshMap or {}
 	for _, nm in ipairs(names) do
 		local e = (nm ~= nil) and mm[tostring(nm)] or nil
 		if type(e) == "table" and MH_shortId(e.mesh) ~= "" then
-			local mp, mpd = MH_buildMeshPart(e.mesh, e.tex, "map")
-			if mp then
-				local aok, ad = MH_attachToHand(mp)
-				add(tostring(mpd) .. " -> " .. tostring(ad))
-				if aok then return true, table.concat(parts, " | "), "map" end
-			end
+			local n, ad = MH_applySkin(itemType, e.mesh, e.tex)
+			add("map " .. MH_shortId(e.mesh) .. "/" .. MH_shortId(e.tex) .. " -> " .. tostring(ad))
+			if n > 0 then return true, table.concat(parts, " | "), "map" end
 		end
 	end
 	-- 2a) YOUR own uploaded model (_G.MH_SkinModels) takes priority — this is the
@@ -5208,24 +5322,18 @@ function MH_equipItem(key, dispName)
 	add("anchor=" .. tostring(realKey) .. "/" .. (MH_shortId(mesh0) ~= "" and MH_shortId(mesh0) or "?"))
 	local aId, bId, ad2 = MH_meshDBLookup(mesh0, anchors, names)
 	if aId then
-		local mp, mpd = MH_buildMeshPart(aId, bId, "gamedb")
-		if mp then
-			local aok, ad3 = MH_attachToHand(mp)
-			add(tostring(ad2) .. " " .. tostring(mpd) .. " -> " .. tostring(ad3))
-			if aok then return true, table.concat(parts, " | "), "gamedb" end
-		end
+		local n, ad3 = MH_applySkin(itemType, aId, bId)
+		add(tostring(ad2) .. " " .. MH_shortId(aId) .. " -> " .. tostring(ad3))
+		if n > 0 then return true, table.concat(parts, " | "), "gamedb" end
 	else
 		add("meshdb:" .. tostring(ad2))
 	end
 	-- 2c) a mesh id filed under this item anywhere in the client's own modules
 	local mId, tId, sd = MH_scanMeshDB(key, names)
 	if mId then
-		local mp, mpd = MH_buildMeshPart(mId, tId, "dbmesh")
-		if mp then
-			local aok, ad = MH_attachToHand(mp)
-			add(tostring(sd) .. " " .. tostring(mpd) .. " -> " .. tostring(ad))
-			if aok then return true, table.concat(parts, " | "), "dbmesh" end
-		end
+		local n, ad = MH_applySkin(itemType, mId, tId)
+		add(tostring(sd) .. " " .. MH_shortId(mId) .. " -> " .. tostring(ad))
+		if n > 0 then return true, table.concat(parts, " | "), "dbmesh" end
 	else
 		add("scan:" .. tostring(sd))
 	end
@@ -5233,36 +5341,24 @@ function MH_equipItem(key, dispName)
 	local vok, vd = MH_equipVisual(names)
 	add("nameSearch:" .. tostring(vd))
 	if vok then return true, table.concat(parts, " | "), "name" end
-	-- 3b) BASE MESH: MM2 skins are retextures of one knife / one gun mesh, and we
-	-- can read that mesh off a display right now. So put the correct weapon SHAPE
-	-- in the hand and texture it with the item's own image asset. Reported as
-	-- "basemesh": the shape is real, the skin is only right if that image asset
-	-- happens to be the weapon's texture.
+	-- 3b) BASE MESH: MM2 skins are retextures of one knife / one gun mesh, so the
+	-- SHAPE is always available — only the texture is per-item. Retexture with the
+	-- item's own image asset. Reported as "basemesh": the shape is real, the skin
+	-- is only right if that image asset happens to be the weapon's texture.
+	-- _G.MH_BaseMeshFallback = false turns this off if you would rather see
+	-- nothing than a wrong skin.
 	local bm, bmd = MH_slotBaseMesh(itemType)
-	if bm then
+	if bm and _G.MH_BaseMeshFallback ~= false then
 		local tex = info and MH_shortId(info.Image) or ""
-		local mp, mpd = MH_buildMeshPart(bm, tex ~= "" and tex or nil, "basemesh/" .. tostring(bmd))
-		if mp then
-			local aok, ad = MH_attachToHand(mp)
-			add(tostring(mpd) .. " -> " .. tostring(ad))
-			if aok then return true, table.concat(parts, " | "), "basemesh" end
-		end
+		local n, ad = MH_applySkin(itemType, bm, tex ~= "" and tex or nil)
+		add("basemesh/" .. tostring(bmd) .. " " .. bm .. "/" .. tex .. " -> " .. tostring(ad))
+		if n > 0 then return true, table.concat(parts, " | "), "basemesh" end
 	else
 		add("base:" .. tostring(bmd))
 	end
-	-- 4) last resort, and a GUESS: treat the item record's ItemID as a mesh id.
-	-- It attaches something either way, so it is reported as "guess" — if nothing
-	-- shows up in your hand, that id was a model id, not a mesh id.
-	if info then
-		local handle, hd = MH_buildHandleFromInfo(info)
-		if handle then
-			local aok, ad = MH_attachToHand(handle)
-			add("build " .. tostring(hd) .. " -> " .. tostring(ad))
-			if aok then return true, table.concat(parts, " | "), "guess" end
-		else
-			add("build:" .. tostring(hd))
-		end
-	end
+	-- NB: the old "treat ItemID as a mesh id" guess is gone. It welded a stray
+	-- part onto the hand instead of restyling the weapon you are wearing, and the
+	-- id is a model id, so nothing ever rendered from it anyway.
 	-- diagnostics: the real weapon meshes the client can already see. If this is
 	-- non-empty the meshes ARE reachable and we only need the right id per item.
 	add("harvest[" .. MH_harvestDisplays(8) .. "]")
@@ -5582,6 +5678,11 @@ if true then
 							notify("Equip", it.name .. (okq and (" - in hand [" .. tostring(how) .. "]")
 								or " - menu only (diag copied)"))
 						end)
+					end })
+				S:Button({ Title = "Remove skin", Desc = "put your real weapon look back",
+					Callback = function()
+						local n = MH_restoreSkins()
+						notify("Equip", "restored " .. tostring(n) .. " mesh(es)")
 					end })
 				S:Button({ Title = "Learn skins", Desc = "read real weapon meshes off nearby players",
 					Callback = function()
