@@ -2289,7 +2289,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v30 (report which items the server refused)")
+	w("BUILD          = equip-v31 (skip our own fake items; do not learn our own paint)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -4141,6 +4141,10 @@ local function spawnEntry(it, amount)
 		local bucket = prof and ((it.cat == "Pets") and prof.Pets or prof.Weapons)
 		if type(bucket) ~= "table" or type(bucket.Owned) ~= "table" then return end
 		bucket.Owned[it.key] = list[it.key]
+		-- Remember it as ours: the skin learner walks Owned and must not waste a
+		-- server round-trip on an item that only exists inside this harness.
+		_G.MH_FakeOwned = _G.MH_FakeOwned or {}
+		_G.MH_FakeOwned[it.key] = true
 		Runtime.InvPins = Runtime.InvPins or {}
 		if not Runtime.InvPins[it.key] then
 			Runtime.InvPins[it.key] = true
@@ -5274,7 +5278,8 @@ end
 -- genuine "item -> mesh/texture" entries for free. The map is saved to disk, so
 -- it keeps growing across servers and sessions. Returns (learned, total). GLOBAL.
 function MH_learnMeshes()
-	MH_loadMeshMap()          -- never learn onto an empty map and save over the file
+	MH_loadMeshMap()
+	if _G.MH_SkinLoop then MH_restoreSkins() end   -- never learn our own paint          -- never learn onto an empty map and save over the file
 	local map = _G.MH_MeshMap or {}
 	_G.MH_MeshMap = map
 	local learned, total = 0, 0
@@ -5570,6 +5575,10 @@ end
 -- equip is restored at the end and progress is saved as it goes, so an interrupt
 -- loses nothing. Returns (learned, tried). GLOBAL.
 function MH_learnOwned(onProgress)
+	-- Take our own skin off first. The keep-alive repaints the display twice a
+	-- second, so with an override live the display never looks like it changed
+	-- and every read would return OUR mesh instead of the server's.
+	MH_restoreSkins()
 	MH_loadMeshMap()
 	local map = _G.MH_MeshMap or {}
 	_G.MH_MeshMap = map
@@ -5598,13 +5607,17 @@ function MH_learnOwned(onProgress)
 	local keys = {}
 	for k in pairs(pd.Weapons.Owned) do keys[#keys + 1] = k end
 	table.sort(keys)
-	local learned, tried, refused, stale, known = 0, 0, 0, 0, 0
+	local learned, tried, refused, stale, known, skipped = 0, 0, 0, 0, 0, 0
 	local names, owned = {}, #keys        -- which keys were refused, for the report
 	_G.MH_LearnStop = false
 	for _, k in ipairs(keys) do
 		if _G.MH_LearnStop then break end
 		local cur = map[k]
-		if type(cur) == "table" and MH_shortId(cur.mesh) ~= "" and cur.k and not cur.g then
+		local fake = (_G.MH_FakeOwned or {})[k] ~= nil
+			or (ItemDB[k] == nil and not _G.MH_LearnUnknown)
+		if fake then
+			skipped = skipped + 1                -- our own spawned key, not a real item
+		elseif type(cur) == "table" and MH_shortId(cur.mesh) ~= "" and cur.k and not cur.g then
 			known = known + 1                    -- already have a measured record
 		else
 			local d = ItemDB[k]
@@ -5614,6 +5627,9 @@ function MH_learnOwned(onProgress)
 			local slots = { "Knife", "Gun" }
 			if d and d.ItemType == "Gun" then slots = { "Gun" }
 			elseif d and d.ItemType == "Knife" then slots = { "Knife" } end
+			-- once the call shape is known the server answers fast, so a refusal must
+			-- not cost the full discovery timeout on every one of ~800 items
+			local wait4 = _G.MH_EquipSig and 0.45 or 1
 			tried = tried + 1
 			local got, sawStale = false, false
 			for _, slot in ipairs(slots) do
@@ -5626,7 +5642,7 @@ function MH_learnOwned(onProgress)
 					map[k] = MH_skinRecord(mid, tid, sx, sy, sz, kind)
 					learned = learned + 1
 					got = true
-				elseif MH_equipReal(k, slot) then
+				elseif MH_equipReal(k, slot, wait4) then
 					-- Wait for the display to actually CHANGE. A fixed sleep recorded
 					-- whatever was still on the body, so a slow rebuild filed the
 					-- PREVIOUS item's mesh and scale under this key.
@@ -5652,10 +5668,10 @@ function MH_learnOwned(onProgress)
 					names[#names + 1] = tostring(k) .. (ItemDB[k] and "" or "?")
 				end
 			end
-			if onProgress and tried % 5 == 0 then
+			if onProgress and tried % 25 == 0 then
 				pcall(onProgress, learned, tried, #keys, refused, stale)
 			end
-			task.wait(0.15)
+			task.wait(0.1)
 		end
 	end
 	for slot, k in pairs(was) do
@@ -5676,7 +5692,7 @@ function MH_learnOwned(onProgress)
 		sig = tostring(_G.MH_EquipSig.remote.Name)
 			.. "(" .. table.concat(_G.MH_EquipSig.args, ",") .. ")"
 	end
-	local note = "owned=" .. owned .. " via=" .. sig
+	local note = "owned=" .. owned .. " skipped=" .. skipped .. " via=" .. sig
 	if #names > 0 then note = note .. " refused[" .. table.concat(names, " ") .. "]" end
 	return learned, tried, refused, stale, why, known, note
 end
@@ -5690,7 +5706,7 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v30")   -- freshness marker so a stale-cache test is obvious
+	add("v31")   -- freshness marker so a stale-cache test is obvious
 	MH_loadMeshMap()
 	local lrn, tot = MH_learnMeshes()
 	add("learn=+" .. tostring(lrn) .. "/" .. tostring(tot))
@@ -5739,6 +5755,8 @@ function MH_equipItem(key, dispName)
 			if type(pd) == "table" and type(pd.Weapons) == "table" then
 				if type(pd.Weapons.Owned) == "table" then
 					pd.Weapons.Owned[key] = pd.Weapons.Owned[key] or 1
+					_G.MH_FakeOwned = _G.MH_FakeOwned or {}
+					_G.MH_FakeOwned[key] = true
 				end
 				if type(pd.Weapons.Equipped) == "table" then
 					pd.Weapons.Equipped[itemType] = key
