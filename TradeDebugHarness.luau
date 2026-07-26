@@ -2283,7 +2283,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v21 (fix icon asset id + MeshPart skins)")
+	w("BUILD          = equip-v22 (harvest real skins from your own inventory)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -2359,6 +2359,10 @@ function MH_Dump()
 		local wd = workspace:FindFirstChild("WeaponDisplays")
 		if wd then w("-- Workspace.WeaponDisplays --"); dump(wd, 0, 4, 10)
 		else w("-- Workspace.WeaponDisplays: <none> --") end
+		-- every distinct weapon mesh anywhere, with its path: if the game keeps a
+		-- 3D shop stand or gallery, the path names the item it belongs to
+		w("-- mesh gallery (distinct mesh+texture, anywhere) --")
+		w(MH_meshGallery(40))
 		for _, src in ipairs({ LocalPlayer, LocalPlayer.Character }) do
 			if src then
 				local ok, at = pcall(function() return src:GetAttributes() end)
@@ -5245,36 +5249,186 @@ function MH_buildMeshPart(meshId, texId, tag)
 	return part, (tag or "mesh") .. ":" .. mnum .. (tnum ~= "" and ("/" .. tnum) or "")
 end
 
--- Fallback: find a weapon Instance whose name matches ANY of the given candidate
--- names (item key, display name, ItemName, numeric ItemID) anywhere the client
--- can reach — including the whole Workspace in case a round is live — and attach
--- it. Matches ANY class (MM2's weapon visuals are Parts with a SpecialMesh, not
--- Tools/MeshParts, so a class filter would miss them). Returns (ok, detail). GLOBAL.
-function MH_equipVisual(names)
+-- Look for our item ANYWHERE the client can reach — the whole Workspace (lobby
+-- shop stands, round weapons) and ReplicatedStorage — and read its mesh ids off
+-- it. Matches the instance's own name, an ancestor's name, or any attribute
+-- value, so a mesh sitting inside a container named after the item is found too.
+-- Returns (mesh, tex, detail). GLOBAL.
+function MH_scanWorldMeshes(names)
 	local want = {}
-	for _, n in ipairs(names) do
+	for _, n in ipairs(names or {}) do
 		if n ~= nil and tostring(n) ~= "" then want[tostring(n):lower()] = true end
 	end
-	local found
-	local roots = { game:GetService("ReplicatedStorage"), workspace }
-	local rf = game:GetService("ReplicatedFirst"); if rf then roots[#roots + 1] = rf end
-	pcall(function() roots[#roots + 1] = game:GetService("Lighting") end)
-	for _, root in ipairs(roots) do
+	local mesh, tex, where
+	local function identify(inst)
+		if want[tostring(inst.Name):lower()] then return true end
+		local oka, at = pcall(function() return inst:GetAttributes() end)
+		if oka and type(at) == "table" then
+			for _, av in pairs(at) do
+				if type(av) == "string" and want[av:lower()] then return true end
+			end
+		end
+		local p = inst.Parent
+		for _ = 1, 3 do
+			if not p or p == workspace then break end
+			if want[tostring(p.Name):lower()] then return true end
+			p = p.Parent
+		end
+		return false
+	end
+	for _, root in ipairs({ workspace, game:GetService("ReplicatedStorage") }) do
 		local okD, ds = pcall(function() return root:GetDescendants() end)
 		if okD then
-			for _, inst in ipairs(ds) do
-				if want[inst.Name:lower()] and not inst:IsA("GuiBase") and not inst:IsA("GuiObject")
-					and not inst:IsA("LuaSourceContainer") and not inst:IsA("ValueBase") then
-					if inst:IsA("BasePart") or inst:FindFirstChildWhichIsA("BasePart", true) then
-						found = inst; break
-					end
+			for _, dd in ipairs(ds) do
+				if (dd:IsA("SpecialMesh") or dd:IsA("MeshPart")) and identify(dd) then
+					pcall(function()
+						if dd:IsA("SpecialMesh") then
+							mesh, tex = MH_shortId(dd.MeshId), MH_shortId(dd.TextureId)
+						else
+							mesh, tex = MH_shortId(dd.MeshId), MH_shortId(dd.TextureID)
+						end
+						where = dd:GetFullName()
+					end)
+					if mesh and mesh ~= "" then return mesh, tex, "world:" .. tostring(where) end
 				end
 			end
 		end
-		if found then break end
 	end
-	if not found then return false, "no client model by name/id" end
-	return MH_attachToHand(found:Clone())
+	return nil, nil, "not in world"
+end
+
+-- Every distinct weapon mesh the client can see anywhere, with where it lives.
+-- Pure diagnostics: if MM2 keeps a 3D shop stand or a weapon gallery somewhere
+-- in the world, its meshes show up here with a path that names the item. GLOBAL.
+function MH_meshGallery(limit)
+	limit = limit or 30
+	local out, seen = {}, {}
+	for _, root in ipairs({ workspace, game:GetService("ReplicatedStorage") }) do
+		local okD, ds = pcall(function() return root:GetDescendants() end)
+		if okD then
+			for _, dd in ipairs(ds) do
+				if #out >= limit then return table.concat(out, "\n") end
+				local mid, tid = "", ""
+				if dd:IsA("SpecialMesh") then
+					pcall(function() mid = MH_shortId(dd.MeshId); tid = MH_shortId(dd.TextureId) end)
+				elseif dd:IsA("MeshPart") then
+					pcall(function() mid = MH_shortId(dd.MeshId); tid = MH_shortId(dd.TextureID) end)
+				end
+				if mid ~= "" and not seen[mid .. "/" .. tid] then
+					seen[mid .. "/" .. tid] = true
+					local path = ""
+					pcall(function() path = dd:GetFullName() end)
+					out[#out + 1] = "  " .. mid .. " + " .. (tid ~= "" and tid or "-") .. "  @ " .. path
+				end
+			end
+		end
+	end
+	if #out == 0 then return "  (none)" end
+	return table.concat(out, "\n")
+end
+
+-- EQUIP AN ITEM YOU REALLY OWN, THROUGH THE SERVER. The server only builds the
+-- 3D display for items you actually own, so this is the one way to make it
+-- reveal an item's real mesh + texture. The remote's argument order isn't known,
+-- so the first call tries the plausible shapes and remembers the one the server
+-- accepted. Returns (ok, detail). GLOBAL.
+function MH_equipReal(key, itemType, timeout)
+	local rs = game:GetService("ReplicatedStorage")
+	local rem = rs:FindFirstChild("Remotes")
+	local eq = rem and rem:FindFirstChild("Equip", true)
+	if not eq then
+		local inv = rem and rem:FindFirstChild("Inventory")
+		eq = inv and inv:FindFirstChild("Equip")
+	end
+	if not eq or not eq:IsA("RemoteEvent") then return false, "no Equip remote" end
+	local plr = game:GetService("Players").LocalPlayer
+	local attr = "Equipped" .. tostring(itemType)
+	-- shapes are TEMPLATES, not values: remembering the concrete arguments would
+	-- keep re-sending the first item's key for every later item.
+	local shapes = _G.MH_EquipSig and { _G.MH_EquipSig } or {
+		{ "$key" }, { "$type", "$key" }, { "$key", "$type" },
+		{ "Weapons", "$key" }, { "Weapons", "$type", "$key" },
+	}
+	for si, shape in ipairs(shapes) do
+		local sent = {}
+		for i, a in ipairs(shape) do
+			if a == "$key" then sent[i] = key
+			elseif a == "$type" then sent[i] = itemType
+			else sent[i] = a end
+		end
+		pcall(function() eq:FireServer(table.unpack(sent)) end)
+		local waited = 0
+		while waited < (timeout or 0.8) do
+			task.wait(0.1)
+			waited = waited + 0.1
+			if plr:GetAttribute(attr) == key then
+				if not _G.MH_EquipSig then _G.MH_EquipSig = shape end
+				return true, "sig#" .. si
+			end
+		end
+	end
+	return false, "server did not accept"
+end
+
+-- LEARN YOUR WHOLE INVENTORY. Walks the items you own, equips each one for real,
+-- reads the mesh + texture the server puts on your display, and records it. This
+-- is slow and it does talk to the server — but only to equip things that are
+-- already yours, which is an ordinary thing the game lets you do. Your original
+-- equip is restored at the end and progress is saved as it goes, so an interrupt
+-- loses nothing. Returns (learned, tried). GLOBAL.
+function MH_learnOwned(onProgress)
+	MH_loadMeshMap()
+	local map = _G.MH_MeshMap or {}
+	_G.MH_MeshMap = map
+	local pd
+	pcall(function()
+		local cs = game:GetService("ReplicatedStorage"):FindFirstChild("ClientServices")
+		local esM = cs and cs:FindFirstChild("EquipService")
+		local okr, ES = pcall(require, esM)
+		if okr and type(ES) == "table" and type(ES.EquipItem) == "function" then
+			pcall(function() pd = debug.getupvalue(ES.EquipItem, 2) end)
+		end
+	end)
+	if type(pd) ~= "table" or type(pd.Weapons) ~= "table"
+		or type(pd.Weapons.Owned) ~= "table" then
+		return 0, 0, "no owned list"
+	end
+	local was = {}
+	if type(pd.Weapons.Equipped) == "table" then
+		was.Knife = pd.Weapons.Equipped.Knife; was.Gun = pd.Weapons.Equipped.Gun
+	end
+	local keys = {}
+	for k in pairs(pd.Weapons.Owned) do keys[#keys + 1] = k end
+	table.sort(keys)
+	local learned, tried = 0, 0
+	_G.MH_LearnStop = false
+	for _, k in ipairs(keys) do
+		if _G.MH_LearnStop then break end
+		local cur = map[k]
+		if type(cur) ~= "table" or MH_shortId(cur.mesh) == "" then
+			local d = ItemDB[k]
+			local slot = (d and d.ItemType == "Gun") and "Gun" or "Knife"
+			tried = tried + 1
+			local ok = MH_equipReal(k, slot)
+			if ok then
+				task.wait(0.2)                       -- let the display rebuild
+				local _, mid, tid = MH_displayPart(slot)
+				mid, tid = MH_shortId(mid), MH_shortId(tid)
+				if mid ~= "" then
+					map[k] = { mesh = mid, tex = (tid ~= "" and tid or nil) }
+					learned = learned + 1
+					if learned % 10 == 0 then MH_saveMeshMap() end
+				end
+			end
+			if onProgress and tried % 5 == 0 then pcall(onProgress, learned, tried, #keys) end
+			task.wait(0.15)
+		end
+	end
+	for slot, k in pairs(was) do
+		if k then pcall(function() MH_equipReal(k, slot, 0.4) end) end
+	end
+	MH_saveMeshMap()
+	return learned, tried
 end
 
 -- Equip an item on YOUR character CLIENT-SIDE only. (1) menu equip: set
@@ -5286,7 +5440,7 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v21")   -- freshness marker so a stale-cache test is obvious
+	add("v22")   -- freshness marker so a stale-cache test is obvious
 	MH_loadMeshMap()
 	local lrn, tot = MH_learnMeshes()
 	add("learn=+" .. tostring(lrn) .. "/" .. tostring(tot))
@@ -5417,10 +5571,16 @@ function MH_equipItem(key, dispName)
 	else
 		add("scan:" .. tostring(sd))
 	end
-	-- 3) attach an instance named by key / ItemName / ItemID anywhere on the client
-	local vok, vd = MH_equipVisual(names)
-	add("nameSearch:" .. tostring(vd))
-	if vok then return true, table.concat(parts, " | "), "name" end
+	-- 3) our item's mesh sitting somewhere in the world (a lobby shop stand, a
+	-- round weapon) identified by name, ancestor name or attribute
+	local wMesh, wTex, wd2 = MH_scanWorldMeshes(names)
+	if wMesh then
+		local n, ad = MH_applySkin(itemType, wMesh, wTex)
+		add(tostring(wd2) .. " " .. wMesh .. " -> " .. tostring(ad))
+		if n > 0 then return true, table.concat(parts, " | "), "world" end
+	else
+		add("world:" .. tostring(wd2))
+	end
 	-- 3b) BASE MESH: MM2 skins are retextures of one knife / one gun mesh, so the
 	-- SHAPE is always available — only the texture is per-item. Retexture with the
 	-- item's own image asset. Reported as "basemesh": the shape is real, the skin
@@ -5777,6 +5937,27 @@ if true then
 						end)
 						pcall(function() setclipboard(txt) end)
 						notify("Skins", "copied to clipboard")
+					end })
+				S:Button({ Title = "Learn MY items", Desc = "equip each item you own, record its real skin",
+					Callback = function()
+						if _G.MH_LearnBusy then
+							_G.MH_LearnStop = true
+							notify("Skins", "stopping...")
+							return
+						end
+						task.spawn(function()
+							_G.MH_LearnBusy = true
+							notify("Skins", "learning your inventory - this takes a few minutes")
+							local ok, a, b = pcall(MH_learnOwned, function(l, t, total)
+								notify("Skins", l .. " learned / " .. t .. " tried of " .. total)
+							end)
+							_G.MH_LearnBusy = false
+							if ok then
+								notify("Skins", "done: +" .. tostring(a) .. " learned, " .. tostring(b) .. " tried")
+							else
+								notify("Skins", "failed: " .. tostring(a))
+							end
+						end)
 					end })
 				S:Button({ Title = "Learn skins", Desc = "read real weapon meshes off nearby players",
 					Callback = function()
