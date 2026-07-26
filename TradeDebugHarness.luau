@@ -2289,7 +2289,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v27 (recover the kind of old skin records)")
+	w("BUILD          = equip-v28 (never lose the skin map; learn worn items)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -5051,6 +5051,7 @@ function MH_normRec(rec)
 	local lo = math.min(x, y, z)
 	local hi = math.max(x, y, z)
 	if lo > 0 and (hi - lo) / hi < 0.02 then rec.k = "scale" else rec.k = "size" end
+	rec.g = true      -- inferred, not measured: a real learn pass should replace it
 	return rec
 end
 
@@ -5273,6 +5274,7 @@ end
 -- genuine "item -> mesh/texture" entries for free. The map is saved to disk, so
 -- it keeps growing across servers and sessions. Returns (learned, total). GLOBAL.
 function MH_learnMeshes()
+	MH_loadMeshMap()          -- never learn onto an empty map and save over the file
 	local map = _G.MH_MeshMap or {}
 	_G.MH_MeshMap = map
 	local learned, total = 0, 0
@@ -5302,7 +5304,7 @@ function MH_learnMeshes()
 					local cur = map[wornKey]
 					-- re-learn entries saved before we recorded scale, otherwise the
 					-- swapped-in weapon keeps the previous item's size
-					if type(cur) ~= "table" or MH_shortId(cur.mesh) == "" or not cur.k then
+					if type(cur) ~= "table" or MH_shortId(cur.mesh) == "" or not cur.k or cur.g then
 						map[wornKey] = MH_skinRecord(mid, tid, sx, sy, sz, kind)
 						learned = learned + 1
 					end
@@ -5328,8 +5330,28 @@ end
 -- Persist / restore the learned skin map. GLOBAL.
 function MH_saveMeshMap()
 	pcall(function()
-		writefile("MollyHub_skins.json",
-			game:GetService("HttpService"):JSONEncode(_G.MH_MeshMap or {}))
+		local HS = game:GetService("HttpService")
+		local map = _G.MH_MeshMap or {}
+		-- MERGE with what is on disk instead of overwriting it. A fresh join
+		-- starts with an empty map, so a learner that saved before anything read
+		-- the file wiped every skin collected in an earlier session.
+		local disk
+		pcall(function()
+			if isfile and isfile("MollyHub_skins.json") and readfile then
+				disk = HS:JSONDecode(readfile("MollyHub_skins.json"))
+			end
+		end)
+		if type(disk) == "table" then
+			for k, v in pairs(disk) do
+				local cur = map[k]
+				-- keep the better record: a measured one beats a guessed one
+				if type(cur) ~= "table" or MH_shortId(cur.mesh) == ""
+					or (cur.g and type(v) == "table" and not v.g) then
+					map[k] = v
+				end
+			end
+		end
+		writefile("MollyHub_skins.json", HS:JSONEncode(map))
 	end)
 end
 function MH_loadMeshMap()
@@ -5485,6 +5507,10 @@ function MH_equipReal(key, itemType, timeout)
 	if not eq or not eq:IsA("RemoteEvent") then return false, "no Equip remote" end
 	local plr = game:GetService("Players").LocalPlayer
 	local attr = "Equipped" .. tostring(itemType)
+	-- Already wearing it? Then say so plainly. Probing would "succeed" on the
+	-- very first shape without the server doing anything, which both hid the item
+	-- from the learner and taught us a wrong argument order.
+	if plr:GetAttribute(attr) == key then return true, "already" end
 	-- shapes are TEMPLATES, not values: remembering the concrete arguments would
 	-- keep re-sending the first item's key for every later item.
 	local shapes = _G.MH_EquipSig and { _G.MH_EquipSig } or {
@@ -5535,10 +5561,12 @@ function MH_learnOwned(onProgress)
 		or type(pd.Weapons.Owned) ~= "table" then
 		return 0, 0, "no owned list"
 	end
-	local was = {}
-	if type(pd.Weapons.Equipped) == "table" then
-		was.Knife = pd.Weapons.Equipped.Knife; was.Gun = pd.Weapons.Equipped.Gun
-	end
+	-- What the SERVER says is equipped. ProfileData is not usable here: the
+	-- harness writes fake keys into it, so "am I already wearing this?" never
+	-- matched and every worn item was skipped.
+	local plr = game:GetService("Players").LocalPlayer
+	local was = { Knife = plr:GetAttribute("EquippedKnife"),
+		Gun = plr:GetAttribute("EquippedGun") }
 	local keys = {}
 	for k in pairs(pd.Weapons.Owned) do keys[#keys + 1] = k end
 	table.sort(keys)
@@ -5547,7 +5575,7 @@ function MH_learnOwned(onProgress)
 	for _, k in ipairs(keys) do
 		if _G.MH_LearnStop then break end
 		local cur = map[k]
-		if type(cur) ~= "table" or MH_shortId(cur.mesh) == "" or not cur.k then
+		if type(cur) ~= "table" or MH_shortId(cur.mesh) == "" or not cur.k or cur.g then
 			local d = ItemDB[k]
 			-- Unknown items (an old harness build could add fake keys to Owned) are
 			-- tried in BOTH slots rather than assumed to be knives, which silently
@@ -5562,7 +5590,7 @@ function MH_learnOwned(onProgress)
 				local was0 = select(2, MH_displayPart(slot))
 				-- already wearing it? then the display is ALREADY this item, and
 				-- waiting for it to change would time out on correct data
-				if was[slot] == k and MH_shortId(was0) ~= "" then
+				if plr:GetAttribute("Equipped" .. slot) == k and MH_shortId(was0) ~= "" then
 					local _, mid, tid, sx, sy, sz, kind = MH_displayPart(slot)
 					map[k] = MH_skinRecord(mid, tid, sx, sy, sz, kind)
 					learned = learned + 1
@@ -5612,7 +5640,7 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v27")   -- freshness marker so a stale-cache test is obvious
+	add("v28")   -- freshness marker so a stale-cache test is obvious
 	MH_loadMeshMap()
 	local lrn, tot = MH_learnMeshes()
 	add("learn=+" .. tostring(lrn) .. "/" .. tostring(tot))
