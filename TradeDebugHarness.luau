@@ -2289,7 +2289,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v29 (equip probe no longer trusts one signal)")
+	w("BUILD          = equip-v30 (report which items the server refused)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -5599,6 +5599,7 @@ function MH_learnOwned(onProgress)
 	for k in pairs(pd.Weapons.Owned) do keys[#keys + 1] = k end
 	table.sort(keys)
 	local learned, tried, refused, stale, known = 0, 0, 0, 0, 0
+	local names, owned = {}, #keys        -- which keys were refused, for the report
 	_G.MH_LearnStop = false
 	for _, k in ipairs(keys) do
 		if _G.MH_LearnStop then break end
@@ -5647,6 +5648,9 @@ function MH_learnOwned(onProgress)
 			end
 			if not got then
 				if sawStale then stale = stale + 1 else refused = refused + 1 end
+				if #names < 10 then
+					names[#names + 1] = tostring(k) .. (ItemDB[k] and "" or "?")
+				end
 			end
 			if onProgress and tried % 5 == 0 then
 				pcall(onProgress, learned, tried, #keys, refused, stale)
@@ -5664,7 +5668,17 @@ function MH_learnOwned(onProgress)
 		elseif refused >= tried then why = "server refused every equip"
 		else why = "equips went through but no display appeared" end
 	end
-	return learned, tried, refused, stale, why, known
+	-- What the server would not equip, and how we asked. A "?" marks a key the
+	-- catalog does not know — those are the fake ones the spawner writes into
+	-- Owned, not real items, so they are expected to be refused.
+	local sig = "none"
+	if _G.MH_EquipSig then
+		sig = tostring(_G.MH_EquipSig.remote.Name)
+			.. "(" .. table.concat(_G.MH_EquipSig.args, ",") .. ")"
+	end
+	local note = "owned=" .. owned .. " via=" .. sig
+	if #names > 0 then note = note .. " refused[" .. table.concat(names, " ") .. "]" end
+	return learned, tried, refused, stale, why, known, note
 end
 
 -- Equip an item on YOUR character CLIENT-SIDE only. (1) menu equip: set
@@ -5676,7 +5690,7 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v29")   -- freshness marker so a stale-cache test is obvious
+	add("v30")   -- freshness marker so a stale-cache test is obvious
 	MH_loadMeshMap()
 	local lrn, tot = MH_learnMeshes()
 	add("learn=+" .. tostring(lrn) .. "/" .. tostring(tot))
@@ -6187,7 +6201,7 @@ if true then
 						task.spawn(function()
 							_G.MH_LearnBusy = true
 							notify("Skins", "learning your inventory - this takes a few minutes")
-							local ok, a, b, c, d, why, known = pcall(MH_learnOwned, function(l, t, total)
+							local ok, a, b, c, d, why, known, note = pcall(MH_learnOwned, function(l, t, total)
 								notify("Skins", l .. " learned / " .. t .. " tried of " .. total)
 							end)
 							_G.MH_LearnBusy = false
@@ -6196,7 +6210,9 @@ if true then
 									.. " (refused " .. tostring(c) .. ", no display " .. tostring(d)
 									.. ", known " .. tostring(known) .. ")"
 								if tostring(why) ~= "ok" then msg = tostring(why) .. " | " .. msg end
-								pcall(function() setclipboard("MH LEARN: " .. msg) end)
+								pcall(function()
+									setclipboard("MH LEARN: " .. msg .. " | " .. tostring(note))
+								end)
 								notify("Skins", msg)
 							else
 								notify("Skins", "failed: " .. tostring(a))
