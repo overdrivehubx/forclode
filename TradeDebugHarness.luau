@@ -2289,7 +2289,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v28 (never lose the skin map; learn worn items)")
+	w("BUILD          = equip-v29 (equip probe no longer trusts one signal)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -5496,42 +5496,67 @@ end
 -- reveal an item's real mesh + texture. The remote's argument order isn't known,
 -- so the first call tries the plausible shapes and remembers the one the server
 -- accepted. Returns (ok, detail). GLOBAL.
-function MH_equipReal(key, itemType, timeout)
+-- Every RemoteEvent that could plausibly be the equip call, paired with the
+-- argument templates to try on it. MM2's equip code mentions Inventory, Equip
+-- and FireServer in that order, which reads equally as Remotes.Inventory.Equip
+-- (a child) or Remotes.Inventory:FireServer("Equip", ...) (an action string) —
+-- so both are offered. GLOBAL.
+function MH_equipCandidates()
+	local out = {}
 	local rs = game:GetService("ReplicatedStorage")
-	local rem = rs:FindFirstChild("Remotes")
-	local eq = rem and rem:FindFirstChild("Equip", true)
-	if not eq then
-		local inv = rem and rem:FindFirstChild("Inventory")
-		eq = inv and inv:FindFirstChild("Equip")
+	local root = rs:FindFirstChild("Remotes") or rs
+	local okd, ds = pcall(function() return root:GetDescendants() end)
+	if not okd then return out end
+	for _, d in ipairs(ds) do
+		if d:IsA("RemoteEvent") then
+			local n = tostring(d.Name):lower()
+			if n == "equip" or n == "equipitem" then
+				for _, t in ipairs({ { "$key" }, { "$type", "$key" }, { "$key", "$type" },
+					{ "Weapons", "$key" }, { "Weapons", "$type", "$key" } }) do
+					out[#out + 1] = { remote = d, args = t }
+				end
+			elseif n == "inventory" or n == "inventoryevent" or n == "weapons" then
+				for _, t in ipairs({ { "Equip", "$key" }, { "Equip", "$type", "$key" },
+					{ "Equip", "Weapons", "$key" } }) do
+					out[#out + 1] = { remote = d, args = t }
+				end
+			end
+		end
 	end
-	if not eq or not eq:IsA("RemoteEvent") then return false, "no Equip remote" end
+	return out
+end
+
+function MH_equipReal(key, itemType, timeout)
 	local plr = game:GetService("Players").LocalPlayer
 	local attr = "Equipped" .. tostring(itemType)
 	-- Already wearing it? Then say so plainly. Probing would "succeed" on the
 	-- very first shape without the server doing anything, which both hid the item
 	-- from the learner and taught us a wrong argument order.
 	if plr:GetAttribute(attr) == key then return true, "already" end
-	-- shapes are TEMPLATES, not values: remembering the concrete arguments would
-	-- keep re-sending the first item's key for every later item.
-	local shapes = _G.MH_EquipSig and { _G.MH_EquipSig } or {
-		{ "$key" }, { "$type", "$key" }, { "$key", "$type" },
-		{ "Weapons", "$key" }, { "Weapons", "$type", "$key" },
-	}
-	for si, shape in ipairs(shapes) do
+	local cands = _G.MH_EquipSig and { _G.MH_EquipSig } or MH_equipCandidates()
+	if #cands == 0 then return false, "no equip remote" end
+	-- The display's mesh BEFORE we ask. The equipped-key attribute is not a
+	-- reliable success signal on its own — a dump showed it reading DefaultGun
+	-- while the profile said Ace — so a changed display counts as success too,
+	-- and that is the thing we are actually here to read.
+	local before = select(2, MH_displayPart(itemType))
+	for _, c in ipairs(cands) do
 		local sent = {}
-		for i, a in ipairs(shape) do
+		for i, a in ipairs(c.args) do
 			if a == "$key" then sent[i] = key
 			elseif a == "$type" then sent[i] = itemType
 			else sent[i] = a end
 		end
-		pcall(function() eq:FireServer(table.unpack(sent)) end)
+		pcall(function() c.remote:FireServer(table.unpack(sent)) end)
 		local waited = 0
-		while waited < (timeout or 0.8) do
+		while waited < (timeout or 1) do
 			task.wait(0.1)
 			waited = waited + 0.1
-			if plr:GetAttribute(attr) == key then
-				if not _G.MH_EquipSig then _G.MH_EquipSig = shape end
-				return true, "sig#" .. si
+			local now = select(2, MH_displayPart(itemType))
+			if plr:GetAttribute(attr) == key
+				or (MH_shortId(now) ~= "" and tostring(now) ~= tostring(before)) then
+				if not _G.MH_EquipSig then _G.MH_EquipSig = c end
+				return true, tostring(c.remote.Name) .. "(" .. table.concat(c.args, ",") .. ")"
 			end
 		end
 	end
@@ -5559,7 +5584,10 @@ function MH_learnOwned(onProgress)
 	end)
 	if type(pd) ~= "table" or type(pd.Weapons) ~= "table"
 		or type(pd.Weapons.Owned) ~= "table" then
-		return 0, 0, "no owned list"
+		return 0, 0, 0, 0, "no owned list (not MM2, or EquipService moved)"
+	end
+	if #MH_equipCandidates() == 0 then
+		return 0, 0, 0, 0, "no equip remote found"
 	end
 	-- What the SERVER says is equipped. ProfileData is not usable here: the
 	-- harness writes fake keys into it, so "am I already wearing this?" never
@@ -5570,12 +5598,14 @@ function MH_learnOwned(onProgress)
 	local keys = {}
 	for k in pairs(pd.Weapons.Owned) do keys[#keys + 1] = k end
 	table.sort(keys)
-	local learned, tried, refused, stale = 0, 0, 0, 0
+	local learned, tried, refused, stale, known = 0, 0, 0, 0, 0
 	_G.MH_LearnStop = false
 	for _, k in ipairs(keys) do
 		if _G.MH_LearnStop then break end
 		local cur = map[k]
-		if type(cur) ~= "table" or MH_shortId(cur.mesh) == "" or not cur.k or cur.g then
+		if type(cur) == "table" and MH_shortId(cur.mesh) ~= "" and cur.k and not cur.g then
+			known = known + 1                    -- already have a measured record
+		else
 			local d = ItemDB[k]
 			-- Unknown items (an old harness build could add fake keys to Owned) are
 			-- tried in BOTH slots rather than assumed to be knives, which silently
@@ -5628,7 +5658,13 @@ function MH_learnOwned(onProgress)
 		if k then pcall(function() MH_equipReal(k, slot, 0.4) end) end
 	end
 	MH_saveMeshMap()
-	return learned, tried, refused, stale
+	local why = "ok"
+	if learned == 0 then
+		if tried == 0 then why = "nothing to do: all " .. known .. " already known"
+		elseif refused >= tried then why = "server refused every equip"
+		else why = "equips went through but no display appeared" end
+	end
+	return learned, tried, refused, stale, why, known
 end
 
 -- Equip an item on YOUR character CLIENT-SIDE only. (1) menu equip: set
@@ -5640,7 +5676,7 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v28")   -- freshness marker so a stale-cache test is obvious
+	add("v29")   -- freshness marker so a stale-cache test is obvious
 	MH_loadMeshMap()
 	local lrn, tot = MH_learnMeshes()
 	add("learn=+" .. tostring(lrn) .. "/" .. tostring(tot))
@@ -6151,13 +6187,17 @@ if true then
 						task.spawn(function()
 							_G.MH_LearnBusy = true
 							notify("Skins", "learning your inventory - this takes a few minutes")
-							local ok, a, b, c, d = pcall(MH_learnOwned, function(l, t, total)
+							local ok, a, b, c, d, why, known = pcall(MH_learnOwned, function(l, t, total)
 								notify("Skins", l .. " learned / " .. t .. " tried of " .. total)
 							end)
 							_G.MH_LearnBusy = false
 							if ok then
-								notify("Skins", "done: +" .. tostring(a) .. " of " .. tostring(b)
-									.. " (refused " .. tostring(c) .. ", no display " .. tostring(d) .. ")")
+								local msg = "+" .. tostring(a) .. " of " .. tostring(b)
+									.. " (refused " .. tostring(c) .. ", no display " .. tostring(d)
+									.. ", known " .. tostring(known) .. ")"
+								if tostring(why) ~= "ok" then msg = tostring(why) .. " | " .. msg end
+								pcall(function() setclipboard("MH LEARN: " .. msg) end)
+								notify("Skins", msg)
 							else
 								notify("Skins", "failed: " .. tostring(a))
 							end
