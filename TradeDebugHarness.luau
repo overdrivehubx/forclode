@@ -77,6 +77,15 @@ _G.MH_SkinModels = _G.MH_SkinModels or {
 -- MollyHub window.
 _G.MH_MenuScale = _G.MH_MenuScale or 0.7
 
+-- Known weapon MESHES, by item name: ["ItemName"] = { mesh = <id>, tex = <id> }.
+-- Meshes and textures render on ANY account (models don't), so an entry here is
+-- the surest way to get an item into your hand. The Equip button checks this
+-- FIRST. Ids can be read off any weapon the client already shows — the equip
+-- diagnostic's harvest[...] section lists them as mesh+texture pairs.
+_G.MH_MeshMap = _G.MH_MeshMap or {
+	-- ["Gingerscope"] = { mesh = 0, tex = 0 },
+}
+
 -- Where the equipped weapon sits in your hand: {x, y, z, rotX, rotY, rotZ} —
 -- studs and degrees. Tweak if the model floats or points the wrong way.
 _G.MH_HandOffset = _G.MH_HandOffset or { 0, -1, 0, 0, 0, 0 }
@@ -2274,7 +2283,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v17 (marker swap -> let the game build the display)")
+	w("BUILD          = equip-v18 (find the game's key->mesh DB via the worn weapon)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -4766,6 +4775,129 @@ function MH_scanMeshDB(key, names)
 	return meshId, texId, "db:" .. tostring(where)
 end
 
+-- Does a database record mention this asset id anywhere inside it? GLOBAL.
+function MH_recHasId(rec, id, depth)
+	local tv = type(rec)
+	if tv == "string" or tv == "number" then
+		return tostring(rec):find(id, 1, true) ~= nil
+	end
+	if tv == "table" and (depth or 0) < 2 then
+		for _, v in pairs(rec) do
+			if MH_recHasId(v, id, (depth or 0) + 1) then return true end
+		end
+	end
+	return false
+end
+
+-- Pull (mesh, texture) ids out of a database record, whatever shape it has:
+-- a bare id, {Mesh=,Texture=}, or a nested table of ids. GLOBAL.
+function MH_recIds(rec, depth)
+	local tv = type(rec)
+	if tv == "string" or tv == "number" then
+		local s = MH_shortId(rec)
+		return (#s >= 5) and s or nil, nil
+	end
+	if tv ~= "table" or (depth or 0) > 2 then return nil, nil end
+	local mesh, tex, spare = nil, nil, {}
+	for k, v in pairs(rec) do
+		local lk = tostring(k):lower()
+		if type(v) == "string" or type(v) == "number" then
+			local sid = MH_shortId(v)
+			if #sid >= 5 then
+				if lk:find("mesh") and not mesh then mesh = sid
+				elseif (lk:find("tex") or lk:find("decal")) and not tex then tex = sid
+				else spare[#spare + 1] = sid end
+			end
+		elseif type(v) == "table" then
+			local m2, t2 = MH_recIds(v, (depth or 0) + 1)
+			if m2 and not mesh then mesh = m2 end
+			if t2 and not tex then tex = t2 end
+		end
+	end
+	if not mesh then mesh = spare[1] end
+	if not tex then tex = spare[2] end
+	return mesh, tex
+end
+
+-- FIND THE GAME'S WEAPON-MESH DATABASE, using the weapon you are really wearing
+-- as the anchor: we know its item key AND the mesh id its display is showing, so
+-- the one table in memory that maps the first to the second must be the mesh
+-- database. Then just read our item out of it. Nothing is guessed and nothing is
+-- sent anywhere. Returns (mesh, tex, detail). GLOBAL.
+function MH_meshDBLookup(anchorMesh, anchorKeys, wantNames)
+	local anchor = MH_shortId(anchorMesh)
+	if anchor == "" then return nil, nil, "no anchor mesh" end
+	local getgcf = (type(getgc) == "function" and getgc)
+		or rawget(_G, "getgc")
+		or (getgenv and type(getgenv().getgc) == "function" and getgenv().getgc) or nil
+	if type(getgcf) ~= "function" then return nil, nil, "no getgc" end
+	local objs
+	if not pcall(function() objs = getgcf(true) end) or type(objs) ~= "table" then
+		return nil, nil, "getgc failed"
+	end
+	local db, tag
+	-- pass 1: a table indexed by the equipped item's key whose record carries the
+	-- mesh id we can see. Exact, so it cannot pick the wrong table.
+	for _, o in pairs(objs) do
+		if type(o) == "table" then
+			for _, ak in ipairs(anchorKeys) do
+				if ak ~= nil and tostring(ak) ~= "" then
+					local rec
+					pcall(function() rec = rawget(o, ak) end)
+					if rec ~= nil then
+						local hit = false
+						pcall(function() hit = MH_recHasId(rec, anchor, 0) end)
+						if hit then db = o; tag = "key=" .. tostring(ak); break end
+					end
+				end
+			end
+		end
+		if db then break end
+	end
+	-- pass 2: any table that holds the mesh id as a value — tells us the database
+	-- exists even when its key format isn't what we assumed.
+	if not db then
+		local budget = 150000
+		for _, o in pairs(objs) do
+			if type(o) == "table" then
+				pcall(function()
+					for k, v in pairs(o) do
+						budget = budget - 1
+						if budget <= 0 then error("budget", 0) end
+						if MH_recHasId(v, anchor, 1) then
+							db = o; tag = "val@" .. tostring(k)
+							error("found", 0)
+						end
+					end
+				end)
+			end
+			if db or budget <= 0 then break end
+		end
+	end
+	if not db then return nil, nil, "no db for mesh " .. anchor end
+	for _, wn in ipairs(wantNames) do
+		if wn ~= nil and tostring(wn) ~= "" then
+			local rec
+			pcall(function() rec = rawget(db, wn) end)
+			if rec ~= nil then
+				local m, t
+				pcall(function() m, t = MH_recIds(rec, 0) end)
+				if m then return m, t, tag .. " -> " .. tostring(wn) end
+			end
+		end
+	end
+	-- found the table but not our item: show its key format so the next build can
+	-- match it exactly.
+	local sample = {}
+	pcall(function()
+		for k in pairs(db) do
+			sample[#sample + 1] = tostring(k)
+			if #sample >= 4 then break end
+		end
+	end)
+	return nil, nil, tag .. " no entry; keys{" .. table.concat(sample, ",") .. "}"
+end
+
 -- Part + SpecialMesh from raw ids. Meshes and textures render on ANY account
 -- (unlike Models, which are ownership-gated), so this is the one build path that
 -- can work for an item we don't own. Returns (part, detail). GLOBAL.
@@ -4827,7 +4959,7 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v17")   -- freshness marker so a stale-cache test is obvious
+	add("v18")   -- freshness marker so a stale-cache test is obvious
 	local d0 = ItemDB[key]
 	local itemType = (d0 and d0.ItemType == "Gun") and "Gun" or "Knife"
 	add("type=" .. itemType)
@@ -4918,6 +5050,19 @@ function MH_equipItem(key, dispName)
 			if aok then return true, table.concat(parts, " | "), "display" end
 		end
 	end
+	-- 2a0) a mesh you already know for this item (_G.MH_MeshMap) — always wins.
+	local mm = _G.MH_MeshMap or {}
+	for _, nm in ipairs(names) do
+		local e = (nm ~= nil) and mm[tostring(nm)] or nil
+		if type(e) == "table" and MH_shortId(e.mesh) ~= "" then
+			local mp, mpd = MH_buildMeshPart(e.mesh, e.tex, "map")
+			if mp then
+				local aok, ad = MH_attachToHand(mp)
+				add(tostring(mpd) .. " -> " .. tostring(ad))
+				if aok then return true, table.concat(parts, " | "), "map" end
+			end
+		end
+	end
 	-- 2a) YOUR own uploaded model (_G.MH_SkinModels) takes priority — this is the
 	-- reliable path since MM2's own models aren't loadable client-side.
 	local skins = _G.MH_SkinModels or {}
@@ -4936,7 +5081,27 @@ function MH_equipItem(key, dispName)
 			add("skin:" .. tostring(md))
 		end
 	end
-	-- 2b) a mesh id filed under this item anywhere in the client's own modules
+	-- 2b) THE MESH DATABASE. Anchor on the weapon you are really wearing (its key
+	-- + the mesh id its display is showing right now) to identify the game's own
+	-- key->mesh table in memory, then read our item straight out of it.
+	local anchors = { realKey }
+	if realKey then
+		local ri = MH_getItemInfo(realKey)
+		if ri and ri.ItemName then anchors[#anchors + 1] = ri.ItemName end
+	end
+	add("anchor=" .. tostring(realKey) .. "/" .. (MH_shortId(mesh0) ~= "" and MH_shortId(mesh0) or "?"))
+	local aId, bId, ad2 = MH_meshDBLookup(mesh0, anchors, names)
+	if aId then
+		local mp, mpd = MH_buildMeshPart(aId, bId, "gamedb")
+		if mp then
+			local aok, ad3 = MH_attachToHand(mp)
+			add(tostring(ad2) .. " " .. tostring(mpd) .. " -> " .. tostring(ad3))
+			if aok then return true, table.concat(parts, " | "), "gamedb" end
+		end
+	else
+		add("meshdb:" .. tostring(ad2))
+	end
+	-- 2c) a mesh id filed under this item anywhere in the client's own modules
 	local mId, tId, sd = MH_scanMeshDB(key, names)
 	if mId then
 		local mp, mpd = MH_buildMeshPart(mId, tId, "dbmesh")
