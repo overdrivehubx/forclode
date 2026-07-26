@@ -2289,7 +2289,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v26 (rebuild MeshPart skins at their real size)")
+	w("BUILD          = equip-v27 (recover the kind of old skin records)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -4968,6 +4968,7 @@ function MH_paintMesh(root, mesh, tex, rec)
 	if not okd then ds = {} end
 	-- A skin recorded off a MeshPart has an ABSOLUTE size, which no SpecialMesh
 	-- can match. Rebuild it as a real MeshPart at that size and wear that instead.
+	MH_normRec(rec)
 	if type(rec) == "table" and rec.k == "size" and _G.MH_MeshPartSkins ~= false then
 		local host = (root:IsA("BasePart") and root) or root:FindFirstChildWhichIsA("BasePart", true)
 		if host then
@@ -4976,7 +4977,8 @@ function MH_paintMesh(root, mesh, tex, rec)
 				pcall(function() host.LocalTransparencyModifier = 1 end)  -- already on
 				return 1
 			end
-			local mp = MH_makeMeshPart(mesh, tex, rec.sx, rec.sy, rec.sz)
+			local mp, why = MH_makeMeshPart(mesh, tex, rec.sx, rec.sy, rec.sz)
+			_G.MH_SkinNote = tostring(why)     -- surfaced in the equip diagnostic
 			if mp then return MH_overlayWith(host, mp) end
 		end
 	end
@@ -5038,8 +5040,23 @@ end
 
 -- The scale stored with a learned skin, times your own _G.MH_SkinScale nudge.
 -- nil means "leave the scale alone". GLOBAL.
+-- Fill in the missing kind on a skin learned before we recorded one. A mesh
+-- SCALE in MM2 is a uniform multiplier (0.27, 0.27, 0.27); a part SIZE has three
+-- different numbers (0.27, 1.26, 4.21 — a gun 4.2 studs long). So uneven numbers
+-- mean studs. Returns the record. GLOBAL.
+function MH_normRec(rec)
+	if type(rec) ~= "table" or rec.k then return rec end
+	local x, y, z = tonumber(rec.sx), tonumber(rec.sy), tonumber(rec.sz)
+	if not (x and y and z) then return rec end
+	local lo = math.min(x, y, z)
+	local hi = math.max(x, y, z)
+	if lo > 0 and (hi - lo) / hi < 0.02 then rec.k = "scale" else rec.k = "size" end
+	return rec
+end
+
 function MH_scaleOf(rec)
 	if type(rec) ~= "table" then return nil end
+	MH_normRec(rec)
 	local k = tonumber(_G.MH_SkinScale) or 1
 	-- Numbers taken off a MeshPart are its SIZE IN STUDS, not a multiplier.
 	-- Feeding those to SpecialMesh.Scale is what blew a swapped-in weapon up to
@@ -5220,6 +5237,7 @@ function MH_applySkin(itemType, mesh, tex, sx, sy, sz, kind)
 		if sk then how = sk:IsA("MeshPart") and "meshpart" or "overlay" end
 	end)
 	return n, "restyled " .. tostring(n) .. " " .. how
+		.. (_G.MH_SkinNote and (" [" .. tostring(_G.MH_SkinNote) .. "]") or "")
 end
 
 -- Put everything we touched back the way it was and stop the keep-alive. GLOBAL.
@@ -5324,7 +5342,10 @@ function MH_loadMeshMap()
 		local map = _G.MH_MeshMap or {}
 		_G.MH_MeshMap = map
 		for k, v in pairs(saved) do
-			if map[k] == nil then map[k] = v end   -- entries you pinned by hand win
+			-- entries you pinned by hand win; anything learned before we recorded
+			-- whether the numbers are a scale or a size gets that filled in, so an
+			-- old map doesn't have to be thrown away and re-learned
+			if map[k] == nil then map[k] = MH_normRec(v) end
 		end
 	end)
 end
@@ -5591,7 +5612,7 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v26")   -- freshness marker so a stale-cache test is obvious
+	add("v27")   -- freshness marker so a stale-cache test is obvious
 	MH_loadMeshMap()
 	local lrn, tot = MH_learnMeshes()
 	add("learn=+" .. tostring(lrn) .. "/" .. tostring(tot))
@@ -5671,7 +5692,7 @@ function MH_equipItem(key, dispName)
 	-- 2a0) a skin you already know for this item (_G.MH_MeshMap) — always wins.
 	local mm = _G.MH_MeshMap or {}
 	for _, nm in ipairs(names) do
-		local e = (nm ~= nil) and mm[tostring(nm)] or nil
+		local e = (nm ~= nil) and MH_normRec(mm[tostring(nm)]) or nil
 		if type(e) == "table" and MH_shortId(e.mesh) ~= "" then
 			local n, ad = MH_applySkin(itemType, e.mesh, e.tex, e.sx, e.sy, e.sz, e.k)
 			add("map " .. MH_shortId(e.mesh) .. "/" .. MH_shortId(e.tex)
