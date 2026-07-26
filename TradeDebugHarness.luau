@@ -2289,7 +2289,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v23 (skins carry their mesh scale)")
+	w("BUILD          = equip-v25 (scale vs size fix + reliable inventory learn)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -4613,22 +4613,23 @@ end
 -- Scale in place is what made a swapped-in knife come out huge.
 -- Returns (mesh, tex, sx, sy, sz). GLOBAL.
 function MH_meshFieldsOf(part)
-	local mid, tid, sx, sy, sz = "", "", nil, nil, nil
+	local mid, tid, sx, sy, sz, kind = "", "", nil, nil, nil, nil
 	if not part then return mid, tid end
 	local m = (part:IsA("SpecialMesh") and part) or part:FindFirstChildWhichIsA("SpecialMesh", true)
 	if m then
 		pcall(function()
 			mid, tid = tostring(m.MeshId), tostring(m.TextureId)
 			sx, sy, sz = m.Scale.X, m.Scale.Y, m.Scale.Z
+			kind = "scale"                       -- a MULTIPLIER over the mesh
 		end)
 	elseif part:IsA("MeshPart") then
-		-- a MeshPart carries its size directly instead of a mesh scale
 		pcall(function()
 			mid, tid = tostring(part.MeshId), tostring(part.TextureID)
 			sx, sy, sz = part.Size.X, part.Size.Y, part.Size.Z
+			kind = "size"                        -- ABSOLUTE studs, not a multiplier
 		end)
 	end
-	return mid, tid, sx, sy, sz
+	return mid, tid, sx, sy, sz, kind
 end
 
 -- Collect the mesh/texture ids of every weapon display the client can already
@@ -5024,11 +5025,14 @@ end
 -- The scale stored with a learned skin, times your own _G.MH_SkinScale nudge.
 -- nil means "leave the scale alone". GLOBAL.
 function MH_scaleOf(rec)
+	if type(rec) ~= "table" then return nil end
 	local k = tonumber(_G.MH_SkinScale) or 1
-	if type(rec) ~= "table" then
-		if k == 1 then return nil end
-		return nil
-	end
+	-- Numbers taken off a MeshPart are its SIZE IN STUDS, not a multiplier.
+	-- Feeding those to SpecialMesh.Scale is what blew a swapped-in weapon up to
+	-- several times its size. A MeshPart renders its mesh at its own size, so the
+	-- SpecialMesh equivalent is scale 1.
+	if rec.k == "size" then return Vector3.new(k, k, k) end
+	if rec.k ~= "scale" then return nil end          -- unknown origin: don't guess
 	local x, y, z = tonumber(rec.sx), tonumber(rec.sy), tonumber(rec.sz)
 	if not (x and y and z) then return nil end
 	if x <= 0 or y <= 0 or z <= 0 then return nil end
@@ -5036,12 +5040,14 @@ function MH_scaleOf(rec)
 end
 
 -- Record a skin's mesh, texture and scale in one place, so every learner writes
--- the same shape. GLOBAL.
-function MH_skinRecord(mesh, tex, sx, sy, sz)
+-- the same shape. `kind` says whether the numbers are a mesh scale or a part
+-- size — mixing the two is what made weapons render huge. GLOBAL.
+function MH_skinRecord(mesh, tex, sx, sy, sz, kind)
 	local m = MH_shortId(mesh)
 	if m == "" then return nil end
 	local t = MH_shortId(tex)
-	return { mesh = m, tex = (t ~= "" and t or nil), sx = sx, sy = sy, sz = sz }
+	return { mesh = m, tex = (t ~= "" and t or nil),
+		sx = sx, sy = sy, sz = sz, k = kind }
 end
 
 -- Hide a MeshPart locally (LocalTransparencyModifier never replicates) and weld
@@ -5117,10 +5123,10 @@ end
 -- Set the skin for a slot and keep it applied: the game rebuilds the display on
 -- respawn and hands out a fresh Tool every round, so a light keep-alive loop
 -- re-applies it. Returns (meshes changed, detail). GLOBAL.
-function MH_applySkin(itemType, mesh, tex, sx, sy, sz)
+function MH_applySkin(itemType, mesh, tex, sx, sy, sz, kind)
 	if MH_shortId(mesh) == "" then return 0, "no mesh id" end
 	_G.MH_SkinOverride = _G.MH_SkinOverride or {}
-	_G.MH_SkinOverride[itemType] = MH_skinRecord(mesh, tex, sx, sy, sz)
+	_G.MH_SkinOverride[itemType] = MH_skinRecord(mesh, tex, sx, sy, sz, kind)
 	-- a stray part welded on by an older build would now sit next to the weapon
 	pcall(function()
 		local c = game:GetService("Players").LocalPlayer.Character
@@ -5198,13 +5204,13 @@ function MH_learnMeshes()
 						end
 					end
 				end
-				local _, mid, tid, sx, sy, sz = MH_displayPart2(c, slot)
+				local _, mid, tid, sx, sy, sz, kind = MH_displayPart2(c, slot)
 				if wornKey and MH_shortId(mid) ~= "" then
 					local cur = map[wornKey]
 					-- re-learn entries saved before we recorded scale, otherwise the
 					-- swapped-in weapon keeps the previous item's size
-					if type(cur) ~= "table" or MH_shortId(cur.mesh) == "" or not cur.sx then
-						map[wornKey] = MH_skinRecord(mid, tid, sx, sy, sz)
+					if type(cur) ~= "table" or MH_shortId(cur.mesh) == "" or not cur.k then
+						map[wornKey] = MH_skinRecord(mid, tid, sx, sy, sz, kind)
 						learned = learned + 1
 					end
 				end
@@ -5222,8 +5228,8 @@ function MH_displayPart2(char, itemType)
 	local ov = char:FindFirstChild("DisplayRef" .. tostring(itemType))
 	local part = (ov and ov:IsA("ObjectValue")) and ov.Value or nil
 	if not part then return nil, "", "" end
-	local mid, tid, sx, sy, sz = MH_meshFieldsOf(part)
-	return part, mid, tid, sx, sy, sz
+	local mid, tid, sx, sy, sz, kind = MH_meshFieldsOf(part)
+	return part, mid, tid, sx, sy, sz, kind
 end
 
 -- Persist / restore the learned skin map. GLOBAL.
@@ -5302,7 +5308,7 @@ function MH_scanWorldMeshes(names)
 	for _, n in ipairs(names or {}) do
 		if n ~= nil and tostring(n) ~= "" then want[tostring(n):lower()] = true end
 	end
-	local mesh, tex, where, sx, sy, sz
+	local mesh, tex, where, sx, sy, sz, kind
 	local function identify(inst)
 		if want[tostring(inst.Name):lower()] then return true end
 		local oka, at = pcall(function() return inst:GetAttributes() end)
@@ -5313,7 +5319,7 @@ function MH_scanWorldMeshes(names)
 		end
 		local p = inst.Parent
 		for _ = 1, 3 do
-			if not p or p == workspace then break end
+			if not p or typeof(p) ~= "Instance" or p == workspace then break end
 			if want[tostring(p.Name):lower()] then return true end
 			p = p.Parent
 		end
@@ -5324,11 +5330,11 @@ function MH_scanWorldMeshes(names)
 		if okD then
 			for _, dd in ipairs(ds) do
 				if (dd:IsA("SpecialMesh") or dd:IsA("MeshPart")) and identify(dd) then
-					local m2, t2, a, b, c = MH_meshFieldsOf(dd)
-					mesh, tex, sx, sy, sz = MH_shortId(m2), MH_shortId(t2), a, b, c
+					local m2, t2, a, b, c, kk = MH_meshFieldsOf(dd)
+					mesh, tex, sx, sy, sz, kind = MH_shortId(m2), MH_shortId(t2), a, b, c, kk
 					pcall(function() where = dd:GetFullName() end)
 					if mesh ~= "" then
-						return mesh, tex, "world:" .. tostring(where), sx, sy, sz
+						return mesh, tex, "world:" .. tostring(where), sx, sy, sz, kind
 					end
 				end
 			end
@@ -5440,26 +5446,57 @@ function MH_learnOwned(onProgress)
 	local keys = {}
 	for k in pairs(pd.Weapons.Owned) do keys[#keys + 1] = k end
 	table.sort(keys)
-	local learned, tried = 0, 0
+	local learned, tried, refused, stale = 0, 0, 0, 0
 	_G.MH_LearnStop = false
 	for _, k in ipairs(keys) do
 		if _G.MH_LearnStop then break end
 		local cur = map[k]
-		if type(cur) ~= "table" or MH_shortId(cur.mesh) == "" or not cur.sx then
+		if type(cur) ~= "table" or MH_shortId(cur.mesh) == "" or not cur.k then
 			local d = ItemDB[k]
-			local slot = (d and d.ItemType == "Gun") and "Gun" or "Knife"
+			-- Unknown items (an old harness build could add fake keys to Owned) are
+			-- tried in BOTH slots rather than assumed to be knives, which silently
+			-- read the wrong display and skipped every unlisted gun.
+			local slots = { "Knife", "Gun" }
+			if d and d.ItemType == "Gun" then slots = { "Gun" }
+			elseif d and d.ItemType == "Knife" then slots = { "Knife" } end
 			tried = tried + 1
-			local ok = MH_equipReal(k, slot)
-			if ok then
-				task.wait(0.2)                       -- let the display rebuild
-				local _, mid, tid, sx, sy, sz = MH_displayPart(slot)
-				if MH_shortId(mid) ~= "" then
-					map[k] = MH_skinRecord(mid, tid, sx, sy, sz)
+			local got, sawStale = false, false
+			for _, slot in ipairs(slots) do
+				if got or _G.MH_LearnStop then break end
+				local was0 = select(2, MH_displayPart(slot))
+				-- already wearing it? then the display is ALREADY this item, and
+				-- waiting for it to change would time out on correct data
+				if was[slot] == k and MH_shortId(was0) ~= "" then
+					local _, mid, tid, sx, sy, sz, kind = MH_displayPart(slot)
+					map[k] = MH_skinRecord(mid, tid, sx, sy, sz, kind)
 					learned = learned + 1
-					if learned % 10 == 0 then MH_saveMeshMap() end
+					got = true
+				elseif MH_equipReal(k, slot) then
+					-- Wait for the display to actually CHANGE. A fixed sleep recorded
+					-- whatever was still on the body, so a slow rebuild filed the
+					-- PREVIOUS item's mesh and scale under this key.
+					local mid, tid, sx, sy, sz, kind
+					for _ = 1, 16 do
+						task.wait(0.1)
+						_, mid, tid, sx, sy, sz, kind = MH_displayPart(slot)
+						if MH_shortId(mid) ~= "" and tostring(mid) ~= tostring(was0) then break end
+					end
+					if MH_shortId(mid) ~= "" and tostring(mid) ~= tostring(was0) then
+						map[k] = MH_skinRecord(mid, tid, sx, sy, sz, kind)
+						learned = learned + 1
+						got = true
+						if learned % 10 == 0 then MH_saveMeshMap() end
+					else
+						sawStale = true                  -- equipped, display never moved
+					end
 				end
 			end
-			if onProgress and tried % 5 == 0 then pcall(onProgress, learned, tried, #keys) end
+			if not got then
+				if sawStale then stale = stale + 1 else refused = refused + 1 end
+			end
+			if onProgress and tried % 5 == 0 then
+				pcall(onProgress, learned, tried, #keys, refused, stale)
+			end
 			task.wait(0.15)
 		end
 	end
@@ -5467,7 +5504,7 @@ function MH_learnOwned(onProgress)
 		if k then pcall(function() MH_equipReal(k, slot, 0.4) end) end
 	end
 	MH_saveMeshMap()
-	return learned, tried
+	return learned, tried, refused, stale
 end
 
 -- Equip an item on YOUR character CLIENT-SIDE only. (1) menu equip: set
@@ -5479,7 +5516,7 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v23")   -- freshness marker so a stale-cache test is obvious
+	add("v25")   -- freshness marker so a stale-cache test is obvious
 	MH_loadMeshMap()
 	local lrn, tot = MH_learnMeshes()
 	add("learn=+" .. tostring(lrn) .. "/" .. tostring(tot))
@@ -5561,7 +5598,7 @@ function MH_equipItem(key, dispName)
 	for _, nm in ipairs(names) do
 		local e = (nm ~= nil) and mm[tostring(nm)] or nil
 		if type(e) == "table" and MH_shortId(e.mesh) ~= "" then
-			local n, ad = MH_applySkin(itemType, e.mesh, e.tex, e.sx, e.sy, e.sz)
+			local n, ad = MH_applySkin(itemType, e.mesh, e.tex, e.sx, e.sy, e.sz, e.k)
 			add("map " .. MH_shortId(e.mesh) .. "/" .. MH_shortId(e.tex)
 				.. (e.sx and ("@" .. tostring(e.sx)) or "@?") .. " -> " .. tostring(ad))
 			if n > 0 then return true, table.concat(parts, " | "), "map" end
@@ -5613,9 +5650,9 @@ function MH_equipItem(key, dispName)
 	end
 	-- 3) our item's mesh sitting somewhere in the world (a lobby shop stand, a
 	-- round weapon) identified by name, ancestor name or attribute
-	local wMesh, wTex, wd2, wsx, wsy, wsz = MH_scanWorldMeshes(names)
+	local wMesh, wTex, wd2, wsx, wsy, wsz, wk = MH_scanWorldMeshes(names)
 	if wMesh then
-		local n, ad = MH_applySkin(itemType, wMesh, wTex, wsx, wsy, wsz)
+		local n, ad = MH_applySkin(itemType, wMesh, wTex, wsx, wsy, wsz, wk)
 		add(tostring(wd2) .. " " .. wMesh .. " -> " .. tostring(ad))
 		if n > 0 then return true, table.concat(parts, " | "), "world" end
 	else
@@ -5988,12 +6025,13 @@ if true then
 						task.spawn(function()
 							_G.MH_LearnBusy = true
 							notify("Skins", "learning your inventory - this takes a few minutes")
-							local ok, a, b = pcall(MH_learnOwned, function(l, t, total)
+							local ok, a, b, c, d = pcall(MH_learnOwned, function(l, t, total)
 								notify("Skins", l .. " learned / " .. t .. " tried of " .. total)
 							end)
 							_G.MH_LearnBusy = false
 							if ok then
-								notify("Skins", "done: +" .. tostring(a) .. " learned, " .. tostring(b) .. " tried")
+								notify("Skins", "done: +" .. tostring(a) .. " of " .. tostring(b)
+									.. " (refused " .. tostring(c) .. ", no display " .. tostring(d) .. ")")
 							else
 								notify("Skins", "failed: " .. tostring(a))
 							end
