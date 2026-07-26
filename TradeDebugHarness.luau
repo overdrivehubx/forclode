@@ -2283,7 +2283,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v18 (find the game's key->mesh DB via the worn weapon)")
+	w("BUILD          = equip-v19 (learn skins from players + base-mesh fallback)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -4775,11 +4775,18 @@ function MH_scanMeshDB(key, names)
 	return meshId, texId, "db:" .. tostring(where)
 end
 
--- Does a database record mention this asset id anywhere inside it? GLOBAL.
+-- Does a database record mention this asset id anywhere inside it? Matches the
+-- id as a WHOLE value ("123", 123, "rbxassetid://123", "...?id=123") — a plain
+-- substring test hits any long number that merely contains it. GLOBAL.
 function MH_recHasId(rec, id, depth)
 	local tv = type(rec)
-	if tv == "string" or tv == "number" then
-		return tostring(rec):find(id, 1, true) ~= nil
+	if tv == "number" then return string.format("%d", math.floor(rec)) == id end
+	if tv == "string" then
+		return rec == id
+			or rec:find("rbxassetid://" .. id, 1, true) ~= nil
+			or rec:find("?id=" .. id, 1, true) ~= nil
+			or rec:find("=" .. id, 1, true) ~= nil
+			or rec:find("/" .. id, 1, true) ~= nil
 	end
 	if tv == "table" and (depth or 0) < 2 then
 		for _, v in pairs(rec) do
@@ -4859,7 +4866,9 @@ function MH_meshDBLookup(anchorMesh, anchorKeys, wantNames)
 	if not db then
 		local budget = 150000
 		for _, o in pairs(objs) do
-			if type(o) == "table" then
+			local big = false
+			pcall(function() big = #o > 2000 end)   -- skip bulk arrays, not databases
+			if type(o) == "table" and not big then
 				pcall(function()
 					for k, v in pairs(o) do
 						budget = budget - 1
@@ -4896,6 +4905,110 @@ function MH_meshDBLookup(anchorMesh, anchorKeys, wantNames)
 		end
 	end)
 	return nil, nil, tag .. " no entry; keys{" .. table.concat(sample, ",") .. "}"
+end
+
+-- LEARN skins from the players around you. Every player's weapon display is a
+-- replicated instance carrying the real mesh + texture of what they wear, and
+-- the key they wear is on an attribute next to it — so pair the two and we get
+-- genuine "item -> mesh/texture" entries for free. The map is saved to disk, so
+-- it keeps growing across servers and sessions. Returns (learned, total). GLOBAL.
+function MH_learnMeshes()
+	local map = _G.MH_MeshMap or {}
+	_G.MH_MeshMap = map
+	local learned, total = 0, 0
+	for _, p in ipairs(game:GetService("Players"):GetPlayers()) do
+		local c = p.Character
+		if c then
+			for _, slot in ipairs({ "Knife", "Gun" }) do
+				local wornKey
+				for _, src in ipairs({ p, c }) do
+					local oka, at = pcall(function() return src:GetAttributes() end)
+					if oka and type(at) == "table" then
+						for an, av in pairs(at) do
+							if type(av) == "string" and av ~= ""
+								and tostring(an):lower():find(slot:lower(), 1, true) then
+								wornKey = wornKey or av
+							end
+						end
+					end
+				end
+				local _, mid, tid = MH_displayPart2(c, slot)
+				mid, tid = MH_shortId(mid), MH_shortId(tid)
+				if wornKey and mid ~= "" then
+					local cur = map[wornKey]
+					if type(cur) ~= "table" or MH_shortId(cur.mesh) == "" then
+						map[wornKey] = { mesh = mid, tex = (tid ~= "" and tid or nil) }
+						learned = learned + 1
+					end
+				end
+			end
+		end
+	end
+	for _ in pairs(map) do total = total + 1 end
+	if learned > 0 then MH_saveMeshMap() end
+	return learned, total
+end
+
+-- MH_displayPart for an arbitrary character (MH_displayPart is yours). GLOBAL.
+function MH_displayPart2(char, itemType)
+	if not char then return nil, "", "" end
+	local ov = char:FindFirstChild("DisplayRef" .. tostring(itemType))
+	local part = (ov and ov:IsA("ObjectValue")) and ov.Value or nil
+	if not part then return nil, "", "" end
+	local mid, tid = "", ""
+	local m = part:FindFirstChildWhichIsA("SpecialMesh", true)
+	if m then
+		pcall(function() mid = tostring(m.MeshId); tid = tostring(m.TextureId) end)
+	elseif part:IsA("MeshPart") then
+		pcall(function() mid = tostring(part.MeshId); tid = tostring(part.TextureID) end)
+	end
+	return part, mid, tid
+end
+
+-- Persist / restore the learned skin map. GLOBAL.
+function MH_saveMeshMap()
+	pcall(function()
+		writefile("MollyHub_meshmap.json",
+			game:GetService("HttpService"):JSONEncode(_G.MH_MeshMap or {}))
+	end)
+end
+function MH_loadMeshMap()
+	if _G.MH_MeshMapLoaded then return end
+	_G.MH_MeshMapLoaded = true
+	pcall(function()
+		if not (isfile and isfile("MollyHub_meshmap.json") and readfile) then return end
+		local saved = game:GetService("HttpService"):JSONDecode(readfile("MollyHub_meshmap.json"))
+		if type(saved) ~= "table" then return end
+		local map = _G.MH_MeshMap or {}
+		_G.MH_MeshMap = map
+		for k, v in pairs(saved) do
+			if map[k] == nil then map[k] = v end   -- entries you pinned by hand win
+		end
+	end)
+end
+
+-- The BASE mesh for a slot: MM2 skins are mostly retextures of one knife / one
+-- gun mesh, so the mesh from any display in that slot gives the right SHAPE even
+-- when we don't know the item's own texture. GLOBAL.
+function MH_slotBaseMesh(itemType)
+	local _, mine = MH_displayPart(itemType)
+	mine = MH_shortId(mine)
+	if mine ~= "" then return mine, "yours" end
+	local want = tostring(itemType):lower()
+	local found = ""
+	pcall(function()
+		local wd = workspace:FindFirstChild("WeaponDisplays")
+		if not wd then return end
+		for _, dd in ipairs(wd:GetDescendants()) do
+			if dd:IsA("SpecialMesh") and dd.Parent
+				and tostring(dd.Parent.Name):lower():find(want, 1, true) then
+				local id = MH_shortId(dd.MeshId)
+				if id ~= "" then found = id; break end
+			end
+		end
+	end)
+	if found ~= "" then return found, "displays" end
+	return nil, "no base mesh"
 end
 
 -- Part + SpecialMesh from raw ids. Meshes and textures render on ANY account
@@ -4959,7 +5072,10 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v18")   -- freshness marker so a stale-cache test is obvious
+	add("v19")   -- freshness marker so a stale-cache test is obvious
+	MH_loadMeshMap()
+	local lrn, tot = MH_learnMeshes()
+	add("learn=+" .. tostring(lrn) .. "/" .. tostring(tot))
 	local d0 = ItemDB[key]
 	local itemType = (d0 and d0.ItemType == "Gun") and "Gun" or "Knife"
 	add("type=" .. itemType)
@@ -5117,6 +5233,23 @@ function MH_equipItem(key, dispName)
 	local vok, vd = MH_equipVisual(names)
 	add("nameSearch:" .. tostring(vd))
 	if vok then return true, table.concat(parts, " | "), "name" end
+	-- 3b) BASE MESH: MM2 skins are retextures of one knife / one gun mesh, and we
+	-- can read that mesh off a display right now. So put the correct weapon SHAPE
+	-- in the hand and texture it with the item's own image asset. Reported as
+	-- "basemesh": the shape is real, the skin is only right if that image asset
+	-- happens to be the weapon's texture.
+	local bm, bmd = MH_slotBaseMesh(itemType)
+	if bm then
+		local tex = info and MH_shortId(info.Image) or ""
+		local mp, mpd = MH_buildMeshPart(bm, tex ~= "" and tex or nil, "basemesh/" .. tostring(bmd))
+		if mp then
+			local aok, ad = MH_attachToHand(mp)
+			add(tostring(mpd) .. " -> " .. tostring(ad))
+			if aok then return true, table.concat(parts, " | "), "basemesh" end
+		end
+	else
+		add("base:" .. tostring(bmd))
+	end
 	-- 4) last resort, and a GUESS: treat the item record's ItemID as a mesh id.
 	-- It attaches something either way, so it is reported as "guess" — if nothing
 	-- shows up in your hand, that id was a model id, not a mesh id.
@@ -5448,6 +5581,14 @@ if true then
 							-- keep the toast SHORT; full diagnostic goes to the clipboard
 							notify("Equip", it.name .. (okq and (" - in hand [" .. tostring(how) .. "]")
 								or " - menu only (diag copied)"))
+						end)
+					end })
+				S:Button({ Title = "Learn skins", Desc = "read real weapon meshes off nearby players",
+					Callback = function()
+						task.spawn(function()
+							MH_loadMeshMap()
+							local lrn, tot = MH_learnMeshes()
+							notify("Skins", "+" .. tostring(lrn) .. " learned, " .. tostring(tot) .. " known")
 						end)
 					end })
 				S:Button({ Title = "Load LIVE items", Desc = "read the real catalog from memory",
