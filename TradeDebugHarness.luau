@@ -2307,7 +2307,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v39 (hotbar icon follows the equipped skin)")
+	w("BUILD          = equip-v40 (paint the weapon own mesh; knives too)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -4638,7 +4638,7 @@ end
 function MH_meshFieldsOf(part)
 	local mid, tid, sx, sy, sz, kind = "", "", nil, nil, nil, nil
 	if not part then return mid, tid end
-	local m = (part:IsA("SpecialMesh") and part) or part:FindFirstChildWhichIsA("SpecialMesh", true)
+	local m = MH_displayMesh(part)
 	if m then
 		pcall(function()
 			mid, tid = tostring(m.MeshId), tostring(m.TextureId)
@@ -4653,6 +4653,38 @@ function MH_meshFieldsOf(part)
 		end)
 	end
 	return mid, tid, sx, sy, sz, kind
+end
+
+-- The weapon's OWN mesh on a display or a tool. A recursive search was wrong:
+-- once a skin overlay is welded under the display, the overlay's own mesh is
+-- found first, so reads captured our fake and paints missed the real one. MM2
+-- calls it "Mesh" and hangs it directly off the part, exactly as the reference
+-- spawner assumes. GLOBAL.
+function MH_displayMesh(root)
+	if not root then return nil end
+	if root:IsA("SpecialMesh") then return root end
+	local named = root:FindFirstChild("Mesh")
+	if named and named:IsA("SpecialMesh") then return named end
+	local h = root:FindFirstChild("Handle")            -- a Tool keeps it on the handle
+	if h then
+		local hm = h:FindFirstChild("Mesh")
+		if hm and hm:IsA("SpecialMesh") then return hm end
+		for _, c in ipairs(h:GetChildren()) do
+			if c:IsA("SpecialMesh") then return c end
+		end
+	end
+	for _, c in ipairs(root:GetChildren()) do
+		if c:IsA("SpecialMesh") then return c end
+	end
+	local okd, ds = pcall(function() return root:GetDescendants() end)
+	if okd then
+		for _, d in ipairs(ds) do
+			if d:IsA("SpecialMesh") and not (d.Parent and d.Parent.Name == "__MHskin") then
+				return d
+			end
+		end
+	end
+	return nil
 end
 
 -- CFrame <-> a plain array of its 12 components, so it survives JSON. GLOBAL.
@@ -4702,7 +4734,7 @@ function MH_readSkin(part)
 	local mid, tid, sx, sy, sz, kind = MH_meshFieldsOf(part)
 	local rec = MH_skinRecord(mid, tid, sx, sy, sz, kind)
 	if not rec then return nil end
-	local m = (part:IsA("SpecialMesh") and part) or part:FindFirstChildWhichIsA("SpecialMesh", true)
+	local m = MH_displayMesh(part)
 	if m then
 		pcall(function()
 			rec.ox, rec.oy, rec.oz = m.Offset.X, m.Offset.Y, m.Offset.Z
@@ -5075,9 +5107,10 @@ function MH_paintMesh(root, mesh, tex, rec)
 		end
 	end
 	-- (a) a SpecialMesh can simply be repointed
+	-- exactly one mesh: the weapon's own, never an overlay we welded on earlier
 	local sms = {}
-	if root:IsA("SpecialMesh") then sms[1] = root end
-	for _, dd in ipairs(ds) do if dd:IsA("SpecialMesh") then sms[#sms + 1] = dd end end
+	local own = MH_displayMesh(root)
+	if own then sms[1] = own end
 	local n = 0
 	for _, m in ipairs(sms) do
 		pcall(function()
@@ -5311,6 +5344,14 @@ function MH_toolSlot(tool)
 	local n = tostring(tool.Name):lower()
 	if n:find("gun") or n:find("revolver") or n:find("pistol") then return "Gun" end
 	if n:find("knife") or n:find("blade") then return "Knife" end
+	-- MM2 can hand out a tool named after the item itself, so fall back to what
+	-- we are pretending to wear rather than leaving the weapon unskinned.
+	for _, slot in ipairs({ "Knife", "Gun" }) do
+		local k = (_G.MH_SkinKey or {})[slot]
+		if k and tostring(k):lower() == n then return slot end
+		local d = k and ItemDB[k]
+		if d and d.ItemName and tostring(d.ItemName):lower() == n then return slot end
+	end
 	return nil
 end
 
@@ -5650,6 +5691,33 @@ function MH_hookInventory()
 		end
 	end
 	return hooked
+end
+
+-- Repaint the instant a weapon is handed over. The keep-alive alone meant up to
+-- half a second of the default weapon at the start of every round. GLOBAL.
+function MH_watchTools()
+	if _G.MH_ToolWatch then return end
+	_G.MH_ToolWatch = true
+	local plr = game:GetService("Players").LocalPlayer
+	local function hook(where)
+		if not where then return end
+		pcall(function()
+			where.ChildAdded:Connect(function()
+				task.defer(function() pcall(MH_applySkinNow) end)
+			end)
+		end)
+	end
+	hook(plr:FindFirstChildOfClass("Backpack"))
+	hook(plr.Character)
+	pcall(function()
+		plr.ChildAdded:Connect(function(c)
+			if c:IsA("Backpack") then hook(c) end
+		end)
+		plr.CharacterAdded:Connect(function(c)
+			hook(c)
+			task.defer(function() pcall(MH_applySkinNow) end)
+		end)
+	end)
 end
 
 -- Keep the hook alive: the inventory rebuilds its tiles constantly (filters,
@@ -6136,7 +6204,7 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v39")   -- freshness marker so a stale-cache test is obvious
+	add("v40")   -- freshness marker so a stale-cache test is obvious
 	MH_loadMeshMap()
 	local lrn, tot = MH_learnMeshes()
 	add("learn=+" .. tostring(lrn) .. "/" .. tostring(tot))
@@ -7142,6 +7210,7 @@ end)
 task.spawn(function()
 	MH_loadMeshMap()
 	MH_watchInventory()
+	MH_watchTools()
 end)
 
 print("[TradeDebug] Harness loaded. Layout: " .. (TradeGUI and TradeGUI.Name or "NOT FOUND") ..
