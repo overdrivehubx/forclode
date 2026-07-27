@@ -61,8 +61,9 @@ Tab:Section({ Title = "Choose one" })
 local busy = false
 for _, s in ipairs(SCRIPTS) do
 	Tab:Button({
-		Title = "Launch " .. s.name,
+		Title = s.name,
 		Desc = s.desc,
+		Style = "primary",
 		Callback = function()
 			if busy then return end
 			busy = true

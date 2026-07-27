@@ -3,25 +3,24 @@
 ================================================================================
   MollyUI — the MollyHub interface
 ================================================================================
-  A drop-in replacement for the Rubis menu library. It answers the same calls
-  (CreateWindow / Tab / Section / Button / Toggle / Input / Dropdown / Slider /
-  Keybind / Notify), so a script written against Rubis runs on this one by
-  swapping the library URL and nothing else.
+  A drop-in replacement for the Rubis menu library: same calls (CreateWindow /
+  Tab / Section / Button / Toggle / Input / Dropdown / Slider / Keybind /
+  Notify), so a script written against Rubis runs here by swapping one url.
 
-  Design: one dark card. A header with a square badge, the title, a subtitle and
-  a red close button; a row of pill tabs under it; content as rounded panels with
-  small-caps labels. Actions are coloured by what they do rather than all being
-  grey — blue starts something, green confirms, red destroys.
+  Shape: a tall, narrow card — the shape of the screen it is used on.
 
-    local UI  = loadstring(game:HttpGet(".../MollyUI.luau"))()
-    local Win = UI:CreateWindow({ Title = "MollyHub", SubTitle = "Murder Mystery 2" })
-    local Tab = Win:Tab({ Title = "Spawner" })
-    Tab:Section({ Title = "Spawn" })
-    Tab:Button({ Title = "Spawn item", Callback = function() end })
+  Restrained on purpose. Surfaces are one dark grey; the accent shows up about
+  three times per screen — the active tab's underline, a primary action, and
+  whatever is switched on — and nowhere else. An earlier version tinted every
+  button by guessing from its title, which turned a page into a wall of coloured
+  bars. Colour now has to be asked for: Style = "primary" or "danger".
 
-  _G.MH_MenuScale scales the whole window. _G.MH_OnlyTabs, if set, is a set of
-  tab titles to SHOW — the rest are still built, so the script behind them keeps
-  working, they are just not on screen.
+  Choosing something opens its own panel beside the window, with its own search,
+  instead of unfolding inside the page and shoving everything down.
+
+  _G.MH_MenuScale   overall scale, also driven by the +/- in the footer
+  _G.MH_OnlyTabs    set of tab titles to show; the rest are built but hidden
+  _G.MH_TabMap      which tabs share a page
 ================================================================================
 ]]
 
@@ -30,33 +29,31 @@ UI.__index = UI
 
 local TweenService = game:GetService("TweenService")
 local UserInput = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 
 --==============================================================================
--- THEME
+-- TOKENS
 --==============================================================================
-local T = {
-	Card      = Color3.fromRGB(13, 14, 20),
-	Panel     = Color3.fromRGB(20, 22, 31),
-	PanelSoft = Color3.fromRGB(28, 31, 43),
-	Line      = Color3.fromRGB(44, 48, 66),
-	Text      = Color3.fromRGB(238, 240, 250),
-	Dim       = Color3.fromRGB(142, 150, 174),
-	Faint     = Color3.fromRGB(98, 105, 128),
-	Accent    = Color3.fromRGB(122, 108, 255),   -- violet, like the references
-	Accent2   = Color3.fromRGB(88, 142, 255),    -- the blue it fades into
-	Good      = Color3.fromRGB(58, 196, 124),
-	Bad       = Color3.fromRGB(240, 78, 92),
-	Warm      = Color3.fromRGB(244, 172, 76),
-	OnAccent  = Color3.fromRGB(255, 255, 255),
+local C = {
+	Bg      = Color3.fromRGB(11, 12, 16),   -- the card
+	Surface = Color3.fromRGB(19, 21, 27),   -- rows, fields
+	Raised  = Color3.fromRGB(26, 29, 37),   -- hover, tracks
+	Edge    = Color3.fromRGB(33, 36, 46),   -- hairlines
+	Ink     = Color3.fromRGB(240, 242, 248),
+	Ink2    = Color3.fromRGB(150, 157, 175),
+	Ink3    = Color3.fromRGB(96, 103, 122),
+	Accent  = Color3.fromRGB(124, 106, 255),
+	Danger  = Color3.fromRGB(238, 84, 96),
+	On      = Color3.fromRGB(255, 255, 255),
 }
+local F  = Enum.Font.GothamMedium
+local FB = Enum.Font.GothamBold
 
-local FONT      = Enum.Font.GothamMedium
-local FONT_BOLD = Enum.Font.GothamBold
+local R_CARD, R_ROW, R_CHIP = 18, 12, 9
+local ROW_H, GAP, PAGE_PAD = 46, 6, 14
 
 --==============================================================================
--- little builders
+-- builders
 --==============================================================================
 local function new(cls, props, parent)
 	local o = Instance.new(cls)
@@ -65,73 +62,52 @@ local function new(cls, props, parent)
 	return o
 end
 
--- a two-stop wash, used on anything that should read as a primary surface
-local function gradient(inst, a, b, rot)
-	return new("UIGradient", {
-		Color = ColorSequence.new(a or T.Accent, b or T.Accent2),
-		Rotation = rot or 90,
-	}, inst)
+local function round(o, r) new("UICorner", { CornerRadius = UDim.new(0, r or R_ROW) }, o) return o end
+
+local function edge(o, colr, trans)
+	return new("UIStroke", { Color = colr or C.Edge, Thickness = 1,
+		Transparency = trans or 0, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, o)
 end
 
-local function round(inst, r)
-	new("UICorner", { CornerRadius = UDim.new(0, r or 10) }, inst)
-	return inst
-end
-
-local function stroke(inst, col, thick, trans)
-	return new("UIStroke", {
-		Color = col or T.Line, Thickness = thick or 1,
-		Transparency = trans or 0,
-		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-	}, inst)
-end
-
-local function pad(inst, all, l, r, t, b)
+local function pad(o, t, r, b, l)
 	return new("UIPadding", {
-		PaddingLeft = UDim.new(0, l or all or 0), PaddingRight = UDim.new(0, r or all or 0),
-		PaddingTop = UDim.new(0, t or all or 0), PaddingBottom = UDim.new(0, b or all or 0),
-	}, inst)
+		PaddingTop = UDim.new(0, t or 0), PaddingRight = UDim.new(0, r or t or 0),
+		PaddingBottom = UDim.new(0, b or t or 0), PaddingLeft = UDim.new(0, l or r or t or 0),
+	}, o)
 end
 
-local function list(inst, gap, dir)
-	return new("UIListLayout", {
-		Padding = UDim.new(0, gap or 8),
-		FillDirection = dir or Enum.FillDirection.Vertical,
-		SortOrder = Enum.SortOrder.LayoutOrder,
-	}, inst)
+local function col(o, gap)
+	return new("UIListLayout", { Padding = UDim.new(0, gap or GAP),
+		FillDirection = Enum.FillDirection.Vertical, SortOrder = Enum.SortOrder.LayoutOrder }, o)
 end
 
-local function tween(o, t, props)
+local function tw(o, t, props)
 	pcall(function()
 		TweenService:Create(o, TweenInfo.new(t, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props):Play()
 	end)
 end
 
--- Buttons say what they do. Rubis has no variant field, so the title decides:
--- a destructive word turns it red, a committing one blue, an approving one
--- green. Everything else stays quiet grey.
-local function toneFor(title)
-	local s = tostring(title or ""):lower()
-	if s:find("remove") or s:find("forget") or s:find("delete") or s:find("clear")
-		or s:find("terminate") or s:find("cancel") or s:find("block") or s:find("decline")
-		or s:find("stop") or s:find("reset") or s:find("unequip") then
-		return T.Bad, T.OnAccent
-	end
-	if s:find("accept") or s:find("confirm") or s:find("apply") or s:find("save") then
-		return T.Good, T.OnAccent
-	end
-	if s:find("spawn") or s:find("equip") or s:find("start") or s:find("request")
-		or s:find("launch") or s:find("run") or s:find("learn") or s:find("load") then
-		return T.Accent, T.OnAccent
-	end
-	return T.PanelSoft, T.Text
+local function label(parent, text, size, colr, bold)
+	return new("TextLabel", {
+		BackgroundTransparency = 1, Font = bold and FB or F, TextSize = size,
+		TextColor3 = colr, TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd, Text = tostring(text or ""),
+	}, parent)
 end
 
-local function hostGui()
-	local gui = new("ScreenGui", {
-		Name = "MollyUI", ResetOnSpawn = false, IgnoreGuiInset = true,
-		ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 999999,
-	})
+local function viewport()
+	local v = Vector2.new(1280, 720)
+	pcall(function()
+		local s = workspace.CurrentCamera.ViewportSize
+		if typeof(s) == "Vector2" and s.X > 10 and s.Y > 10 then v = s end
+	end)
+	return v
+end
+
+local function hostGui(name)
+	local gui = new("ScreenGui", { Name = name or "MollyUI", ResetOnSpawn = false,
+		IgnoreGuiInset = true, ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+		DisplayOrder = 999999 })
 	local ok = pcall(function()
 		if gethui then gui.Parent = gethui() else gui.Parent = game:GetService("CoreGui") end
 	end)
@@ -142,11 +118,11 @@ local function hostGui()
 end
 
 local function draggable(frame, handle)
-	local dragging, startPos, startInput
+	local dragging, from, origin
 	handle.InputBegan:Connect(function(i)
 		if i.UserInputType == Enum.UserInputType.MouseButton1
 			or i.UserInputType == Enum.UserInputType.Touch then
-			dragging, startInput, startPos = true, i.Position, frame.Position
+			dragging, from, origin = true, i.Position, frame.Position
 			i.Changed:Connect(function()
 				if i.UserInputState == Enum.UserInputState.End then dragging = false end
 			end)
@@ -156,164 +132,242 @@ local function draggable(frame, handle)
 		if not dragging then return end
 		if i.UserInputType == Enum.UserInputType.MouseMovement
 			or i.UserInputType == Enum.UserInputType.Touch then
-			local d = i.Position - startInput
-			frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X,
-				startPos.Y.Scale, startPos.Y.Offset + d.Y)
+			local d = i.Position - from
+			frame.Position = UDim2.new(origin.X.Scale, origin.X.Offset + d.X,
+				origin.Y.Scale, origin.Y.Offset + d.Y)
 		end
 	end)
 end
 
 --==============================================================================
--- NOTIFY
+-- TOASTS
 --==============================================================================
-local toastHolder
+local toasts
 function UI:Notify(o)
 	o = o or {}
 	pcall(function()
-		if not toastHolder or not toastHolder.Parent then
-			local g = hostGui()
-			g.Name = "MollyUI_Toasts"
-			toastHolder = new("Frame", {
-				BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 1),
-				Position = UDim2.new(1, -18, 1, -18), Size = UDim2.fromOffset(300, 400),
-			}, g)
-			local l = list(toastHolder, 8)
+		if not toasts or not toasts.Parent then
+			local g = hostGui("MollyUI_Toasts")
+			toasts = new("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 1),
+				Position = UDim2.new(1, -16, 1, -16), Size = UDim2.fromOffset(268, 420) }, g)
+			local l = col(toasts, 6)
 			l.VerticalAlignment = Enum.VerticalAlignment.Bottom
 			l.HorizontalAlignment = Enum.HorizontalAlignment.Right
 		end
-		local card = new("Frame", {
-			BackgroundColor3 = T.Panel, Size = UDim2.new(1, 0, 0, 0),
-			AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 0.02,
-		}, toastHolder)
-		round(card, 12); stroke(card, T.Line, 1, 0.3)
-		new("Frame", {
-			BackgroundColor3 = T.Accent, BorderSizePixel = 0,
-			Size = UDim2.new(0, 3, 1, -16), Position = UDim2.fromOffset(10, 8),
-		}, round(card, 12) and card)
-		local body = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, -34, 0, 0),
-			Position = UDim2.fromOffset(24, 0), AutomaticSize = Enum.AutomaticSize.Y }, card)
-		pad(body, 10, 10, 10, 10, 10)
-		list(body, 2)
-		new("TextLabel", {
-			BackgroundTransparency = 1, Font = FONT_BOLD, TextSize = 13, TextColor3 = T.Text,
-			TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.new(1, 0, 0, 16),
-			Text = tostring(o.Title or "MollyHub"),
-		}, body)
-		new("TextLabel", {
-			BackgroundTransparency = 1, Font = FONT, TextSize = 12, TextColor3 = T.Dim,
-			TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.new(1, 0, 0, 0),
-			AutomaticSize = Enum.AutomaticSize.Y, TextWrapped = true,
-			Text = tostring(o.Content or ""),
-		}, body)
-		card.BackgroundTransparency = 1
-		tween(card, 0.15, { BackgroundTransparency = 0.02 })
+		local t = new("Frame", { BackgroundColor3 = C.Surface, Size = UDim2.new(1, 0, 0, 0),
+			AutomaticSize = Enum.AutomaticSize.Y }, toasts)
+		round(t, R_ROW); edge(t, C.Edge, 0.35)
+		new("Frame", { BackgroundColor3 = C.Accent, BorderSizePixel = 0,
+			Size = UDim2.fromOffset(3, 18), Position = UDim2.fromOffset(12, 13) }, t)
+		local body = new("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(23, 0),
+			Size = UDim2.new(1, -33, 0, 0), AutomaticSize = Enum.AutomaticSize.Y }, t)
+		pad(body, 11, 12, 11, 10)
+		col(body, 3)
+		label(body, o.Title or "MollyHub", 12.5, C.Ink, true).Size = UDim2.new(1, 0, 0, 15)
+		local d = label(body, o.Content or "", 11.5, C.Ink2)
+		d.Size = UDim2.new(1, 0, 0, 0); d.AutomaticSize = Enum.AutomaticSize.Y; d.TextWrapped = true
+		t.BackgroundTransparency = 1
+		tw(t, 0.14, { BackgroundTransparency = 0 })
 		task.delay(tonumber(o.Duration) or 4, function()
-			tween(card, 0.2, { BackgroundTransparency = 1 })
-			task.wait(0.25)
-			pcall(function() card:Destroy() end)
+			tw(t, 0.18, { BackgroundTransparency = 1 })
+			task.wait(0.22); pcall(function() t:Destroy() end)
 		end)
 	end)
 end
 
 function UI:SetTheme(t)
-	if type(t) ~= "table" then return end
-	if typeof(t.Accent) == "Color3" then T.Accent = t.Accent end
-	if typeof(t.AccentColor) == "Color3" then T.Accent = t.AccentColor end
+	if type(t) == "table" and typeof(t.Accent or t.AccentColor) == "Color3" then
+		C.Accent = t.Accent or t.AccentColor
+	end
 end
 
 --==============================================================================
--- WIDGETS  (every one returns a handle with :Set / :Refresh where it makes sense)
+-- PICKER — choices live beside the window, not inside the page
+--==============================================================================
+local openPicker
+local function showPicker(win, title, values, current, onPick)
+	if openPicker then pcall(function() openPicker:Destroy() end) openPicker = nil end
+	local card = win._card
+	local p = new("Frame", { BackgroundColor3 = C.Bg, Size = UDim2.fromOffset(228, 340),
+		ZIndex = 30 }, win._gui)
+	openPicker = p
+	round(p, R_CARD); edge(p, C.Edge, 0.1)
+	new("UIScale", { Scale = tonumber(_G.MH_MenuScale) or 1 }, p)
+
+	local function place()
+		pcall(function()
+			local a, s = card.AbsolutePosition, card.AbsoluteSize
+			local v = viewport()
+			if a.X + s.X + 238 < v.X then p.Position = UDim2.fromOffset(a.X + s.X + 10, a.Y)
+			elseif a.X - 238 > 0 then p.Position = UDim2.fromOffset(a.X - 238, a.Y)
+			else p.Position = UDim2.fromOffset(a.X, a.Y + s.Y + 8) end
+			p.Size = UDim2.fromOffset(228, math.max(240, math.min(s.Y, 380)))
+		end)
+	end
+	place()
+	card:GetPropertyChangedSignal("AbsolutePosition"):Connect(place)
+
+	local head = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 44),
+		ZIndex = 31 }, p)
+	local ttl = label(head, title or "Choose", 13, C.Ink, true)
+	ttl.Position = UDim2.fromOffset(14, 0); ttl.Size = UDim2.new(1, -50, 1, 0); ttl.ZIndex = 32
+	local x = new("TextButton", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(24, 24), ZIndex = 32,
+		Font = FB, TextSize = 15, TextColor3 = C.Ink3, Text = "X", AutoButtonColor = false }, head)
+	x.MouseEnter:Connect(function() x.TextColor3 = C.Danger end)
+	x.MouseLeave:Connect(function() x.TextColor3 = C.Ink3 end)
+	draggable(p, head)
+
+	local field = new("Frame", { BackgroundColor3 = C.Surface, ZIndex = 31,
+		Position = UDim2.fromOffset(12, 42), Size = UDim2.new(1, -24, 0, 30) }, p)
+	round(field, R_CHIP)
+	local search = new("TextBox", { BackgroundTransparency = 1, Font = F, TextSize = 12,
+		TextColor3 = C.Ink, PlaceholderText = "Search", PlaceholderColor3 = C.Ink3, Text = "",
+		ClearTextOnFocus = false, ZIndex = 32, TextXAlignment = Enum.TextXAlignment.Left,
+		Position = UDim2.fromOffset(11, 0), Size = UDim2.new(1, -22, 1, 0) }, field)
+
+	local count = label(p, "", 10.5, C.Ink3)
+	count.Position = UDim2.fromOffset(14, 78); count.Size = UDim2.new(1, -28, 0, 12); count.ZIndex = 31
+
+	local sc = new("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 31,
+		Position = UDim2.fromOffset(8, 94), Size = UDim2.new(1, -16, 1, -104), CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 2,
+		ScrollBarImageColor3 = C.Edge }, p)
+	col(sc, 4)
+
+	local function render(filter)
+		for _, c in ipairs(sc:GetChildren()) do
+			if c:IsA("GuiObject") then c:Destroy() end
+		end
+		filter = tostring(filter or ""):lower()
+		local shown, total = 0, 0
+		for _, v in ipairs(values) do
+			local text = tostring(v)
+			if filter == "" or text:lower():find(filter, 1, true) then
+				total = total + 1
+				if shown < 200 then
+					shown = shown + 1
+					local sel = (text == tostring(current))
+					local row = new("TextButton", { BackgroundColor3 = sel and C.Raised or C.Surface,
+						Size = UDim2.new(1, -4, 0, 32), Font = F, TextSize = 12, ZIndex = 32,
+						TextColor3 = sel and C.Ink or C.Ink2, AutoButtonColor = false,
+						TextXAlignment = Enum.TextXAlignment.Left, Text = "    " .. text,
+						LayoutOrder = shown }, sc)
+					round(row, R_CHIP)
+					if sel then
+						new("Frame", { BackgroundColor3 = C.Accent, BorderSizePixel = 0, ZIndex = 33,
+							Position = UDim2.fromOffset(0, 8), Size = UDim2.fromOffset(3, 16) }, row)
+					end
+					row.MouseEnter:Connect(function() tw(row, 0.1, { BackgroundColor3 = C.Raised }) end)
+					row.MouseLeave:Connect(function()
+						tw(row, 0.1, { BackgroundColor3 = sel and C.Raised or C.Surface })
+					end)
+					row.MouseButton1Click:Connect(function()
+						pcall(function() p:Destroy() end) openPicker = nil
+						if onPick then task.spawn(function() pcall(onPick, v) end) end
+					end)
+				end
+			end
+		end
+		count.Text = (total == 0) and "no matches"
+			or (tostring(total) .. " item" .. (total == 1 and "" or "s")
+				.. (total > shown and ("  -  showing " .. shown) or ""))
+	end
+	render("")
+	search:GetPropertyChangedSignal("Text"):Connect(function() render(search.Text) end)
+	x.MouseButton1Click:Connect(function()
+		pcall(function() p:Destroy() end) openPicker = nil
+	end)
+	return p
+end
+
+--==============================================================================
+-- WIDGETS
 --==============================================================================
 local Tab = {}
 Tab.__index = Tab
 
-local function rowShell(tab, h)
-	local row = new("Frame", {
-		BackgroundColor3 = T.Panel, Size = UDim2.new(1, 0, 0, h or 44),
-		LayoutOrder = tab:_order(),
-	}, tab._body)
-	round(row, 10)
-	stroke(row, T.Line, 1, 0.45)
+function Tab:_order() self._n = (self._n or 0) + 1 return self._n end
+
+local function shell(tab, h)
+	local row = new("Frame", { BackgroundColor3 = C.Surface, Size = UDim2.new(1, 0, 0, h or ROW_H),
+		LayoutOrder = tab:_order() }, tab._body)
+	round(row, R_ROW)
 	return row
 end
 
-local function titleAndDesc(row, title, desc, rightPad)
-	local holder = new("Frame", { BackgroundTransparency = 1,
-		Size = UDim2.new(1, -(rightPad or 24), 1, 0), Position = UDim2.fromOffset(12, 0) }, row)
-	local t = new("TextLabel", {
-		BackgroundTransparency = 1, Font = FONT_BOLD, TextSize = 13, TextColor3 = T.Text,
-		TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
-		Text = tostring(title or ""),
-	}, holder)
+-- title on top, quiet description under it
+local function caption(row, title, desc, right)
+	local box = new("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(14, 0),
+		Size = UDim2.new(1, -(right or 28), 1, 0) }, row)
+	local t = label(box, title, 12.5, C.Ink, true)
 	if desc and tostring(desc) ~= "" then
-		t.Position = UDim2.new(0, 0, 0, 7); t.Size = UDim2.new(1, 0, 0, 15)
-		new("TextLabel", {
-			BackgroundTransparency = 1, Font = FONT, TextSize = 11, TextColor3 = T.Faint,
-			TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
-			Position = UDim2.new(0, 0, 0, 23), Size = UDim2.new(1, 0, 0, 14),
-			Text = tostring(desc),
-		}, holder)
+		t.Position = UDim2.new(0, 0, 0, 9); t.Size = UDim2.new(1, 0, 0, 15)
+		local d = label(box, desc, 11, C.Ink3)
+		d.Position = UDim2.new(0, 0, 0, 25); d.Size = UDim2.new(1, 0, 0, 14)
 	else
-		t.Position = UDim2.new(0, 0, 0, 0); t.Size = UDim2.new(1, 0, 1, 0)
+		t.Size = UDim2.fromScale(1, 1)
 	end
-	return holder
-end
-
-function Tab:_order()
-	self._n = (self._n or 0) + 1
-	return self._n
+	return box
 end
 
 function Tab:Section(o)
 	o = o or {}
-	local lab = new("TextLabel", {
-		BackgroundTransparency = 1, Font = FONT_BOLD, TextSize = 11,
-		TextColor3 = T.Faint, TextXAlignment = Enum.TextXAlignment.Left,
-		Size = UDim2.new(1, 0, 0, 22), LayoutOrder = self:_order(),
-		Text = string.upper(tostring(o.Title or "")),
-	}, self._body)
-	return { Instance = lab, Set = function(_, v) lab.Text = string.upper(tostring(v)) end }
+	local wrap = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 26),
+		LayoutOrder = self:_order() }, self._body)
+	local l = label(wrap, string.upper(tostring(o.Title or "")), 10.5, C.Ink3, true)
+	l.Position = UDim2.fromOffset(4, 8); l.Size = UDim2.new(1, -8, 0, 14)
+	return { Instance = wrap, Set = function(_, v) l.Text = string.upper(tostring(v)) end }
 end
 
 function Tab:Paragraph(o)
 	o = o or {}
-	local row = rowShell(self, 0)
+	local row = shell(self, 0)
 	row.AutomaticSize = Enum.AutomaticSize.Y
-	local box = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, -24, 0, 0),
-		Position = UDim2.fromOffset(12, 0), AutomaticSize = Enum.AutomaticSize.Y }, row)
-	pad(box, 10)
-	list(box, 3)
-	new("TextLabel", { BackgroundTransparency = 1, Font = FONT_BOLD, TextSize = 13,
-		TextColor3 = T.Text, TextXAlignment = Enum.TextXAlignment.Left,
-		Size = UDim2.new(1, 0, 0, 16), Text = tostring(o.Title or "") }, box)
-	local body = new("TextLabel", { BackgroundTransparency = 1, Font = FONT, TextSize = 12,
-		TextColor3 = T.Dim, TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true,
-		Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
-		Text = tostring(o.Desc or o.Content or "") }, box)
-	return { Instance = row, Set = function(_, v) body.Text = tostring(v) end }
+	local box = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y }, row)
+	pad(box, 12, 14, 13, 14)
+	col(box, 4)
+	label(box, o.Title, 12.5, C.Ink, true).Size = UDim2.new(1, 0, 0, 15)
+	local d = label(box, o.Desc or o.Content, 11.5, C.Ink2)
+	d.Size = UDim2.new(1, 0, 0, 0); d.AutomaticSize = Enum.AutomaticSize.Y; d.TextWrapped = true
+	return { Instance = row, Set = function(_, v) d.Text = tostring(v) end }
 end
 
+-- Neutral unless asked otherwise. Style = "primary" fills with the accent,
+-- "danger" reddens the label and leaves the surface alone.
 function Tab:Button(o)
 	o = o or {}
-	local row = rowShell(self, (o.Desc and o.Desc ~= "") and 46 or 38)
-	local fill, fg = toneFor(o.Title)
-	row.BackgroundColor3 = fill
-	if fill == T.Accent then gradient(row, T.Accent, T.Accent2, 45)
-	elseif fill == T.PanelSoft then stroke(row, T.Line, 1, 0.2) end
-	local holder = titleAndDesc(row, o.Title, o.Desc, 24)
-	for _, c in ipairs(holder:GetChildren()) do
+	local hasDesc = o.Desc and tostring(o.Desc) ~= ""
+	local row = shell(self, hasDesc and 52 or 40)
+	local style = tostring(o.Style or ""):lower()
+	if style == "primary" then row.BackgroundColor3 = C.Accent end
+	local box = caption(row, o.Title, o.Desc, 34)
+	for _, c in ipairs(box:GetChildren()) do
 		if c:IsA("TextLabel") then
-			c.TextColor3 = (c.TextSize == 11) and (fill == T.PanelSoft and T.Faint
-				or Color3.fromRGB(240, 240, 250)) or fg
+			if style == "primary" then
+				c.TextColor3 = (c.TextSize == 11) and Color3.fromRGB(220, 214, 255) or C.On
+			elseif style == "danger" and c.TextSize ~= 11 then
+				c.TextColor3 = C.Danger
+			end
 		end
 	end
+	local chev = label(row, ">", 13, (style == "primary") and C.On or C.Ink3, true)
+	chev.AnchorPoint = Vector2.new(1, 0.5); chev.Position = UDim2.new(1, -14, 0.5, 0)
+	chev.Size = UDim2.fromOffset(10, 18); chev.TextXAlignment = Enum.TextXAlignment.Right
+	local base = row.BackgroundColor3
 	local hit = new("TextButton", { BackgroundTransparency = 1, Text = "",
 		Size = UDim2.fromScale(1, 1), AutoButtonColor = false }, row)
-	hit.MouseEnter:Connect(function() tween(row, 0.12, { BackgroundTransparency = 0.15 }) end)
-	hit.MouseLeave:Connect(function() tween(row, 0.12, { BackgroundTransparency = 0 }) end)
+	hit.MouseEnter:Connect(function()
+		tw(row, 0.1, { BackgroundColor3 = (style == "primary") and C.Accent or C.Raised,
+			BackgroundTransparency = (style == "primary") and 0.12 or 0 })
+	end)
+	hit.MouseLeave:Connect(function()
+		tw(row, 0.1, { BackgroundColor3 = base, BackgroundTransparency = 0 })
+	end)
 	hit.MouseButton1Click:Connect(function()
-		tween(row, 0.08, { BackgroundTransparency = 0.3 })
-		task.delay(0.09, function() tween(row, 0.12, { BackgroundTransparency = 0 }) end)
+		tw(row, 0.06, { BackgroundTransparency = 0.35 })
+		task.delay(0.08, function() tw(row, 0.12, { BackgroundTransparency = 0 }) end)
 		if o.Callback then task.spawn(function() pcall(o.Callback) end) end
 	end)
 	return { Instance = row }
@@ -321,270 +375,129 @@ end
 
 function Tab:Toggle(o)
 	o = o or {}
-	local row = rowShell(self, (o.Desc and o.Desc ~= "") and 48 or 40)
-	titleAndDesc(row, o.Title, o.Desc, 68)
-	local state = o.Default and true or false
-	local track = new("Frame", {
-		BackgroundColor3 = state and T.Accent or T.PanelSoft, AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(40, 22),
-	}, row)
+	local hasDesc = o.Desc and tostring(o.Desc) ~= ""
+	local row = shell(self, hasDesc and 52 or 44)
+	caption(row, o.Title, o.Desc, 74)
+	local on = o.Default and true or false
+	local track = new("Frame", { BackgroundColor3 = on and C.Accent or C.Raised,
+		AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -14, 0.5, 0),
+		Size = UDim2.fromOffset(38, 22) }, row)
 	round(track, 11)
-	local knob = new("Frame", {
-		BackgroundColor3 = T.OnAccent, Size = UDim2.fromOffset(16, 16),
-		Position = state and UDim2.fromOffset(21, 3) or UDim2.fromOffset(3, 3),
-	}, track)
+	local knob = new("Frame", { BackgroundColor3 = C.On, Size = UDim2.fromOffset(16, 16),
+		Position = on and UDim2.fromOffset(19, 3) or UDim2.fromOffset(3, 3) }, track)
 	round(knob, 8)
 	local function set(v, fire)
-		state = v and true or false
-		tween(track, 0.15, { BackgroundColor3 = state and T.Accent or T.PanelSoft })
-		tween(knob, 0.15, { Position = state and UDim2.fromOffset(21, 3) or UDim2.fromOffset(3, 3) })
-		if fire and o.Callback then task.spawn(function() pcall(o.Callback, state) end) end
+		on = v and true or false
+		tw(track, 0.14, { BackgroundColor3 = on and C.Accent or C.Raised })
+		tw(knob, 0.14, { Position = on and UDim2.fromOffset(19, 3) or UDim2.fromOffset(3, 3) })
+		if fire and o.Callback then task.spawn(function() pcall(o.Callback, on) end) end
 	end
-	local hit = new("TextButton", { BackgroundTransparency = 1, Text = "",
-		Size = UDim2.fromScale(1, 1), AutoButtonColor = false }, row)
-	hit.MouseButton1Click:Connect(function() set(not state, true) end)
-	if state and o.Callback then task.spawn(function() pcall(o.Callback, true) end) end
-	return { Instance = row, Set = function(_, v) set(v, true) end, Get = function() return state end }
+	new("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.fromScale(1, 1),
+		AutoButtonColor = false }, row).MouseButton1Click:Connect(function() set(not on, true) end)
+	if on and o.Callback then task.spawn(function() pcall(o.Callback, true) end) end
+	return { Instance = row, Set = function(_, v) set(v, true) end, Get = function() return on end }
 end
 
 function Tab:Input(o)
 	o = o or {}
-	local row = rowShell(self, 62)
-	new("TextLabel", { BackgroundTransparency = 1, Font = FONT_BOLD, TextSize = 12,
-		TextColor3 = T.Dim, TextXAlignment = Enum.TextXAlignment.Left,
-		Position = UDim2.fromOffset(12, 8), Size = UDim2.new(1, -24, 0, 14),
-		Text = tostring(o.Title or "") }, row)
-	local field = new("Frame", { BackgroundColor3 = T.PanelSoft,
-		Position = UDim2.fromOffset(10, 26), Size = UDim2.new(1, -20, 0, 28) }, row)
-	round(field, 8)
-	local box = new("TextBox", {
-		BackgroundTransparency = 1, Font = FONT, TextSize = 13, TextColor3 = T.Text,
-		PlaceholderText = tostring(o.Placeholder or ""), PlaceholderColor3 = T.Faint,
-		Text = tostring(o.Value or ""), ClearTextOnFocus = false,
-		TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.new(1, -20, 1, 0),
-		Position = UDim2.fromOffset(10, 0),
-	}, field)
+	local row = shell(self, 66)
+	local l = label(row, o.Title, 11, C.Ink3, true)
+	l.Position = UDim2.fromOffset(14, 10); l.Size = UDim2.new(1, -28, 0, 13)
+	local field = new("Frame", { BackgroundColor3 = C.Raised, Position = UDim2.fromOffset(12, 28),
+		Size = UDim2.new(1, -24, 0, 30) }, row)
+	round(field, R_CHIP)
+	local box = new("TextBox", { BackgroundTransparency = 1, Font = F, TextSize = 12.5,
+		TextColor3 = C.Ink, PlaceholderText = tostring(o.Placeholder or ""),
+		PlaceholderColor3 = C.Ink3, Text = tostring(o.Value or ""), ClearTextOnFocus = false,
+		TextXAlignment = Enum.TextXAlignment.Left, Position = UDim2.fromOffset(11, 0),
+		Size = UDim2.new(1, -22, 1, 0) }, field)
+	local ring = edge(field, C.Accent, 1)
 	local function fire() if o.Callback then task.spawn(function() pcall(o.Callback, box.Text) end) end end
-	box.FocusLost:Connect(fire)
+	box.Focused:Connect(function() tw(ring, 0.12, { Transparency = 0.35 }) end)
+	box.FocusLost:Connect(function() tw(ring, 0.12, { Transparency = 1 }) fire() end)
 	box:GetPropertyChangedSignal("Text"):Connect(fire)
-	box.Focused:Connect(function() tween(field, 0.12, { BackgroundColor3 = T.Line }) end)
-	box.FocusLost:Connect(function() tween(field, 0.12, { BackgroundColor3 = T.PanelSoft }) end)
 	return { Instance = row, Set = function(_, v) box.Text = tostring(v) end,
 		Get = function() return box.Text end }
 end
 
 function Tab:Slider(o)
 	o = o or {}
-	local min = tonumber(o.Min) or 0
-	local max = tonumber(o.Max) or 100
-	local val = math.clamp(tonumber(o.Default) or min, min, max)
-	local row = rowShell(self, 58)
-	local head = new("TextLabel", { BackgroundTransparency = 1, Font = FONT_BOLD, TextSize = 12,
-		TextColor3 = T.Dim, TextXAlignment = Enum.TextXAlignment.Left,
-		Position = UDim2.fromOffset(12, 8), Size = UDim2.new(1, -24, 0, 14),
-		Text = tostring(o.Title or "") .. ": " .. tostring(val) }, row)
-	local bar = new("Frame", { BackgroundColor3 = T.PanelSoft, Position = UDim2.fromOffset(12, 32),
-		Size = UDim2.new(1, -24, 0, 8) }, row)
-	round(bar, 4)
-	local fillBar = new("Frame", { BackgroundColor3 = T.Accent, BorderSizePixel = 0,
-		Size = UDim2.fromScale((val - min) / math.max(1, max - min), 1) }, bar)
-	round(fillBar, 4)
-	local function setFromX(x)
+	local lo, hi = tonumber(o.Min) or 0, tonumber(o.Max) or 100
+	local val = math.clamp(tonumber(o.Default) or lo, lo, hi)
+	local row = shell(self, 60)
+	local l = label(row, o.Title, 11, C.Ink3, true)
+	l.Position = UDim2.fromOffset(14, 10); l.Size = UDim2.new(1, -70, 0, 13)
+	local read = label(row, tostring(val), 12, C.Ink, true)
+	read.AnchorPoint = Vector2.new(1, 0); read.Position = UDim2.new(1, -14, 0, 9)
+	read.Size = UDim2.fromOffset(50, 14); read.TextXAlignment = Enum.TextXAlignment.Right
+	local bar = new("Frame", { BackgroundColor3 = C.Raised, Position = UDim2.fromOffset(14, 36),
+		Size = UDim2.new(1, -28, 0, 6) }, row)
+	round(bar, 3)
+	local fill = new("Frame", { BackgroundColor3 = C.Accent, BorderSizePixel = 0,
+		Size = UDim2.fromScale((val - lo) / math.max(1, hi - lo), 1) }, bar)
+	round(fill, 3)
+	local function setX(x)
 		local rel = math.clamp((x - bar.AbsolutePosition.X) / math.max(1, bar.AbsoluteSize.X), 0, 1)
-		val = math.floor(min + rel * (max - min) + 0.5)
-		fillBar.Size = UDim2.fromScale(rel, 1)
-		head.Text = tostring(o.Title or "") .. ": " .. tostring(val)
+		val = math.floor(lo + rel * (hi - lo) + 0.5)
+		fill.Size = UDim2.fromScale(rel, 1); read.Text = tostring(val)
 		if o.Callback then task.spawn(function() pcall(o.Callback, val) end) end
 	end
-	local hit = new("TextButton", { BackgroundTransparency = 1, Text = "",
-		Position = UDim2.fromOffset(12, 24), Size = UDim2.new(1, -24, 0, 24),
-		AutoButtonColor = false }, row)
+	local hit = new("TextButton", { BackgroundTransparency = 1, Text = "", AutoButtonColor = false,
+		Position = UDim2.fromOffset(14, 28), Size = UDim2.new(1, -28, 0, 24) }, row)
 	local held = false
 	hit.InputBegan:Connect(function(i)
 		if i.UserInputType == Enum.UserInputType.MouseButton1
-			or i.UserInputType == Enum.UserInputType.Touch then
-			held = true; setFromX(i.Position.X)
-		end
+			or i.UserInputType == Enum.UserInputType.Touch then held = true setX(i.Position.X) end
 	end)
 	UserInput.InputChanged:Connect(function(i)
 		if held and (i.UserInputType == Enum.UserInputType.MouseMovement
-			or i.UserInputType == Enum.UserInputType.Touch) then setFromX(i.Position.X) end
+			or i.UserInputType == Enum.UserInputType.Touch) then setX(i.Position.X) end
 	end)
 	UserInput.InputEnded:Connect(function(i)
 		if i.UserInputType == Enum.UserInputType.MouseButton1
 			or i.UserInputType == Enum.UserInputType.Touch then held = false end
 	end)
-	return { Instance = row, Set = function(_, v)
-		val = math.clamp(tonumber(v) or min, min, max)
-		fillBar.Size = UDim2.fromScale((val - min) / math.max(1, max - min), 1)
-		head.Text = tostring(o.Title or "") .. ": " .. tostring(val)
-	end, Get = function() return val end }
+	return { Instance = row, Get = function() return val end, Set = function(_, v)
+		val = math.clamp(tonumber(v) or lo, lo, hi)
+		fill.Size = UDim2.fromScale((val - lo) / math.max(1, hi - lo), 1)
+		read.Text = tostring(val)
+	end }
 end
 
 function Tab:Keybind(o)
 	o = o or {}
-	local row = rowShell(self, 40)
-	titleAndDesc(row, o.Title, o.Desc, 80)
-	local chip = new("TextLabel", { BackgroundColor3 = T.PanelSoft, AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(58, 24),
-		Font = FONT_BOLD, TextSize = 12, TextColor3 = T.Text,
-		Text = tostring(o.Value or o.Default or "None") }, row)
-	round(chip, 7)
+	local row = shell(self, 44)
+	caption(row, o.Title, o.Desc, 82)
+	local chip = new("TextLabel", { BackgroundColor3 = C.Raised, AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -14, 0.5, 0), Size = UDim2.fromOffset(58, 24), Font = FB,
+		TextSize = 11.5, TextColor3 = C.Ink2, Text = tostring(o.Value or o.Default or "None") }, row)
+	round(chip, 8)
 	return { Instance = row, Set = function(_, v) chip.Text = tostring(v) end }
-end
-
--- Picking something is its own job, so it gets its own panel beside the window
--- rather than a list shoved into the page. One panel at a time, with a title, a
--- search box and rows — the same shape as the reference's "Rare Weapons" list.
-local openPicker
-local function showPicker(win, title, values, current, onPick)
-	if openPicker then pcall(function() openPicker:Destroy() end) openPicker = nil end
-	local card = win._card
-	local panel = new("Frame", {
-		BackgroundColor3 = T.Card, AnchorPoint = Vector2.new(0, 0.5),
-		Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.fromOffset(236, 330),
-		ZIndex = 20,
-	}, win._gui)
-	openPicker = panel
-	round(panel, 14); stroke(panel, T.Line, 1, 0.2)
-	if (tonumber(_G.MH_MenuScale) or 1) ~= 1 then
-		new("UIScale", { Scale = tonumber(_G.MH_MenuScale) or 1 }, panel)
-	end
-
-	-- sit beside the window, or under it when there is no room to the side
-	local function place()
-		pcall(function()
-			local p, sz = card.AbsolutePosition, card.AbsoluteSize
-			local vx = 1280
-			pcall(function()
-				local v = workspace.CurrentCamera.ViewportSize
-				if typeof(v) == "Vector2" and v.X > 10 then vx = v.X end
-			end)
-			if p.X + sz.X + 246 < vx then
-				panel.Position = UDim2.fromOffset(p.X + sz.X + 10, p.Y)
-			elseif p.X - 246 > 0 then
-				panel.Position = UDim2.fromOffset(p.X - 246, p.Y)
-			else
-				panel.Position = UDim2.fromOffset(p.X, p.Y + sz.Y + 8)
-			end
-			panel.Size = UDim2.fromOffset(236, math.max(220, math.min(sz.Y, 360)))
-		end)
-	end
-	place()
-	card:GetPropertyChangedSignal("AbsolutePosition"):Connect(place)
-
-	local head = new("Frame", { BackgroundColor3 = T.Panel, ZIndex = 21,
-		Size = UDim2.new(1, 0, 0, 40) }, panel)
-	round(head, 14)
-	new("Frame", { BackgroundColor3 = T.Panel, BorderSizePixel = 0, ZIndex = 21,
-		Position = UDim2.fromOffset(0, 26), Size = UDim2.new(1, 0, 0, 14) }, head)
-	new("TextLabel", { BackgroundTransparency = 1, Font = FONT_BOLD, TextSize = 13,
-		TextColor3 = T.Text, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 22,
-		Position = UDim2.fromOffset(12, 0), Size = UDim2.new(1, -48, 1, 0),
-		Text = tostring(title or "Choose") }, head)
-	local x = new("TextButton", { BackgroundColor3 = T.Bad, AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -10, 0.5, 0), Size = UDim2.fromOffset(24, 22), ZIndex = 22,
-		Font = FONT_BOLD, TextSize = 12, TextColor3 = T.OnAccent, Text = "X",
-		AutoButtonColor = false }, head)
-	round(x, 7)
-	draggable(panel, head)
-
-	local field = new("Frame", { BackgroundColor3 = T.PanelSoft, ZIndex = 21,
-		Position = UDim2.fromOffset(10, 46), Size = UDim2.new(1, -20, 0, 28) }, panel)
-	round(field, 8)
-	local search = new("TextBox", { BackgroundTransparency = 1, Font = FONT, TextSize = 12,
-		TextColor3 = T.Text, PlaceholderText = "Search...", PlaceholderColor3 = T.Faint,
-		Text = "", ClearTextOnFocus = false, ZIndex = 22,
-		TextXAlignment = Enum.TextXAlignment.Left, Position = UDim2.fromOffset(10, 0),
-		Size = UDim2.new(1, -20, 1, 0) }, field)
-
-	local sc = new("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0,
-		ZIndex = 21, Position = UDim2.fromOffset(6, 82), Size = UDim2.new(1, -12, 1, -90),
-		CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-		ScrollBarThickness = 3, ScrollBarImageColor3 = T.Line }, panel)
-	list(sc, 4)
-
-	local function render(filter)
-		for _, c in ipairs(sc:GetChildren()) do
-			if c:IsA("GuiObject") then c:Destroy() end
-		end
-		filter = tostring(filter or ""):lower()
-		local n = 0
-		for _, v in ipairs(values) do
-			local label = tostring(v)
-			if filter == "" or label:lower():find(filter, 1, true) then
-				n = n + 1
-				local sel = (label == tostring(current))
-				local row = new("TextButton", {
-					BackgroundColor3 = sel and T.Accent or T.PanelSoft, ZIndex = 22,
-					Size = UDim2.new(1, -4, 0, 30), Font = FONT, TextSize = 12,
-					TextColor3 = sel and T.OnAccent or T.Text, AutoButtonColor = false,
-					TextXAlignment = Enum.TextXAlignment.Left, Text = "   " .. label,
-					LayoutOrder = n,
-				}, sc)
-				round(row, 8)
-				if sel then gradient(row) end
-				row.MouseEnter:Connect(function()
-					if not sel then tween(row, 0.1, { BackgroundColor3 = T.Line }) end
-				end)
-				row.MouseLeave:Connect(function()
-					if not sel then tween(row, 0.1, { BackgroundColor3 = T.PanelSoft }) end
-				end)
-				row.MouseButton1Click:Connect(function()
-					pcall(function() panel:Destroy() end)
-					openPicker = nil
-					if onPick then task.spawn(function() pcall(onPick, v) end) end
-				end)
-				if n >= 250 then break end     -- a list this long is a search, not a scroll
-			end
-		end
-		if n == 0 then
-			new("TextLabel", { BackgroundTransparency = 1, Font = FONT, TextSize = 12,
-				TextColor3 = T.Faint, Size = UDim2.new(1, 0, 0, 30), ZIndex = 22,
-				Text = "nothing matches" }, sc)
-		end
-	end
-	render("")
-	search:GetPropertyChangedSignal("Text"):Connect(function() render(search.Text) end)
-	x.MouseButton1Click:Connect(function()
-		pcall(function() panel:Destroy() end)
-		openPicker = nil
-	end)
-	return panel
 end
 
 function Tab:Dropdown(o)
 	o = o or {}
-	local values = o.Values or {}
-	local chosen = o.Value
-	local row = rowShell(self, 62)
-	new("TextLabel", { BackgroundTransparency = 1, Font = FONT_BOLD, TextSize = 12,
-		TextColor3 = T.Dim, TextXAlignment = Enum.TextXAlignment.Left,
-		Position = UDim2.fromOffset(12, 8), Size = UDim2.new(1, -24, 0, 14),
-		Text = tostring(o.Title or "") }, row)
-	local btn = new("TextButton", {
-		BackgroundColor3 = T.PanelSoft, Position = UDim2.fromOffset(10, 26),
-		Size = UDim2.new(1, -20, 0, 28), Font = FONT, TextSize = 13, TextColor3 = T.Text,
+	local values, chosen = o.Values or {}, o.Value
+	local row = shell(self, 66)
+	local l = label(row, o.Title, 11, C.Ink3, true)
+	l.Position = UDim2.fromOffset(14, 10); l.Size = UDim2.new(1, -28, 0, 13)
+	local btn = new("TextButton", { BackgroundColor3 = C.Raised, Position = UDim2.fromOffset(12, 28),
+		Size = UDim2.new(1, -24, 0, 30), Font = F, TextSize = 12.5, TextColor3 = C.Ink,
 		TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false,
-		Text = "   " .. (tostring(chosen ~= nil and chosen ~= "" and chosen or "Select...")),
-	}, row)
-	round(btn, 8)
-	new("TextLabel", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -10, 0.5, 0), Size = UDim2.fromOffset(16, 16),
-		Font = FONT_BOLD, TextSize = 11, TextColor3 = T.Faint, Text = ">" }, btn)
+		Text = "   " .. tostring((chosen ~= nil and chosen ~= "") and chosen or "Choose...") }, row)
+	round(btn, R_CHIP)
+	local car = label(btn, ">", 12, C.Ink3, true)
+	car.AnchorPoint = Vector2.new(1, 0.5); car.Position = UDim2.new(1, -11, 0.5, 0)
+	car.Size = UDim2.fromOffset(10, 16); car.TextXAlignment = Enum.TextXAlignment.Right
 	btn.MouseButton1Click:Connect(function()
 		showPicker(self._win, o.Title, values, chosen, function(v)
-			chosen = v
-			btn.Text = "   " .. tostring(v)
+			chosen = v; btn.Text = "   " .. tostring(v)
 			if o.Callback then pcall(o.Callback, v) end
 		end)
 	end)
-	return {
-		Instance = row,
-		Refresh = function(_, vals) values = vals or {} end,
+	return { Instance = row, Refresh = function(_, v) values = v or {} end,
 		Set = function(_, v) chosen = v; btn.Text = "   " .. tostring(v) end,
-		Get = function() return chosen end,
-	}
+		Get = function() return chosen end }
 end
 
 --==============================================================================
@@ -593,10 +506,6 @@ end
 local Window = {}
 Window.__index = Window
 
--- Seven tabs is a filing cabinet, not a menu. Related ones share a page, and the
--- script behind them does not have to know: asking for a tab that maps onto a
--- page which already exists hands back that same page, so its widgets simply
--- append under their own section heading. _G.MH_TabMap overrides the grouping.
 local TAB_MAP = {
 	["Trade"] = "Trade", ["2 Player"] = "Trade",
 	["Spawner"] = "Spawner",
@@ -610,65 +519,63 @@ function Window:Tab(o)
 	local asked = tostring(o.Title or "Tab")
 	local map = (type(_G.MH_TabMap) == "table") and _G.MH_TabMap or TAB_MAP
 	local title = map[asked] or asked
-	local existing = self._byTitle[title]
-	if existing then
-		-- second script area landing on an existing page: keep them apart
-		new("Frame", {
-			BackgroundColor3 = T.Line, BorderSizePixel = 0, BackgroundTransparency = 0.4,
-			Size = UDim2.new(1, 0, 0, 1), LayoutOrder = existing:_order(),
-		}, existing._body)
-		return existing
+	local have = self._byTitle[title]
+	if have then
+		new("Frame", { BackgroundColor3 = C.Edge, BorderSizePixel = 0, BackgroundTransparency = 0.5,
+			Size = UDim2.new(1, 0, 0, 1), LayoutOrder = have:_order() }, have._body)
+		return have
 	end
 	local shown = true
 	if type(_G.MH_OnlyTabs) == "table" and not _G.MH_OnlyTabs[title] then shown = false end
 
-	local page = new("ScrollingFrame", {
-		BackgroundTransparency = 1, BorderSizePixel = 0, Visible = false,
-		Size = UDim2.fromScale(1, 1), CanvasSize = UDim2.new(),
-		AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3,
-		ScrollBarImageColor3 = T.Line, ScrollingDirection = Enum.ScrollingDirection.Y,
-	}, self._pages)
-	pad(page, 0, 2, 8, 2, 12)
-	list(page, 8)
+	local page = new("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0,
+		Visible = false, Size = UDim2.fromScale(1, 1), CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 2,
+		ScrollBarImageColor3 = C.Edge, ScrollingDirection = Enum.ScrollingDirection.Y }, self._pages)
+	pad(page, 2, 8, 16, 0)
+	col(page, GAP)
 
-	local btn
+	local btn, mark
 	if shown then
-		btn = new("TextButton", {
-			BackgroundColor3 = T.PanelSoft, BackgroundTransparency = 1,
-			Size = UDim2.fromOffset(0, 30), AutomaticSize = Enum.AutomaticSize.X,
-			Font = FONT_BOLD, TextSize = 13, TextColor3 = T.Dim, Text = title,
-			AutoButtonColor = false, LayoutOrder = TAB_ORDER[title] or (#self._tabs + 10),
-		}, self._tabbar)
-		round(btn, 9)
-		pad(btn, 0, 14, 14, 0, 0)
+		btn = new("TextButton", { BackgroundTransparency = 1, Size = UDim2.fromOffset(0, 34),
+			AutomaticSize = Enum.AutomaticSize.X, Font = FB, TextSize = 12.5, TextColor3 = C.Ink3,
+			Text = title, AutoButtonColor = false,
+			LayoutOrder = TAB_ORDER[title] or (#self._tabs + 10) }, self._tabbar)
+		pad(btn, 0, 11, 0, 11)
+		mark = new("Frame", { BackgroundColor3 = C.Accent, BorderSizePixel = 0,
+			AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, 0),
+			Size = UDim2.new(0, 0, 0, 2), Visible = false }, btn)
+		round(mark, 1)
 	end
 
-	local tab = setmetatable({ _body = page, _btn = btn, _win = self, Title = title }, Tab)
+	local tab = setmetatable({ _body = page, _btn = btn, _mark = mark, _win = self, Title = title }, Tab)
 	self._tabs[#self._tabs + 1] = tab
 	self._byTitle[title] = tab
 
 	local function activate()
 		for _, t in ipairs(self._tabs) do
-			t._body.Visible = (t == tab)
+			local on = (t == tab)
+			t._body.Visible = on
 			if t._btn then
-				local on = (t == tab)
-				tween(t._btn, 0.12, { BackgroundTransparency = on and 0 or 1 })
-				t._btn.TextColor3 = on and T.OnAccent or T.Dim
-				t._btn.BackgroundColor3 = on and T.Accent or T.PanelSoft
-				local g = t._btn:FindFirstChildOfClass("UIGradient")
-				if on and not g then gradient(t._btn, T.Accent, T.Accent2, 45)
-				elseif g and not on then g:Destroy() end
+				t._btn.TextColor3 = on and C.Ink or C.Ink3
+				if t._mark then
+					t._mark.Visible = on
+					if on then
+						t._mark.Size = UDim2.new(0, 0, 0, 2)
+						tw(t._mark, 0.16, { Size = UDim2.new(1, -22, 0, 2) })
+					end
+				end
 			end
 		end
 	end
 	if btn then btn.MouseButton1Click:Connect(activate) end
-	if not self._active and shown then self._active = tab; activate() end
+	if not self._active and shown then self._active = tab activate() end
 	return tab
 end
 
 function Window:Destroy() pcall(function() self._gui:Destroy() end) end
 function Window:Toggle(v)
-	self._card.Visible = (v == nil) and (not self._card.Visible) or v and true or false
+	self._card.Visible = (v == nil) and (not self._card.Visible) or (v and true or false)
 end
 
 function UI:CreateWindow(o)
@@ -676,125 +583,103 @@ function UI:CreateWindow(o)
 	local gui = hostGui()
 	local scale = tonumber(_G.MH_MenuScale) or 1
 
-	local card = new("Frame", {
-		BackgroundColor3 = T.Card, AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(410, 470),
-	}, gui)
-	-- a launcher with two choices does not need the height a working menu does
-	local wantW = o.Compact and 330 or 400
-	local wantH = o.Compact and 250 or 560
-	round(card, 16)
-	stroke(card, T.Line, 1, 0.25)
+	-- tall and narrow: a launcher is short, a working menu is long
+	local wantW = o.Compact and 320 or 360
+	local wantH = o.Compact and 240 or 620
+
+	local card = new("Frame", { BackgroundColor3 = C.Bg, AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(wantW, wantH) }, gui)
+	round(card, R_CARD); edge(card, C.Edge, 0.1)
 	local uiscale = new("UIScale", { Scale = scale }, card)
 
-	-- Fit the phone rather than assume a desktop. A fixed 430x500 card is most of
-	-- a phone screen, and on a narrow one it ran off the edge entirely.
-	local fit
-	fit = function()
-		-- Trust nothing about the camera: a bad ViewportSize used to arithmetic
-		-- would throw inside CreateWindow, and the caller would just see no window.
-		local vx, vy = 1280, 720
+	local readout
+	local function fit()
 		pcall(function()
-			local v = workspace.CurrentCamera.ViewportSize
-			if typeof(v) == "Vector2" and v.X > 10 and v.Y > 10 then vx, vy = v.X, v.Y end
-		end)
-		pcall(function()
-			card.Size = UDim2.fromOffset(math.min(wantW, math.floor(vx * 0.92)),
-				math.min(wantH, math.floor(vy * 0.82)))
-			-- a narrow screen needs the contents smaller too, not just the card
-			uiscale.Scale = scale * ((vx < 480) and 0.9 or 1)
+			local v = viewport()
+			card.Size = UDim2.fromOffset(math.min(wantW, math.floor(v.X * 0.9)),
+				math.min(wantH, math.floor(v.Y * 0.85)))
+			uiscale.Scale = scale * ((v.X < 480) and 0.92 or 1)
+			if readout then readout.Text = tostring(math.floor(scale * 100 + 0.5)) .. "%" end
 		end)
 	end
+
+	-- header
+	local head = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 60) }, card)
+	local badge = new("Frame", { BackgroundColor3 = C.Accent, Position = UDim2.fromOffset(16, 13),
+		Size = UDim2.fromOffset(34, 34) }, head)
+	round(badge, 10)
+	local bl = label(badge, o.Badge or "MH", 11.5, C.On, true)
+	bl.Size = UDim2.fromScale(1, 1); bl.TextXAlignment = Enum.TextXAlignment.Center
+	local ttl = label(head, string.upper(tostring(o.Title or "MollyHub")), 14.5, C.Ink, true)
+	ttl.Position = UDim2.fromOffset(60, 14); ttl.Size = UDim2.new(1, -104, 0, 17)
+	local sub = label(head, o.SubTitle or o.Author or "", 10.5, C.Ink3)
+	sub.Position = UDim2.fromOffset(60, 32); sub.Size = UDim2.new(1, -104, 0, 13)
+	local close = new("TextButton", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -14, 0, 30), Size = UDim2.fromOffset(26, 26), Font = FB,
+		TextSize = 16, TextColor3 = C.Ink3, Text = "X", AutoButtonColor = false }, head)
+	close.MouseEnter:Connect(function() close.TextColor3 = C.Danger end)
+	close.MouseLeave:Connect(function() close.TextColor3 = C.Ink3 end)
+
+	-- tabs: text with an underline, not filled pills — legible in a narrow card
+	local tabbar = new("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0,
+		Position = UDim2.fromOffset(10, 60), Size = UDim2.new(1, -20, 0, 34), CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.X, ScrollBarThickness = 0,
+		ScrollingDirection = Enum.ScrollingDirection.X }, card)
+	new("UIListLayout", { Padding = UDim.new(0, 2), FillDirection = Enum.FillDirection.Horizontal,
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		VerticalAlignment = Enum.VerticalAlignment.Center }, tabbar)
+	new("Frame", { BackgroundColor3 = C.Edge, BorderSizePixel = 0, BackgroundTransparency = 0.4,
+		Position = UDim2.fromOffset(10, 94), Size = UDim2.new(1, -20, 0, 1) }, card)
+
+	local pages = new("Frame", { BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(PAGE_PAD, 103),
+		Size = UDim2.new(1, -PAGE_PAD * 2, 1, -137) }, card)
+
+	-- footer: the scale control, kept out of the header's way
+	local foot = new("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0, 1),
+		Position = UDim2.new(0, 0, 1, 0), Size = UDim2.new(1, 0, 0, 34) }, card)
+	local brand = label(foot, "MollyHub", 10.5, C.Ink3)
+	brand.Position = UDim2.fromOffset(16, 0); brand.Size = UDim2.new(0, 120, 1, 0)
+	readout = label(foot, "100%", 10.5, C.Ink2, true)
+	readout.AnchorPoint = Vector2.new(1, 0.5); readout.Position = UDim2.new(1, -46, 0.5, 0)
+	readout.Size = UDim2.fromOffset(38, 14); readout.TextXAlignment = Enum.TextXAlignment.Center
+	local function stepper(x, glyph, delta)
+		local b = new("TextButton", { BackgroundColor3 = C.Surface, AnchorPoint = Vector2.new(1, 0.5),
+			Position = UDim2.new(1, x, 0.5, 0), Size = UDim2.fromOffset(22, 22), Font = FB,
+			TextSize = 13, TextColor3 = C.Ink2, Text = glyph, AutoButtonColor = false }, foot)
+		round(b, 7)
+		b.MouseButton1Click:Connect(function()
+			scale = math.clamp(scale + delta, 0.6, 1.5)
+			_G.MH_MenuScale = scale
+			fit()
+		end)
+	end
+	stepper(-84, "-", -0.05)
+	stepper(-14, "+", 0.05)
+
 	fit()
 	pcall(function()
 		workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fit)
 	end)
-
-	-- header: badge, title, subtitle, close
-	local head = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 62) }, card)
-	local badge = new("Frame", { BackgroundColor3 = T.Accent,
-		Position = UDim2.fromOffset(14, 12), Size = UDim2.fromOffset(38, 38) }, head)
-	round(badge, 11)
-	gradient(badge, T.Accent, T.Accent2, 45)
-	new("TextLabel", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1),
-		Font = FONT_BOLD, TextSize = 12, TextColor3 = T.Text,
-		Text = tostring(o.Badge or "MH") }, badge)
-	new("TextLabel", { BackgroundTransparency = 1, Font = FONT_BOLD, TextSize = 17,
-		TextColor3 = T.Text, TextXAlignment = Enum.TextXAlignment.Left,
-		Position = UDim2.fromOffset(62, 13), Size = UDim2.new(1, -120, 0, 20),
-		Text = string.upper(tostring(o.Title or "MollyHub")) }, head)
-	new("TextLabel", { BackgroundTransparency = 1, Font = FONT, TextSize = 11,
-		TextColor3 = T.Faint, TextXAlignment = Enum.TextXAlignment.Left,
-		Position = UDim2.fromOffset(62, 33), Size = UDim2.new(1, -120, 0, 16),
-		Text = tostring(o.SubTitle or o.Author or "") }, head)
-	local close = new("TextButton", { BackgroundColor3 = T.Bad, AnchorPoint = Vector2.new(1, 0),
-		Position = UDim2.new(1, -14, 0, 16), Size = UDim2.fromOffset(30, 26),
-		Font = FONT_BOLD, TextSize = 13, TextColor3 = T.OnAccent, Text = "X",
-		AutoButtonColor = false }, head)
-	round(close, 8)
-
-	-- Size lives on the window, not in a settings page: it is the one setting you
-	-- reach for while looking at the thing being too big.
-	local function sizeBtn(x, glyph, delta)
-		local b = new("TextButton", { BackgroundColor3 = T.PanelSoft,
-			AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, x, 0, 16),
-			Size = UDim2.fromOffset(24, 26), Font = FONT_BOLD, TextSize = 14,
-			TextColor3 = T.Dim, Text = glyph, AutoButtonColor = false }, head)
-		round(b, 8)
-		b.MouseButton1Click:Connect(function()
-			local cur = tonumber(_G.MH_MenuScale) or 1
-			_G.MH_MenuScale = math.clamp(cur + delta, 0.5, 1.6)
-			scale = _G.MH_MenuScale
-			fit()
-		end)
-		return b
-	end
-	sizeBtn(-48, "-", -0.05)
-	sizeBtn(-76, "+", 0.05)
-
-	-- a hairline of accent under the header, so the card is not a flat grey box
-	local rule = new("Frame", { BackgroundColor3 = T.Accent, BorderSizePixel = 0,
-		Position = UDim2.fromOffset(14, 58), Size = UDim2.new(1, -28, 0, 2) }, head)
-	round(rule, 1)
-	gradient(rule, T.Accent, T.Accent2, 0)
-
-	-- tab bar
-	local tabwrap = new("Frame", { BackgroundColor3 = T.Panel,
-		Position = UDim2.fromOffset(12, 62), Size = UDim2.new(1, -24, 0, 40) }, card)
-	round(tabwrap, 12)
-	local tabbar = new("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0,
-		Position = UDim2.fromOffset(5, 5), Size = UDim2.new(1, -10, 1, -10),
-		CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.X,
-		ScrollBarThickness = 0, ScrollingDirection = Enum.ScrollingDirection.X }, tabwrap)
-	local tl = list(tabbar, 5, Enum.FillDirection.Horizontal)
-	tl.VerticalAlignment = Enum.VerticalAlignment.Center
-
-	local pages = new("Frame", { BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(12, 110), Size = UDim2.new(1, -24, 1, -122) }, card)
-
 	draggable(card, head)
 
-	local win = setmetatable({
-		_gui = gui, _card = card, _tabbar = tabbar, _pages = pages,
-		_tabs = {}, _byTitle = {},
-	}, Window)
+	local win = setmetatable({ _gui = gui, _card = card, _tabbar = tabbar, _pages = pages,
+		_tabs = {}, _byTitle = {} }, Window)
 
-	-- closing hides the card and leaves a small pill to bring it back
-	local pill = new("TextButton", {
-		BackgroundColor3 = T.Accent, AnchorPoint = Vector2.new(0, 0),
-		Position = UDim2.fromOffset(18, 18), Size = UDim2.fromOffset(104, 32),
-		Font = FONT_BOLD, TextSize = 13, TextColor3 = T.OnAccent, Visible = false,
-		Text = tostring(o.Title or "MollyHub"), AutoButtonColor = false,
-	}, gui)
+	local pill = new("TextButton", { BackgroundColor3 = C.Accent, Position = UDim2.fromOffset(18, 18),
+		Size = UDim2.fromOffset(96, 30), Font = FB, TextSize = 12, TextColor3 = C.On,
+		Visible = false, Text = tostring(o.Title or "MollyHub"), AutoButtonColor = false }, gui)
 	round(pill, 10)
 	draggable(pill, pill)
-	close.MouseButton1Click:Connect(function() card.Visible = false; pill.Visible = true end)
-	pill.MouseButton1Click:Connect(function() card.Visible = true; pill.Visible = false end)
+	close.MouseButton1Click:Connect(function()
+		card.Visible = false pill.Visible = true
+		if openPicker then pcall(function() openPicker:Destroy() end) openPicker = nil end
+	end)
+	pill.MouseButton1Click:Connect(function() card.Visible = true pill.Visible = false end)
 
 	return win
 end
 
--- Rubis is called either way round in the wild.
 UI.Window = UI.CreateWindow
 UI.Notification = UI.Notify
 
