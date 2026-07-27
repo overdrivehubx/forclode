@@ -50,7 +50,7 @@ local F  = Enum.Font.GothamMedium
 local FB = Enum.Font.GothamBold
 
 local R_CARD, R_ROW, R_CHIP = 18, 12, 9
-local ROW_H, GAP, PAGE_PAD = 46, 6, 14
+local ROW_H, GAP, PAGE_PAD = 42, 5, 12
 
 --==============================================================================
 -- builders
@@ -507,13 +507,20 @@ local function iconOf(src)
 	local t = tostring(src or "")
 	if t == "" then return "" end
 	local id = t:match("[Aa]sset[Ii][Dd]=(%d+)") or t:match("[?&]id=(%d+)")
-		or t:match("rbxassetid://(%d+)")
+		or t:match("rbxassetid://(%d+)") or t:match("rbxthumb.-id=(%d+)")
 	if not id then
 		local best = ""
 		for run in t:gmatch("%d+") do if #run > #best then best = run end end
 		id = (best ~= "") and best or nil
 	end
-	return id and ("rbxassetid://" .. id) or ""
+	if not id then return "" end
+	-- An MM2 item id is a MODEL, and rbxassetid:// on a model draws nothing —
+	-- which is why the icons came out blank. A Thumbs url means "render this
+	-- asset", and rbxthumb is how you ask the engine for that render.
+	if t:find("Thumb", 1, true) or t:find("Asset.ashx", 1, true) or t == id then
+		return "rbxthumb://type=Asset&id=" .. id .. "&w=150&h=150"
+	end
+	return "rbxassetid://" .. id
 end
 UI.Icon = iconOf
 
@@ -746,8 +753,8 @@ function UI:CreateWindow(o)
 	local scale = tonumber(_G.MH_MenuScale) or 1
 
 	-- tall and narrow: a launcher is short, a working menu is long
-	local wantW = o.Compact and 320 or 360
-	local wantH = o.Compact and 240 or 620
+	local wantW = o.Compact and 320 or 372
+	local wantH = o.Compact and 236 or 780
 
 	local card = new("Frame", { BackgroundColor3 = C.Bg, AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(wantW, wantH),
@@ -762,47 +769,47 @@ function UI:CreateWindow(o)
 		pcall(function()
 			local v = viewport()
 			card.Size = UDim2.fromOffset(math.min(wantW, math.floor(v.X * 0.9)),
-				math.min(wantH, math.floor(v.Y * 0.85)))
+				math.min(wantH, math.floor(v.Y * 0.92)))
 			uiscale.Scale = scale * ((v.X < 480) and 0.92 or 1)
 			if readout then readout.Text = tostring(math.floor(scale * 100 + 0.5)) .. "%" end
 		end)
 	end
 
 	-- header
-	local head = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 60) }, card)
-	local badge = new("Frame", { BackgroundColor3 = C.Accent, Position = UDim2.fromOffset(16, 13),
-		Size = UDim2.fromOffset(34, 34) }, head)
+	local head = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 54) }, card)
+	local badge = new("Frame", { BackgroundColor3 = C.Accent, Position = UDim2.fromOffset(14, 11),
+		Size = UDim2.fromOffset(32, 32) }, head)
 	round(badge, 10)
 	local bl = label(badge, o.Badge or "MH", 11.5, C.On, true)
 	bl.Size = UDim2.fromScale(1, 1); bl.TextXAlignment = Enum.TextXAlignment.Center
 	local ttl = label(head, string.upper(tostring(o.Title or "MollyHub")), 14.5, C.Ink, true)
-	ttl.Position = UDim2.fromOffset(60, 14); ttl.Size = UDim2.new(1, -104, 0, 17)
+	ttl.Position = UDim2.fromOffset(56, 11); ttl.Size = UDim2.new(1, -100, 0, 17)
 	local sub = label(head, o.SubTitle or o.Author or "", 10.5, C.Ink3)
-	sub.Position = UDim2.fromOffset(60, 32); sub.Size = UDim2.new(1, -104, 0, 13)
+	sub.Position = UDim2.fromOffset(56, 29); sub.Size = UDim2.new(1, -100, 0, 13)
 	local close = new("TextButton", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -14, 0, 30), Size = UDim2.fromOffset(26, 26), Font = FB,
+		Position = UDim2.new(1, -12, 0, 27), Size = UDim2.fromOffset(26, 26), Font = FB,
 		TextSize = 16, TextColor3 = C.Ink3, Text = "X", AutoButtonColor = false }, head)
 	close.MouseEnter:Connect(function() close.TextColor3 = C.Danger end)
 	close.MouseLeave:Connect(function() close.TextColor3 = C.Ink3 end)
 
 	-- tabs: text with an underline, not filled pills — legible in a narrow card
 	local tabbar = new("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0,
-		Position = UDim2.fromOffset(10, 60), Size = UDim2.new(1, -20, 0, 34), CanvasSize = UDim2.new(),
+		Position = UDim2.fromOffset(10, 54), Size = UDim2.new(1, -20, 0, 32), CanvasSize = UDim2.new(),
 		AutomaticCanvasSize = Enum.AutomaticSize.X, ScrollBarThickness = 0,
 		ScrollingDirection = Enum.ScrollingDirection.X }, card)
 	new("UIListLayout", { Padding = UDim.new(0, 2), FillDirection = Enum.FillDirection.Horizontal,
 		SortOrder = Enum.SortOrder.LayoutOrder,
 		VerticalAlignment = Enum.VerticalAlignment.Center }, tabbar)
 	new("Frame", { BackgroundColor3 = C.Edge, BorderSizePixel = 0, BackgroundTransparency = 0.4,
-		Position = UDim2.fromOffset(10, 94), Size = UDim2.new(1, -20, 0, 1) }, card)
+		Position = UDim2.fromOffset(10, 86), Size = UDim2.new(1, -20, 0, 1) }, card)
 
 	local pages = new("Frame", { BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(PAGE_PAD, 103),
-		Size = UDim2.new(1, -PAGE_PAD * 2, 1, -137) }, card)
+		Position = UDim2.fromOffset(PAGE_PAD, 94),
+		Size = UDim2.new(1, -PAGE_PAD * 2, 1, -122) }, card)
 
 	-- footer: the scale control, kept out of the header's way
 	local foot = new("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0, 1),
-		Position = UDim2.new(0, 0, 1, 0), Size = UDim2.new(1, 0, 0, 34) }, card)
+		Position = UDim2.new(0, 0, 1, 0), Size = UDim2.new(1, 0, 0, 28) }, card)
 	local brand = label(foot, "MollyHub", 10.5, C.Ink3)
 	brand.Position = UDim2.fromOffset(16, 0); brand.Size = UDim2.new(0, 120, 1, 0)
 	readout = label(foot, "100%", 10.5, C.Ink2, true)

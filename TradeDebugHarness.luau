@@ -6554,6 +6554,32 @@ if true then
 			local spName, spAmt = "", "1"
 			local p2Name, p2Amt = "", "1"
 			-- Spawn the best match for a query; toP2 routes it into Player2's offer.
+			-- Publish the front-end API from HERE, where these helpers are in scope.
+			-- Doing it at the end of the file silently caught globals instead: the
+			-- names exist only inside this block, so spawn() was nil and every
+			-- press did nothing.
+			local function publishAPI()
+				_G.MH_API = _G.MH_API or {}
+				local A = _G.MH_API
+				A.rank    = function(q) return rankMatches(q) end
+				A.catalog = function() return spawnIndex end
+				A.item    = function(k) return ItemDB[k] end
+				A.equip   = function(k, n) return MH_equipItem(k, n) end
+				A.status  = function() return CatalogStatus end
+				A.reload  = function() return pcall(loadLiveCatalog) end
+				A.players = function() return serverNames() end
+				A.setPartner = function(n) NameBox.Text = (n ~= "" and n) or "Player2" end
+				A.partner = function() return currentName() end
+				A.request = function(incoming) return showRequestModal(currentName(), incoming and true or false) end
+				A.acceptP1 = function(on) return setYourAcceptedUI(on and true or false) end
+				A.overlay = function(on)
+					OverlayMode = on and true or false
+					if OverlayMode then pcall(openItemsPicker) end
+					pcall(RenderTrade)
+				end
+				A.terminate = function() return terminate() end
+			end
+
 			local function doSpawn(query, amount, toP2)
 				local it = rankMatches(query)[1]
 				if not it then notify("Spawn", "no item matches \"" .. tostring(query) .. "\"") return end
@@ -6563,6 +6589,8 @@ if true then
 				OfferMode = prev
 				notify("Spawned", it.name .. " (x" .. tostring(total) .. ")" .. (toP2 and " -> P2 offer" or ""))
 			end
+			publishAPI()
+			_G.MH_API.spawn = function(query, amount, toP2) return doSpawn(query, amount, toP2) end
 
 			-- ================= THEME state =================
 			-- Per-theme background image. Blue-Gray uses BG_IMAGE (top of script).
@@ -6584,7 +6612,7 @@ if true then
 					currentTheme = name
 					for _, root in ipairs(guiRoots) do
 						for _, g in ipairs(root:GetChildren()) do
-							if g:IsA("ScreenGui") and not seenGui[g] then
+							if g:IsA("ScreenGui") and not seenGui[g] and not tostring(g.Name):find("MollyUI") then
 								for _, d in ipairs(g:GetDescendants()) do
 									pcall(function()
 										if d.Name == "__MHPhoto" and d:IsA("ImageLabel") then
@@ -6971,7 +6999,7 @@ if true then
 					task.wait(0.3)
 					for _, root in ipairs(guiRoots) do
 						for _, g in ipairs(root:GetChildren()) do
-							if g:IsA("ScreenGui") and not seenGui[g] then pcall(injectPhoto, g) end
+							if g:IsA("ScreenGui") and not seenGui[g] and not tostring(g.Name):find("MollyUI") then pcall(injectPhoto, g) end
 						end
 					end
 					applyTheme(currentTheme)
@@ -7212,18 +7240,6 @@ task.spawn(function()
 	MH_watchInventory()
 	MH_watchTools()
 end)
-
--- A small, stable surface so a separate front-end can drive the spawner without
--- rebuilding any of it. Everything here already existed; this only names it.
-_G.MH_API = {
-	spawn   = function(name, amount, toP2) return doSpawn(name, amount, toP2) end,
-	rank    = function(q) return rankMatches(q) end,
-	catalog = function() return spawnIndex end,
-	item    = function(k) return ItemDB[k] end,
-	equip   = function(k, n) return MH_equipItem(k, n) end,
-	status  = function() return CatalogStatus end,
-	reload  = function() return pcall(loadLiveCatalog) end,
-}
 
 print("[TradeDebug] Harness loaded. Layout: " .. (TradeGUI and TradeGUI.Name or "NOT FOUND") ..
 	" | Use the TradeDebugPanel to drive the offline trade.")

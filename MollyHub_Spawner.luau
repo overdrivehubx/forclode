@@ -7,6 +7,9 @@
   selected item shown large with its picture, the list underneath, an amount and
   one action. Everything on one screen — no scrolling to find a button.
 
+  There is no equip button. Equipping is done by clicking the item in the game's
+  own inventory, which is where you would look for it anyway.
+
   The engine is the harness, loaded headless: it builds its own menu but keeps it
   off screen and publishes _G.MH_API for this front end to drive. Spawning,
   equipping and the skin work all stay in one place rather than being written
@@ -125,7 +128,7 @@ S:Search({ Prefix = "find", Placeholder = "Search by name or original id...",
 S:Chips({ Values = { "All", "Guns", "Knives", "Chroma" }, Value = "All",
 	Callback = function(v) filter = v refresh() end })
 hero = S:Hero({})
-listView = S:List({ Height = 208 })
+listView = S:List({ Height = 300 })
 listView:OnPick(function(it) choose(it) end)
 S:Slider({ Title = "Amount", Min = 1, Max = 100, Default = 1,
 	Callback = function(v) amount = v end })
@@ -137,20 +140,6 @@ S:Button({
 		UI:Notify({ Title = "Spawned", Content = picked.name .. "  x" .. tostring(amount) })
 	end,
 })
-S:Button({
-	Title = "Equip selected", Desc = "wear its skin, if one is known",
-	Callback = function()
-		if not picked then return UI:Notify({ Title = "Equip", Content = "pick an item first" }) end
-		task.spawn(function()
-			API.spawn(picked.name, 1, false)
-			local ok, detail, how = API.equip(picked.key, picked.name)
-			pcall(function() setclipboard("MH EQUIP: " .. tostring(detail)) end)
-			UI:Notify({ Title = picked.name,
-				Content = ok and ("worn  [" .. tostring(how) .. "]") or "no skin known yet" })
-		end)
-	end,
-})
-
 --== skins =====================================================================
 local K = Win:Tab({ Title = "Skins" })
 K:Section({ Title = "Where skins come from" })
