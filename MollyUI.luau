@@ -230,6 +230,7 @@ local function showPicker(win, title, values, current, onPick)
 	count.Position = UDim2.fromOffset(14, 78); count.Size = UDim2.new(1, -28, 0, 12); count.ZIndex = 31
 
 	local sc = new("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 31,
+		ClipsDescendants = true,
 		Position = UDim2.fromOffset(8, 94), Size = UDim2.new(1, -16, 1, -104), CanvasSize = UDim2.new(),
 		AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 2,
 		ScrollBarImageColor3 = C.Edge }, p)
@@ -549,7 +550,7 @@ function Tab:Chips(o)
 	local row = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 32),
 		LayoutOrder = self:_order() }, self._body)
 	local sc = new("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0,
-		Size = UDim2.fromScale(1, 1), CanvasSize = UDim2.new(),
+		ClipsDescendants = true, Size = UDim2.fromScale(1, 1), CanvasSize = UDim2.new(),
 		AutomaticCanvasSize = Enum.AutomaticSize.X, ScrollBarThickness = 0,
 		ScrollingDirection = Enum.ScrollingDirection.X }, row)
 	new("UIListLayout", { Padding = UDim.new(0, 6), FillDirection = Enum.FillDirection.Horizontal,
@@ -621,6 +622,7 @@ function Tab:List(o)
 	local head = label(row, "", 10.5, C.Ink3)
 	head.Position = UDim2.fromOffset(4, 0); head.Size = UDim2.new(1, -8, 0, 14)
 	local sc = new("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0,
+		ClipsDescendants = true,
 		Position = UDim2.fromOffset(0, 18), Size = UDim2.new(1, 0, 1, -18), CanvasSize = UDim2.new(),
 		AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 2,
 		ScrollBarImageColor3 = C.Edge }, row)
@@ -698,7 +700,7 @@ function Window:Tab(o)
 	if type(_G.MH_OnlyTabs) == "table" and not _G.MH_OnlyTabs[title] then shown = false end
 
 	local page = new("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0,
-		Visible = false, Size = UDim2.fromScale(1, 1), CanvasSize = UDim2.new(),
+		Visible = false, ClipsDescendants = true, Size = UDim2.fromScale(1, 1), CanvasSize = UDim2.new(),
 		AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 2,
 		ScrollBarImageColor3 = C.Edge, ScrollingDirection = Enum.ScrollingDirection.Y }, self._pages)
 	pad(page, 2, 8, 16, 0)
@@ -753,11 +755,15 @@ function UI:CreateWindow(o)
 	local scale = tonumber(_G.MH_MenuScale) or 1
 
 	-- tall and narrow: a launcher is short, a working menu is long
-	local wantW = o.Compact and 320 or 372
-	local wantH = o.Compact and 236 or 780
+	-- A phone running Roblox is usually on its side, so sizing the height from
+	-- the screen height made the card short and wide — the opposite of the ask.
+	-- On a landscape screen take a slice of the width and nearly all the height.
+	local wantW = o.Compact and 300 or 336
+	local wantH = o.Compact and 230 or 820
 
 	local card = new("Frame", { BackgroundColor3 = C.Bg, AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(wantW, wantH),
+		ClipsDescendants = true,
 		-- headless: build everything, show nothing. Lets a front-end drive the
 		-- engine's menu without a second window sitting on screen.
 		Visible = not (_G.MH_Headless and not o.Front) }, gui)
@@ -768,8 +774,10 @@ function UI:CreateWindow(o)
 	local function fit()
 		pcall(function()
 			local v = viewport()
-			card.Size = UDim2.fromOffset(math.min(wantW, math.floor(v.X * 0.9)),
-				math.min(wantH, math.floor(v.Y * 0.92)))
+			local wide = v.X > v.Y
+			card.Size = UDim2.fromOffset(
+				math.min(wantW, math.floor(v.X * (wide and 0.42 or 0.94))),
+				math.min(wantH, math.floor(v.Y * (wide and 0.94 or 0.86))))
 			uiscale.Scale = scale * ((v.X < 480) and 0.92 or 1)
 			if readout then readout.Text = tostring(math.floor(scale * 100 + 0.5)) .. "%" end
 		end)
@@ -794,6 +802,7 @@ function UI:CreateWindow(o)
 
 	-- tabs: text with an underline, not filled pills — legible in a narrow card
 	local tabbar = new("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0,
+		ClipsDescendants = true,
 		Position = UDim2.fromOffset(10, 54), Size = UDim2.new(1, -20, 0, 32), CanvasSize = UDim2.new(),
 		AutomaticCanvasSize = Enum.AutomaticSize.X, ScrollBarThickness = 0,
 		ScrollingDirection = Enum.ScrollingDirection.X }, card)
@@ -803,7 +812,9 @@ function UI:CreateWindow(o)
 	new("Frame", { BackgroundColor3 = C.Edge, BorderSizePixel = 0, BackgroundTransparency = 0.4,
 		Position = UDim2.fromOffset(10, 86), Size = UDim2.new(1, -20, 0, 1) }, card)
 
-	local pages = new("Frame", { BackgroundTransparency = 1,
+	-- Clip, or scrolled rows draw straight over the header, the tabs and the
+	-- footer — which reads as the rest of the interface vanishing.
+	local pages = new("Frame", { BackgroundTransparency = 1, ClipsDescendants = true,
 		Position = UDim2.fromOffset(PAGE_PAD, 94),
 		Size = UDim2.new(1, -PAGE_PAD * 2, 1, -122) }, card)
 
