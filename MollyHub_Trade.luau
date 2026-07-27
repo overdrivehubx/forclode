@@ -56,8 +56,20 @@ if not engine then return fail("the harness would not compile: " .. tostring(err
 local okRun, runErr = pcall(engine)
 if not okRun then return fail("the harness errored: " .. tostring(runErr)) end
 
-local API = _G.MH_API
-if type(API) ~= "table" then return fail("the harness did not publish its API") end
+-- The engine builds its menu inside a task.spawn that downloads the interface
+-- first, so the API lands a moment AFTER the chunk returns. Reading it straight
+-- away found nothing and reported the engine as broken when it was merely still
+-- starting. Wait for it, and only give up after a real timeout.
+local API
+for _ = 1, 300 do
+	API = _G.MH_API
+	if type(API) == "table" and type(API.spawn) == "function" then break end
+	API = nil
+	task.wait(0.1)
+end
+if not API then
+	return fail("the engine never finished starting — its menu library may not have downloaded")
+end
 
 --== interface =================================================================
 local okUI, UI = pcall(function() return loadstring(game:HttpGet(BRANCH .. "MollyUI.luau"))() end)
