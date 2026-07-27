@@ -506,9 +506,32 @@ end
 local Window = {}
 Window.__index = Window
 
+-- Seven tabs is a filing cabinet, not a menu. Related ones share a page, and the
+-- script behind them does not have to know: asking for a tab that maps onto a
+-- page which already exists hands back that same page, so its widgets simply
+-- append under their own section heading. _G.MH_TabMap overrides the grouping.
+local TAB_MAP = {
+	["Trade"] = "Trade", ["2 Player"] = "Trade",
+	["Spawner"] = "Spawner",
+	["Settings"] = "Settings", ["Music"] = "Settings",
+	["Keybinds"] = "Settings", ["Configs"] = "Settings",
+}
+local TAB_ORDER = { Spawner = 1, Trade = 2, Settings = 3 }
+
 function Window:Tab(o)
 	o = o or {}
-	local title = tostring(o.Title or "Tab")
+	local asked = tostring(o.Title or "Tab")
+	local map = (type(_G.MH_TabMap) == "table") and _G.MH_TabMap or TAB_MAP
+	local title = map[asked] or asked
+	local existing = self._byTitle[title]
+	if existing then
+		-- second script area landing on an existing page: keep them apart
+		new("Frame", {
+			BackgroundColor3 = T.Line, BorderSizePixel = 0, BackgroundTransparency = 0.4,
+			Size = UDim2.new(1, 0, 0, 1), LayoutOrder = existing:_order(),
+		}, existing._body)
+		return existing
+	end
 	local shown = true
 	if type(_G.MH_OnlyTabs) == "table" and not _G.MH_OnlyTabs[title] then shown = false end
 
@@ -527,7 +550,7 @@ function Window:Tab(o)
 			BackgroundColor3 = T.PanelSoft, BackgroundTransparency = 1,
 			Size = UDim2.fromOffset(0, 30), AutomaticSize = Enum.AutomaticSize.X,
 			Font = FONT_BOLD, TextSize = 13, TextColor3 = T.Dim, Text = title,
-			AutoButtonColor = false, LayoutOrder = #self._tabs + 1,
+			AutoButtonColor = false, LayoutOrder = TAB_ORDER[title] or (#self._tabs + 10),
 		}, self._tabbar)
 		round(btn, 9)
 		pad(btn, 0, 14, 14, 0, 0)
@@ -535,6 +558,7 @@ function Window:Tab(o)
 
 	local tab = setmetatable({ _body = page, _btn = btn, _win = self, Title = title }, Tab)
 	self._tabs[#self._tabs + 1] = tab
+	self._byTitle[title] = tab
 
 	local function activate()
 		for _, t in ipairs(self._tabs) do
@@ -563,11 +587,33 @@ function UI:CreateWindow(o)
 
 	local card = new("Frame", {
 		BackgroundColor3 = T.Card, AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(430, 500),
+		Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(410, 470),
 	}, gui)
 	round(card, 16)
 	stroke(card, T.Line, 1, 0.25)
-	if scale ~= 1 then new("UIScale", { Scale = scale }, card) end
+	local uiscale = new("UIScale", { Scale = scale }, card)
+
+	-- Fit the phone rather than assume a desktop. A fixed 430x500 card is most of
+	-- a phone screen, and on a narrow one it ran off the edge entirely.
+	local function fit()
+		-- Trust nothing about the camera: a bad ViewportSize used to arithmetic
+		-- would throw inside CreateWindow, and the caller would just see no window.
+		local vx, vy = 1280, 720
+		pcall(function()
+			local v = workspace.CurrentCamera.ViewportSize
+			if typeof(v) == "Vector2" and v.X > 10 and v.Y > 10 then vx, vy = v.X, v.Y end
+		end)
+		pcall(function()
+			card.Size = UDim2.fromOffset(math.min(410, math.floor(vx * 0.92)),
+				math.min(470, math.floor(vy * 0.78)))
+			-- a narrow screen needs the contents smaller too, not just the card
+			uiscale.Scale = scale * ((vx < 480) and 0.9 or 1)
+		end)
+	end
+	fit()
+	pcall(function()
+		workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fit)
+	end)
 
 	-- header: badge, title, subtitle, close
 	local head = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 62) }, card)
@@ -608,7 +654,8 @@ function UI:CreateWindow(o)
 	draggable(card, head)
 
 	local win = setmetatable({
-		_gui = gui, _card = card, _tabbar = tabbar, _pages = pages, _tabs = {},
+		_gui = gui, _card = card, _tabbar = tabbar, _pages = pages,
+		_tabs = {}, _byTitle = {},
 	}, Window)
 
 	-- closing hides the card and leaves a small pill to bring it back

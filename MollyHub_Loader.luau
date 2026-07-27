@@ -85,11 +85,4 @@ for _, s in ipairs(SCRIPTS) do
 	})
 end
 
-Tab:Section({ Title = "About" })
-Tab:Paragraph({
-	Title = "Everything is client-side",
-	Desc = "Trades are simulated on your machine and nothing is sent to the "
-		.. "server. Weapon skins are painted on your own view only.",
-})
-
 UI:Notify({ Title = "MollyHub", Content = "pick a script to launch" })

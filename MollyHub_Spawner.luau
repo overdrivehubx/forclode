@@ -18,7 +18,7 @@ local BRANCH = "https://raw.githubusercontent.com/overdrivehubx/forclode/"
 local RUBIS = "https://api.rubis.app/v2/scrap/D9CpDTMz8Hh4v1wA/raw"
 
 -- what stays on screen
-_G.MH_OnlyTabs = { Spawner = true, Settings = true, Keybinds = true }
+_G.MH_OnlyTabs = { Spawner = true, Settings = true }
 -- the trade side must not arm itself when nobody can reach its controls
 _G.MH_SpawnerOnly = true
 
