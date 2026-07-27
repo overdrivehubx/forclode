@@ -500,6 +500,168 @@ function Tab:Dropdown(o)
 		Get = function() return chosen end }
 end
 
+-- An item icon: MM2 stores these as thumbnail urls, and an ImageLabel wants an
+-- asset id. Never take the first number — "...width=250...assetId=N" would give
+-- the width. GLOBAL to the library so every component draws icons the same way.
+local function iconOf(src)
+	local t = tostring(src or "")
+	if t == "" then return "" end
+	local id = t:match("[Aa]sset[Ii][Dd]=(%d+)") or t:match("[?&]id=(%d+)")
+		or t:match("rbxassetid://(%d+)")
+	if not id then
+		local best = ""
+		for run in t:gmatch("%d+") do if #run > #best then best = run end end
+		id = (best ~= "") and best or nil
+	end
+	return id and ("rbxassetid://" .. id) or ""
+end
+UI.Icon = iconOf
+
+-- A search field with a quiet prefix, the way the reference has it.
+function Tab:Search(o)
+	o = o or {}
+	local row = shell(self, 44)
+	row.BackgroundColor3 = C.Raised
+	local tag = label(row, string.upper(tostring(o.Prefix or "find")), 10, C.Ink3, true)
+	tag.Position = UDim2.fromOffset(14, 0); tag.Size = UDim2.fromOffset(34, 44)
+	local box = new("TextBox", { BackgroundTransparency = 1, Font = F, TextSize = 12.5,
+		TextColor3 = C.Ink, PlaceholderText = tostring(o.Placeholder or "Search"),
+		PlaceholderColor3 = C.Ink3, Text = "", ClearTextOnFocus = false,
+		TextXAlignment = Enum.TextXAlignment.Left, Position = UDim2.fromOffset(52, 0),
+		Size = UDim2.new(1, -66, 1, 0) }, row)
+	box:GetPropertyChangedSignal("Text"):Connect(function()
+		if o.Callback then task.spawn(function() pcall(o.Callback, box.Text) end) end
+	end)
+	return { Instance = row, Get = function() return box.Text end,
+		Set = function(_, v) box.Text = tostring(v) end }
+end
+
+-- Filter chips. One is on at a time; the on one is the only coloured thing here.
+function Tab:Chips(o)
+	o = o or {}
+	local row = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 32),
+		LayoutOrder = self:_order() }, self._body)
+	local sc = new("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0,
+		Size = UDim2.fromScale(1, 1), CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.X, ScrollBarThickness = 0,
+		ScrollingDirection = Enum.ScrollingDirection.X }, row)
+	new("UIListLayout", { Padding = UDim.new(0, 6), FillDirection = Enum.FillDirection.Horizontal,
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		VerticalAlignment = Enum.VerticalAlignment.Center }, sc)
+	local chips, current = {}, o.Value or (o.Values and o.Values[1])
+	local function paint()
+		for name, b in pairs(chips) do
+			local on = (name == current)
+			tw(b, 0.12, { BackgroundColor3 = on and C.Accent or C.Surface })
+			b.TextColor3 = on and C.On or C.Ink2
+		end
+	end
+	for i, name in ipairs(o.Values or {}) do
+		local b = new("TextButton", { BackgroundColor3 = C.Surface, Size = UDim2.fromOffset(0, 26),
+			AutomaticSize = Enum.AutomaticSize.X, Font = FB, TextSize = 11.5, TextColor3 = C.Ink2,
+			Text = tostring(name), AutoButtonColor = false, LayoutOrder = i }, sc)
+		pad(b, 0, 12, 0, 12)
+		round(b, 8)
+		chips[tostring(name)] = b
+		b.MouseButton1Click:Connect(function()
+			current = tostring(name); paint()
+			if o.Callback then task.spawn(function() pcall(o.Callback, current) end) end
+		end)
+	end
+	paint()
+	return { Instance = row, Get = function() return current end,
+		Set = function(_, v) current = tostring(v) paint() end }
+end
+
+-- The selected item, shown large: picture, a rarity chip, the name, and the
+-- quiet detail line under it.
+function Tab:Hero(o)
+	o = o or {}
+	local row = shell(self, 104)
+	local pic = new("ImageLabel", { BackgroundColor3 = C.Raised, Position = UDim2.fromOffset(12, 12),
+		Size = UDim2.fromOffset(80, 80), Image = "", ScaleType = Enum.ScaleType.Fit }, row)
+	round(pic, R_CHIP)
+	local chip = new("TextLabel", { BackgroundColor3 = C.Accent, Position = UDim2.fromOffset(104, 14),
+		Size = UDim2.fromOffset(0, 22), AutomaticSize = Enum.AutomaticSize.X, Font = FB,
+		TextSize = 10.5, TextColor3 = C.On, Text = "" }, row)
+	pad(chip, 0, 10, 0, 10)
+	round(chip, 7)
+	local name = label(row, "", 15, C.Ink, true)
+	name.Position = UDim2.fromOffset(104, 42); name.Size = UDim2.new(1, -118, 0, 20)
+	local meta = label(row, "", 10.5, C.Ink3)
+	meta.Position = UDim2.fromOffset(104, 66); meta.Size = UDim2.new(1, -118, 0, 14)
+	local sub = label(row, "", 10.5, C.Ink3)
+	sub.Position = UDim2.fromOffset(104, 80); sub.Size = UDim2.new(1, -118, 0, 14)
+	return {
+		Instance = row,
+		Set = function(_, it)
+			it = it or {}
+			pic.Image = iconOf(it.image)
+			chip.Text = string.upper(tostring(it.tag or ""))
+			chip.Visible = (chip.Text ~= "")
+			name.Text = tostring(it.name or "nothing selected")
+			meta.Text = tostring(it.meta or "")
+			sub.Text = tostring(it.sub or "")
+		end,
+	}
+end
+
+-- A scrolling list of items: icon, name, quiet subtitle, badges on the right.
+function Tab:List(o)
+	o = o or {}
+	local row = new("Frame", { BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, tonumber(o.Height) or 210), LayoutOrder = self:_order() }, self._body)
+	local head = label(row, "", 10.5, C.Ink3)
+	head.Position = UDim2.fromOffset(4, 0); head.Size = UDim2.new(1, -8, 0, 14)
+	local sc = new("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0,
+		Position = UDim2.fromOffset(0, 18), Size = UDim2.new(1, 0, 1, -18), CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 2,
+		ScrollBarImageColor3 = C.Edge }, row)
+	col(sc, 5)
+	local onPick, selected
+	local function draw(items, note)
+		for _, c in ipairs(sc:GetChildren()) do
+			if c:IsA("GuiObject") then c:Destroy() end
+		end
+		head.Text = tostring(note or "")
+		for i, it in ipairs(items or {}) do
+			local card = new("TextButton", { BackgroundColor3 = C.Surface, Text = "",
+				Size = UDim2.new(1, -4, 0, 46), AutoButtonColor = false, LayoutOrder = i }, sc)
+			round(card, R_ROW)
+			local on = (selected ~= nil and tostring(selected) == tostring(it.key))
+			new("Frame", { BackgroundColor3 = on and C.Accent or C.Edge, BorderSizePixel = 0,
+				Position = UDim2.fromOffset(0, 11), Size = UDim2.fromOffset(3, 24) }, card)
+			local pic = new("ImageLabel", { BackgroundColor3 = C.Raised, BackgroundTransparency = 0.4,
+				Position = UDim2.fromOffset(12, 7), Size = UDim2.fromOffset(32, 32),
+				Image = iconOf(it.image), ScaleType = Enum.ScaleType.Fit }, card)
+			round(pic, 8)
+			local badgeW = 0
+			for _, b in ipairs(it.badges or {}) do
+				local chip = new("TextLabel", { BackgroundColor3 = C.Raised,
+					AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10 - badgeW, 0.5, 0),
+					Size = UDim2.fromOffset(0, 20), AutomaticSize = Enum.AutomaticSize.X, Font = FB,
+					TextSize = 9.5, TextColor3 = C.Ink2, Text = string.upper(tostring(b)) }, card)
+				pad(chip, 0, 8, 0, 8)
+				round(chip, 6)
+				badgeW = badgeW + 46
+			end
+			local nm = label(card, it.name, 12, C.Ink, true)
+			nm.Position = UDim2.fromOffset(52, 8); nm.Size = UDim2.new(1, -62 - badgeW, 0, 15)
+			local sb = label(card, it.sub, 10.5, C.Ink3)
+			sb.Position = UDim2.fromOffset(52, 25); sb.Size = UDim2.new(1, -62 - badgeW, 0, 13)
+			card.MouseEnter:Connect(function() tw(card, 0.1, { BackgroundColor3 = C.Raised }) end)
+			card.MouseLeave:Connect(function() tw(card, 0.1, { BackgroundColor3 = C.Surface }) end)
+			card.MouseButton1Click:Connect(function()
+				selected = it.key
+                if onPick then task.spawn(function() pcall(onPick, it) end) end
+			end)
+		end
+	end
+	return { Instance = row, Set = function(_, items, note) draw(items, note) end,
+		OnPick = function(_, fn) onPick = fn end,
+		Select = function(_, k) selected = k end }
+end
+
 --==============================================================================
 -- WINDOW
 --==============================================================================
@@ -588,7 +750,10 @@ function UI:CreateWindow(o)
 	local wantH = o.Compact and 240 or 620
 
 	local card = new("Frame", { BackgroundColor3 = C.Bg, AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(wantW, wantH) }, gui)
+		Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(wantW, wantH),
+		-- headless: build everything, show nothing. Lets a front-end drive the
+		-- engine's menu without a second window sitting on screen.
+		Visible = not (_G.MH_Headless and not o.Front) }, gui)
 	round(card, R_CARD); edge(card, C.Edge, 0.1)
 	local uiscale = new("UIScale", { Scale = scale }, card)
 

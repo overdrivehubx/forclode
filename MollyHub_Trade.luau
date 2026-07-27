@@ -54,6 +54,11 @@ if n == 0 then
 	swapped = src
 end
 
+-- The grey photo over the menu is the harness's own theme code painting
+-- BG_IMAGE onto every frame it can find. Blank the id and the painting becomes
+-- a no-op, without touching the theme logic itself.
+swapped = swapped:gsub('local BG_IMAGE = "rbxassetid://%d+"', 'local BG_IMAGE = ""', 1)
+
 local fn, err = loadstring(swapped)
 if not fn then return fail("the harness would not compile: " .. tostring(err)) end
 
