@@ -2307,7 +2307,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v38 (right attachment; equipped-tile icon)")
+	w("BUILD          = equip-v39 (hotbar icon follows the equipped skin)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -5333,6 +5333,8 @@ function MH_applySkinNow()
 					for _, t in ipairs(src:GetChildren()) do
 						if t:IsA("Tool") and MH_toolSlot(t) == slot then
 							n = n + MH_paintMesh(t, e.mesh, e.tex, e)
+							local fk = (_G.MH_SkinKey or {})[slot]
+							if fk then MH_paintTool(t, fk) end
 							-- how the weapon sits in the hand is the Tool's own Grip
 							if e.grip then
 								pcall(function()
@@ -5352,6 +5354,7 @@ function MH_applySkinNow()
 			end
 		end
 	end
+	pcall(MH_paintHotbar)
 	return n
 end
 
@@ -5414,6 +5417,68 @@ function MH_restoreSkins()
 	end
 	_G.MH_SkinUndo = {}
 	_G.MH_SkinSeen = {}
+	return n
+end
+
+-- The round hotbar draws each slot from its Tool's TextureId, so set that rather
+-- than reaching into CoreGui: the icon then updates wherever the tool is shown.
+-- The original is kept both to undo it and to recognise which hotbar slot this
+-- tool owns. GLOBAL.
+function MH_paintTool(tool, key)
+	local d = ItemDB[key]
+	local img = d and d.Image
+	if not tool or not img or tostring(img) == "" then return 0 end
+	_G.MH_SkinSeen = _G.MH_SkinSeen or {}
+	_G.MH_SkinUndo = _G.MH_SkinUndo or {}
+	_G.MH_ToolIcons = _G.MH_ToolIcons or setmetatable({}, { __mode = "k" })
+	local done = 0
+	pcall(function()
+		if not _G.MH_ToolIcons[tool] then
+			local was = tostring(tool.TextureId)
+			_G.MH_ToolIcons[tool] = { orig = was, img = tostring(img) }
+			_G.MH_SkinUndo[#_G.MH_SkinUndo + 1] = function()
+				tool.TextureId = was
+				_G.MH_ToolIcons[tool] = nil
+			end
+		end
+		tool.TextureId = tostring(img)
+		done = 1
+	end)
+	return done
+end
+
+-- Belt and braces for the hotbar: if the backpack GUI does not redraw from the
+-- Tool's TextureId, repaint the slot itself. A slot is matched by the icon it is
+-- ALREADY showing — the tool's original texture — so several faked weapons never
+-- get each other's icons. GLOBAL.
+function MH_paintHotbar()
+	local icons = _G.MH_ToolIcons
+	if not icons or not next(icons) then return 0 end
+	local n = 0
+	pcall(function()
+		local rg = game:GetService("CoreGui"):FindFirstChild("RobloxGui")
+		local bp = rg and rg:FindFirstChild("Backpack")
+		local hot = bp and bp:FindFirstChild("Hotbar")
+		if not hot then return end
+		for _, slot in ipairs(hot:GetDescendants()) do
+			if slot:IsA("ImageLabel") or slot:IsA("ImageButton") then
+				local cur = tostring(slot.Image)
+				if cur ~= "" then
+					for _, e in pairs(icons) do
+						if cur == tostring(e.orig) and cur ~= e.img then
+							if not _G.MH_SkinSeen[slot] then
+								_G.MH_SkinSeen[slot] = true
+								local was = slot.Image
+								_G.MH_SkinUndo[#_G.MH_SkinUndo + 1] = function() slot.Image = was end
+							end
+							slot.Image = e.img
+							n = n + 1
+						end
+					end
+				end
+			end
+		end
+	end)
 	return n
 end
 
@@ -6071,7 +6136,7 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v38")   -- freshness marker so a stale-cache test is obvious
+	add("v39")   -- freshness marker so a stale-cache test is obvious
 	MH_loadMeshMap()
 	local lrn, tot = MH_learnMeshes()
 	add("learn=+" .. tostring(lrn) .. "/" .. tostring(tot))
