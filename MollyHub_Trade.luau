@@ -3,8 +3,9 @@
 ================================================================================
   MollyHub — TRADE + EQUIP SPAWNER
 ================================================================================
-  The full sandbox with a front end built for it: a Trade screen (partner,
-  request, accept, overlay) and the Spawner screen, both on one page each.
+  The full sandbox with a front end built for it: a Trade screen (who you are
+  with, the invitations, both sides of the deal, what goes on the table), the
+  Spawner, the Skins page, and a Binds page where every action can take a key.
 
   The engine is the harness, loaded headless — it builds its own menu but keeps
   it off screen and publishes _G.MH_API. Nothing here reimplements the trade or
@@ -105,10 +106,6 @@ T:Actions({ Items = {
 
 T:Section({ Title = "The deal" })
 local deal = T:Deal({})
-deal:OnYou(function(on) API.acceptP1(on) end)
-deal:OnThem(function(on)
-	if API.acceptP2 then API.acceptP2(on) else UI:Notify({ Title = "Trade", Content = "engine is out of date" }) end
-end)
 
 -- what the table actually holds, rather than what we last pressed
 local function pulse()
@@ -118,7 +115,24 @@ local function pulse()
 		deal:Set(s)
 		pcall(function() partner:Set(s.partner) end)
 	end
+	return ok and s or nil
 end
+
+-- The game refuses to accept an empty trade, so a tap can bounce back. Say why
+-- rather than letting the card silently flip itself off again.
+local function afterTap(want)
+	task.delay(0.08, function()
+		local s = pulse()
+		if want and type(s) == "table" and not (s.youAccepted or s.theyAccepted) then
+			UI:Notify({ Title = "Not yet", Content = "nothing is on the table to accept" })
+		end
+	end)
+end
+deal:OnYou(function(on) API.acceptP1(on) afterTap(on) end)
+deal:OnThem(function(on)
+	if API.acceptP2 then API.acceptP2(on) afterTap(on)
+	else UI:Notify({ Title = "Trade", Content = "engine is out of date" }) end
+end)
 task.spawn(function()
 	while true do
 		task.wait(0.6)
@@ -126,26 +140,65 @@ task.spawn(function()
 	end
 end)
 
+-- Putting things on the table: yours on your side, anything on theirs.
 local giveAmount = 1
-T:Button({ Title = "Put an item on their side", Desc = "pick from the catalog, with pictures",
-	Callback = function()
-		local rows = {}
-		for _, it in ipairs(API.rank("") or {}) do
-			local d = API.item(it.key) or {}
-			rows[#rows + 1] = { value = it.name, text = it.name,
-				sub = tostring(d.Rarity or d.ItemType or "item"), image = d.Image }
-			if #rows >= 400 then break end
-		end
-		T:Pick({ Title = "Give them", Values = rows, Noun = "item", Callback = function(v)
-			API.spawn(v, giveAmount, true)
-			UI:Notify({ Title = "On their side", Content = tostring(v) .. "  x" .. tostring(giveAmount) })
-		end })
+
+local function catalogRows()
+	local out = {}
+	for _, it in ipairs(API.rank("") or {}) do
+		local d = API.item(it.key) or {}
+		out[#out + 1] = { value = it.name, text = it.name,
+			sub = tostring(d.Rarity or d.ItemType or "item"), image = d.Image }
+		if #out >= 400 then break end
+	end
+	return out
+end
+
+-- What you REALLY own, so a trade can be made of your own things and not only
+-- of items conjured for it.
+local function mineRows()
+	local out = {}
+	for _, e in ipairs((API.mine and API.mine()) or {}) do
+		local d = API.item(e.key) or {}
+		out[#out + 1] = { value = e.key, text = tostring(d.ItemName or e.key),
+			sub = "x" .. tostring(e.count) .. "   " .. tostring(d.Rarity or d.ItemType or ""),
+			image = d.Image }
+	end
+	return out
+end
+
+local function addMine()
+	if not API.stage then return UI:Notify({ Title = "Trade", Content = "engine is out of date" }) end
+	local rows = mineRows()
+	if #rows == 0 then
+		return UI:Notify({ Title = "Your items", Content = "the game has not handed over your inventory yet" })
+	end
+	T:Pick({ Title = "Your items", Values = rows, Noun = "item", Callback = function(v)
+		local n = API.stage(v, giveAmount) or 0
+		pulse()
+		UI:Notify({ Title = (n > 0) and "On your side" or "Could not stage",
+			Content = (n > 0) and (tostring(v) .. "  x" .. tostring(n))
+				or "four stacks a side is the limit, same as the game" })
 	end })
+end
+
+local function giveThem()
+	T:Pick({ Title = "Give them", Values = catalogRows(), Noun = "item", Callback = function(v)
+		API.spawn(v, giveAmount, true)
+		pulse()
+		UI:Notify({ Title = "On their side", Content = tostring(v) .. "  x" .. tostring(giveAmount) })
+	end })
+end
+
+T:Actions({ Items = {
+	{ Title = "Add your items", Desc = "from your real inventory", Callback = addMine },
+	{ Title = "Give them an item", Desc = "anything in the game", Callback = giveThem },
+} })
 T:Slider({ Title = "How many", Min = 1, Max = 100, Default = 1,
 	Callback = function(v) giveAmount = v end })
 
-T:Toggle({ Title = "Overlay on a real trade", Desc = "your fake items over a genuine trade, visual only",
-	Callback = function(on) API.overlay(on) end })
+-- Overlay on a real trade is deliberately not shown. The engine still has it
+-- (API.overlay), it is just off the menu for now.
 T:Actions({ Height = 40, Items = {
 	{ Title = "Clear the table", Callback = function()
 		if API.clear then API.clear() pulse() UI:Notify({ Title = "Trade", Content = "both sides emptied" })
@@ -157,7 +210,7 @@ T:Actions({ Height = 40, Items = {
 --== spawner ===================================================================
 local S = Win:Tab({ Title = "Spawner" })
 
-local query, filter, picked, amount, toP2 = "", "All", nil, 1, false
+local query, filter, picked, amount = "", "All", nil, 1
 local hero, listView
 
 local function passes(it)
@@ -214,22 +267,28 @@ listView:OnPick(function(it)
 end)
 S:Slider({ Title = "Amount", Min = 1, Max = 100, Default = 1,
 	Callback = function(v) amount = v end })
-S:Toggle({ Title = "Into their side", Desc = "spawn onto Player 2's offer instead",
-	Callback = function(on) toP2 = on end })
-S:Button({ Title = "Spawn selected", Style = "primary", Callback = function()
+-- Their side is filled from the Trade screen, so there is no switch here to
+-- forget you left on.
+local function spawnPicked()
 	if not picked then return UI:Notify({ Title = "Spawner", Content = "pick an item first" }) end
-	API.spawn(picked.name, amount, toP2)
-end })
+	API.spawn(picked.name, amount, false)
+	UI:Notify({ Title = "Spawned", Content = picked.name .. "  x" .. tostring(amount) })
+end
+S:Button({ Title = "Spawn selected", Style = "primary", Callback = spawnPicked })
 
 --== skins =====================================================================
 local K = Win:Tab({ Title = "Skins" })
 K:Section({ Title = "Where skins come from" })
-K:Button({ Title = "Learn from players nearby", Style = "primary", Callback = function()
+local function learnNearby()
 	task.spawn(function()
 		local learned, total = MH_learnMeshes()
 		UI:Notify({ Title = "Skins", Content = "+" .. learned .. " learned, " .. total .. " known" })
 	end)
-end })
+end
+local function dropSkin()
+	UI:Notify({ Title = "Skins", Content = "restored " .. MH_restoreSkins() .. " mesh(es)" })
+end
+K:Button({ Title = "Learn from players nearby", Style = "primary", Callback = learnNearby })
 K:Button({ Title = "Learn my whole inventory", Desc = "equips each item you own, takes minutes",
 	Callback = function()
 		task.spawn(function()
@@ -254,13 +313,36 @@ K:Toggle({ Title = "Keep the game's placement",
 	end })
 
 K:Section({ Title = "Undo" })
-K:Button({ Title = "Remove skin", Style = "danger", Callback = function()
-	UI:Notify({ Title = "Skins", Content = "restored " .. MH_restoreSkins() .. " mesh(es)" })
-end })
-K:Button({ Title = "Forget learned skins", Style = "danger", Callback = function()
-	MH_restoreSkins()
-	UI:Notify({ Title = "Skins", Content = "forgot " .. MH_forgetSkins() .. " entries" })
-end })
+K:Actions({ Height = 40, Items = {
+	{ Title = "Remove skin", Callback = dropSkin },
+	{ Title = "Forget them all", Style = "danger", Callback = function()
+		MH_restoreSkins()
+		UI:Notify({ Title = "Skins", Content = "forgot " .. MH_forgetSkins() .. " entries" })
+	end },
+} })
+
+--== binds =====================================================================
+-- Every action worth a key, in one place. Tap a chip, press a key; Escape or
+-- Backspace while it is listening clears the bind. Presses are ignored while
+-- you are typing in a box.
+local B = Win:Tab({ Title = "Binds" })
+B:Section({ Title = "Menu and trade" })
+B:Keybind({ Title = "Show or hide the menu", Default = "RightShift",
+	OnPress = function() Win:Toggle() end })
+B:Keybind({ Title = "They invite you", Default = "F", OnPress = function() API.request(true) end })
+B:Keybind({ Title = "They accept", Default = "G",
+	OnPress = function() if API.acceptP2 then API.acceptP2(true) pulse() end end })
+B:Keybind({ Title = "You accept", Default = "H",
+	OnPress = function() API.acceptP1(true) pulse() end })
+B:Keybind({ Title = "Add your items", OnPress = addMine })
+B:Keybind({ Title = "Give them an item", OnPress = giveThem })
+B:Keybind({ Title = "Clear the table", Default = "J",
+	OnPress = function() if API.clear then API.clear() pulse() end end })
+
+B:Section({ Title = "Spawner and skins" })
+B:Keybind({ Title = "Spawn the selected item", Default = "K", OnPress = spawnPicked })
+B:Keybind({ Title = "Learn skins nearby", OnPress = learnNearby })
+B:Keybind({ Title = "Remove skin", OnPress = dropSkin })
 
 --== go ========================================================================
 refresh()
