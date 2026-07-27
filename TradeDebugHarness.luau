@@ -3119,6 +3119,99 @@ function returnOfferToInventory(sideKey)
 	MH_pokeInventory()     -- re-render the native inventory GUI so refunds show up
 end
 
+-- YOUR REAL inventory: every item the game says you own, with how many. The
+-- Add-Items pool only ever held what this harness spawned, which is why only
+-- spawned items could be put on the table. GLOBAL.
+function MH_ownedList()
+	local out, seen = {}, {}
+	local function take(t)
+		if type(t) ~= "table" then return end
+		for k, n in pairs(t) do
+			n = tonumber(n) or 0
+			if n > 0 and not seen[k] and not isDefaultItem(k) then
+				seen[k] = true
+				out[#out + 1] = { key = k, count = n }
+			end
+		end
+	end
+	pcall(function()
+		local pd = MH_profile()
+		take(pd and pd.Weapons and pd.Weapons.Owned)
+	end)
+	take(OwnedWeapons)          -- offline mirror, and whatever the harness knows
+	table.sort(out, function(a, b) return tostring(a.key):lower() < tostring(b.key):lower() end)
+	return out
+end
+
+-- Put one of YOUR OWN items on your side of the table. The pool the offer draws
+-- from is topped up from what you really own first, so this is the same code
+-- path a tap on the game's Add-Items grid takes. Returns how many landed.
+-- GLOBAL.
+function MH_stageMine(key, amount, category)
+	if not key or key == "" or isDefaultItem(key) then return 0 end
+	category = category or "Weapons"
+	amount = math.max(1, math.floor(tonumber(amount) or 1))
+	local pool = invPool(category)
+	local owned = 0
+	pcall(function()
+		local pd = MH_profile()
+		local o = pd and pd.Weapons and pd.Weapons.Owned
+		owned = tonumber(o and o[key]) or 0
+	end)
+	if owned <= 0 then owned = tonumber(OwnedWeapons[key]) or 0 end
+	if owned > 0 then pool[key] = math.max(tonumber(pool[key]) or 0, owned) end
+	local function staged()
+		local n = 0
+		for _, e in ipairs(DebugTradeTable.Player1.Offer) do n = n + (tonumber(e[2]) or 0) end
+		return n
+	end
+	local before = staged()
+	for _ = 1, amount do offerItemLocal(key, category) end
+	return staged() - before
+end
+
+-- A finished trade should leave you holding what you were given and short what
+-- you handed over — otherwise "trade complete" is only a popup. This writes the
+-- game's own LOCAL data copy, exactly as spawning does; nothing is sent to the
+-- server, and a rejoin puts everything back the way it really is. GLOBAL.
+function MH_settleTrade(given, received)
+	local owned
+	pcall(function()
+		local pd = MH_profile()
+		owned = pd and pd.Weapons and pd.Weapons.Owned
+	end)
+	-- How many of it you hold. The Add-Items pool is NOT this number: staging an
+	-- item already took it out of the pool, so counting from there would charge
+	-- you for the same item twice.
+	local function held(key)
+		return (type(owned) == "table" and tonumber(owned[key]))
+			or tonumber(OwnedWeapons[key]) or 0
+	end
+	local function setHeld(key, n)
+		if type(owned) == "table" then owned[key] = (n > 0) and n or nil end
+		OwnedWeapons[key] = (n > 0) and n or nil
+	end
+	for _, e in ipairs(received or {}) do
+		local key, amount = e.key, tonumber(e.amount) or 1
+		if key and not isDefaultItem(key) then
+			setHeld(key, held(key) + amount)
+			-- and into the pool, so it can be traded on without spawning it again
+			local pool = invPool(e.cat or "Weapons")
+			pool[key] = (tonumber(pool[key]) or 0) + amount
+		end
+	end
+	for _, e in ipairs(given or {}) do
+		local key, amount = e.key, tonumber(e.amount) or 1
+		if key and not isDefaultItem(key) then
+			setHeld(key, math.max(0, held(key) - amount))
+		end
+	end
+	pcall(function()
+		game:GetService("ReplicatedStorage").Remotes.Inventory.InventoryDataChanged:Fire()
+	end)
+	pcall(renderInventory)
+end
+
 -- Grey the native ACCEPT button while the trade is empty (nothing to trade), and
 -- restore its authored green once at least one item is staged on either side —
 -- matching MM2, which won't let you accept an empty trade. Original colours are
@@ -3749,6 +3842,11 @@ local function completeTradeIfBothAccepted()
 		for _, e in ipairs(DebugTradeTable.Player2.Offer) do
 			received[#received + 1] = { key = e[1], cat = e[3], amount = e[2] }
 		end
+		-- and what leaves your pack, captured before the offers are cleared
+		local given = {}
+		for _, e in ipairs(DebugTradeTable.Player1.Offer) do
+			given[#given + 1] = { key = e[1], cat = e[3], amount = e[2] }
+		end
 		task.delay(2, function()
 			-- Abort if a new trade started in the meantime.
 			if myToken ~= completeToken then return end
@@ -3765,6 +3863,10 @@ local function completeTradeIfBothAccepted()
 			HarnessTradeActive = false; HarnessRequestArmed = false  -- disarm; re-shown request re-arms it
 			showAcceptedBadge("your", false); showAcceptedBadge("their", false)
 			for _, f in ipairs(onNewTrade) do pcall(f) end
+			-- Actually swap the goods: what they offered joins your inventory and
+			-- what you offered leaves it, so a completed trade looks like a trade
+			-- rather than an animation.
+			pcall(function() MH_settleTrade(given, received) end)
 			-- Fire the game's OWN item-received popup for each item you got.
 			pcall(function() MH_fireReceived(received) end)
 		end)
@@ -6370,7 +6472,7 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v42")   -- freshness marker so a stale-cache test is obvious
+	add("v43")   -- freshness marker so a stale-cache test is obvious
 	MH_loadMeshMap()
 	local lrn, tot = MH_learnMeshes()
 	add("learn=+" .. tostring(lrn) .. "/" .. tostring(tot))
@@ -6773,6 +6875,9 @@ if true then
 					showAcceptedBadge("your", false); showAcceptedBadge("their", false)
 					pcall(RenderTrade)
 				end
+				-- Your own inventory, and putting a piece of it on the table.
+				A.mine = function() return MH_ownedList() end
+				A.stage = function(k, n) return MH_stageMine(k, n, "Weapons") end
 				-- The game's own item grid, for staging items by hand.
 				A.picker = function(on)
 					if on == false then return pcall(closeItemsPicker) end

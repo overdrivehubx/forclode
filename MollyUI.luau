@@ -510,15 +510,68 @@ function Tab:Slider(o)
 	end }
 end
 
+-- A real keybind: tap the chip, press a key, and that key runs the action from
+-- then on. Escape or Backspace while listening clears it. Typing in a text box
+-- never fires a bind — Roblox marks those presses as already handled.
 function Tab:Keybind(o)
 	o = o or {}
-	local row = shell(self, 44)
-	caption(row, o.Title, o.Desc, 82)
-	local chip = new("TextLabel", { BackgroundColor3 = C.Raised, AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -14, 0.5, 0), Size = UDim2.fromOffset(58, 24), Font = FB,
-		TextSize = 11.5, TextColor3 = C.Ink2, Text = tostring(o.Value or o.Default or "None") }, row)
+	local row = shell(self, (o.Desc and tostring(o.Desc) ~= "") and 50 or 40)
+	caption(row, o.Title, o.Desc, 92)
+	local chip = new("TextButton", { BackgroundColor3 = C.Raised, AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -14, 0.5, 0), Size = UDim2.fromOffset(70, 26), Font = FB,
+		TextSize = 11.5, TextColor3 = C.Ink2, Text = "None", AutoButtonColor = false }, row)
 	round(chip, 8)
-	return { Instance = row, Set = function(_, v) chip.Text = tostring(v) end }
+
+	local key, listening = nil, false
+	local function keyFrom(v)
+		if v == nil then return nil end
+		if type(v) ~= "string" then return v end        -- already a KeyCode
+		if v == "" or v == "None" then return nil end
+		local kc
+		pcall(function() kc = Enum.KeyCode[v] end)
+		return kc
+	end
+	local function paint()
+		chip.Text = key and tostring(key.Name) or "None"
+		chip.TextColor3 = key and C.Ink or C.Ink3
+		chip.BackgroundColor3 = key and C.Raised or C.Surface
+	end
+	local function set(v, fire)
+		key = keyFrom(v)
+		paint()
+		if fire and o.Callback then
+			task.spawn(function() pcall(o.Callback, key and key.Name or nil) end)
+		end
+	end
+	set(o.Value or o.Default, false)
+
+	chip.MouseButton1Click:Connect(function()
+		if listening then return end
+		listening = true
+		chip.Text = "press..."
+		chip.TextColor3 = C.Accent
+		local c
+		c = UserInput.InputBegan:Connect(function(i)
+			if i.UserInputType ~= Enum.UserInputType.Keyboard then return end
+			pcall(function() c:Disconnect() end)
+			listening = false
+			if i.KeyCode == Enum.KeyCode.Escape or i.KeyCode == Enum.KeyCode.Backspace
+				or i.KeyCode == Enum.KeyCode.Delete then
+				set(nil, true)
+			else
+				set(i.KeyCode, true)
+			end
+		end)
+	end)
+
+	UserInput.InputBegan:Connect(function(i, typing)
+		if typing or listening or not key then return end
+		if i.UserInputType ~= Enum.UserInputType.Keyboard or i.KeyCode ~= key then return end
+		if o.OnPress then task.spawn(function() pcall(o.OnPress) end) end
+	end)
+
+	return { Instance = row, Set = function(_, v) set(v, false) end,
+		Get = function() return key and key.Name or nil end }
 end
 
 function Tab:Dropdown(o)
@@ -734,12 +787,17 @@ function Tab:List(o)
 	-- two scrolls for one screen, which is what made this annoying to use.
 	if o.Fill then
 		local body, layout = self._body, nil
+		local win = self._win
 		pcall(function() layout = body:FindFirstChildWhichIsA("UIListLayout") end)
 		local function refit()
 			pcall(function()
-				local mine = row.AbsoluteSize.Y
-				local others = layout.AbsoluteContentSize.Y - mine
-				local want = math.clamp(body.AbsoluteSize.Y - others - 24,
+				-- Absolute sizes come back already scaled, while Size is written in
+				-- the card's own units, so divide before comparing the two.
+				local k = (win and win._scale and tonumber(win._scale.Scale)) or 1
+				if k <= 0 then k = 1 end
+				local mine = row.AbsoluteSize.Y / k
+				local others = layout.AbsoluteContentSize.Y / k - mine
+				local want = math.clamp(body.AbsoluteSize.Y / k - others - 24,
 					tonumber(o.Min) or 120, tonumber(o.Max) or 460)
 				if math.abs(want - mine) > 3 then row.Size = UDim2.new(1, 0, 0, want) end
 			end)
@@ -1043,8 +1101,15 @@ function UI:CreateWindow(o)
 			else
 				w, h = math.min(wantW, math.floor(v.X * 0.94)), math.min(wantH, math.floor(v.Y * 0.86))
 			end
-			card.Size = UDim2.fromOffset(w, h)
-			uiscale.Scale = scale * ((v.X < 480) and 0.92 or 1)
+			-- A phone screen cannot get any taller, so the only way to stop the
+			-- scrolling is to fit more into it: draw the card SMALLER and give it
+			-- proportionally more room to lay out in. The card still covers the
+			-- same pixels; it just holds a quarter more rows. The +/- in the
+			-- footer still works on top of this.
+			local dens = 1
+			if v.Y < 500 then dens = 0.8 elseif v.Y < 700 then dens = 0.88 end
+			card.Size = UDim2.fromOffset(math.floor(w / dens), math.floor(h / dens))
+			uiscale.Scale = scale * dens
 			if readout then readout.Text = tostring(math.floor(scale * 100 + 0.5)) .. "%" end
 		end)
 	end
@@ -1113,7 +1178,7 @@ function UI:CreateWindow(o)
 	draggable(card, head)
 
 	local win = setmetatable({ _gui = gui, _card = card, _tabbar = tabbar, _pages = pages,
-		_tabs = {}, _byTitle = {} }, Window)
+		_scale = uiscale, _tabs = {}, _byTitle = {} }, Window)
 
 	local pill = new("TextButton", { BackgroundColor3 = C.Accent, Position = UDim2.fromOffset(18, 18),
 		Size = UDim2.fromOffset(96, 30), Font = FB, TextSize = 12, TextColor3 = C.On,

@@ -144,23 +144,26 @@ listView = S:List({ Height = 300, Fill = true, Min = 150, Max = 460 })
 listView:OnPick(function(it) choose(it) end)
 S:Slider({ Title = "Amount", Min = 1, Max = 100, Default = 1,
 	Callback = function(v) amount = v end })
-S:Button({
-	Title = "Spawn selected", Style = "primary",
-	Callback = function()
-		if not picked then return UI:Notify({ Title = "Spawner", Content = "pick an item first" }) end
-		API.spawn(picked.name, amount, false)
-		UI:Notify({ Title = "Spawned", Content = picked.name .. "  x" .. tostring(amount) })
-	end,
-})
+local function spawnPicked()
+	if not picked then return UI:Notify({ Title = "Spawner", Content = "pick an item first" }) end
+	API.spawn(picked.name, amount, false)
+	UI:Notify({ Title = "Spawned", Content = picked.name .. "  x" .. tostring(amount) })
+end
+S:Button({ Title = "Spawn selected", Style = "primary", Callback = spawnPicked })
 --== skins =====================================================================
 local K = Win:Tab({ Title = "Skins" })
-K:Section({ Title = "Where skins come from" })
-K:Button({ Title = "Learn from players nearby", Style = "primary", Callback = function()
+local function learnNearby()
 	task.spawn(function()
 		local learned, total = MH_learnMeshes()
 		UI:Notify({ Title = "Skins", Content = "+" .. learned .. " learned, " .. total .. " known" })
 	end)
-end })
+end
+local function dropSkin()
+	UI:Notify({ Title = "Skins", Content = "restored " .. MH_restoreSkins() .. " mesh(es)" })
+end
+
+K:Section({ Title = "Where skins come from" })
+K:Button({ Title = "Learn from players nearby", Style = "primary", Callback = learnNearby })
 K:Button({ Title = "Learn my whole inventory", Desc = "equips each item you own, takes minutes",
 	Callback = function()
 		task.spawn(function()
@@ -175,7 +178,6 @@ K:Button({ Title = "Learn my whole inventory", Desc = "equips each item you own,
 					or ("failed: " .. tostring(a)) })
 		end)
 	end })
-K:Section({ Title = "Fixes" })
 K:Toggle({ Title = "Keep the game's placement",
 	Desc = "turn on if a weapon hangs wrong on your body",
 	Callback = function(on)
@@ -185,14 +187,25 @@ K:Toggle({ Title = "Keep the game's placement",
 	end })
 
 K:Section({ Title = "Undo" })
-K:Button({ Title = "Remove skin", Style = "danger", Callback = function()
-	UI:Notify({ Title = "Skins", Content = "restored " .. MH_restoreSkins() .. " mesh(es)" })
-end })
-K:Button({ Title = "Forget learned skins", Style = "danger", Callback = function()
-	MH_restoreSkins()
-	UI:Notify({ Title = "Skins", Content = "forgot " .. MH_forgetSkins() .. " entries" })
-end })
-K:Button({ Title = "Copy skin map", Callback = function()
+K:Actions({ Height = 40, Items = {
+	{ Title = "Remove skin", Callback = dropSkin },
+	{ Title = "Forget them all", Style = "danger", Callback = function()
+		MH_restoreSkins()
+		UI:Notify({ Title = "Skins", Content = "forgot " .. MH_forgetSkins() .. " entries" })
+	end },
+} })
+
+--== binds =====================================================================
+-- Tap a chip, press a key, and that key runs the action. Escape or Backspace
+-- while it is listening clears the bind, and typing in a box never fires one.
+local B = Win:Tab({ Title = "Binds" })
+B:Section({ Title = "Everything with a key" })
+B:Keybind({ Title = "Show or hide the menu", Default = "RightShift",
+	OnPress = function() Win:Toggle() end })
+B:Keybind({ Title = "Spawn the selected item", Default = "K", OnPress = spawnPicked })
+B:Keybind({ Title = "Learn skins nearby", Default = "L", OnPress = learnNearby })
+B:Keybind({ Title = "Remove skin", OnPress = dropSkin })
+B:Keybind({ Title = "Copy the skin map", OnPress = function()
 	local txt = "{}"
 	pcall(function() txt = game:GetService("HttpService"):JSONEncode(_G.MH_MeshMap or {}) end)
 	pcall(function() setclipboard(txt) end)
