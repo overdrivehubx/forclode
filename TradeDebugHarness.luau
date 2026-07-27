@@ -6370,7 +6370,7 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v41")   -- freshness marker so a stale-cache test is obvious
+	add("v42")   -- freshness marker so a stale-cache test is obvious
 	MH_loadMeshMap()
 	local lrn, tot = MH_learnMeshes()
 	add("learn=+" .. tostring(lrn) .. "/" .. tostring(tot))
@@ -6740,6 +6740,44 @@ if true then
 				A.partner = function() return currentName() end
 				A.request = function(incoming) return showRequestModal(currentName(), incoming and true or false) end
 				A.acceptP1 = function(on) return setYourAcceptedUI(on and true or false) end
+				-- The other side's accept — the one you actually want. A front end
+				-- used to set a global for this, which nothing in here ever read, so
+				-- the switch did nothing at all.
+				A.acceptP2 = function(on)
+					on = on and true or false
+					DebugTradeTable.Player2.Accepted = on
+					showAcceptedBadge("their", on, "OTHER PLAYER HAS ACCEPTED.")
+					if on then completeTradeIfBothAccepted() end
+					return on
+				end
+				-- What the table looks like right now, so a front end can show it
+				-- instead of guessing: accepted flags and how many items each side
+				-- has staged.
+				A.state = function()
+					return {
+						youAccepted = DebugTradeTable.Player1.Accepted and true or false,
+						theyAccepted = DebugTradeTable.Player2.Accepted and true or false,
+						yours = #DebugTradeTable.Player1.Offer,
+						theirs = #DebugTradeTable.Player2.Offer,
+						active = HarnessTradeActive and true or false,
+						partner = currentName(),
+					}
+				end
+				-- Take everything off the table and give it back, rather than making
+				-- you terminate the whole harness to start over.
+				A.clear = function(side)
+					if side ~= "Player2" then returnOfferToInventory("Player1") end
+					if side ~= "Player1" then returnOfferToInventory("Player2") end
+					DebugTradeTable.Player1.Accepted = false
+					DebugTradeTable.Player2.Accepted = false
+					showAcceptedBadge("your", false); showAcceptedBadge("their", false)
+					pcall(RenderTrade)
+				end
+				-- The game's own item grid, for staging items by hand.
+				A.picker = function(on)
+					if on == false then return pcall(closeItemsPicker) end
+					return pcall(openItemsPicker)
+				end
 				A.overlay = function(on)
 					OverlayMode = on and true or false
 					if OverlayMode then pcall(openItemsPicker) end

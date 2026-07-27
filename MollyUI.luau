@@ -44,6 +44,7 @@ local C = {
 	Ink3    = Color3.fromRGB(96, 103, 122),
 	Accent  = Color3.fromRGB(124, 106, 255),
 	Danger  = Color3.fromRGB(238, 84, 96),
+	Good    = Color3.fromRGB(58, 196, 134),  -- accepted, done, green in the game too
 	On      = Color3.fromRGB(255, 255, 255),
 }
 local F  = Enum.Font.GothamMedium
@@ -184,11 +185,24 @@ end
 --==============================================================================
 -- PICKER — choices live beside the window, not inside the page
 --==============================================================================
+-- One row of a picker. A value is either a plain string or a table carrying a
+-- picture and a second line, so the same panel serves "choose a player" (with
+-- their avatar) and "choose an item" (with its icon).
+local function pickRow(v)
+	if type(v) == "table" then
+		return tostring(v.text or v.value or ""), v.sub, v.image, (v.value ~= nil) and v.value or v.text,
+			v.circle and true or false
+	end
+	return tostring(v), nil, nil, v, false
+end
+
+local PICK_W = 250
 local openPicker
-local function showPicker(win, title, values, current, onPick)
+local function showPicker(win, title, values, current, onPick, opts)
+	opts = opts or {}
 	if openPicker then pcall(function() openPicker:Destroy() end) openPicker = nil end
 	local card = win._card
-	local p = new("Frame", { BackgroundColor3 = C.Bg, Size = UDim2.fromOffset(228, 340),
+	local p = new("Frame", { BackgroundColor3 = C.Bg, Size = UDim2.fromOffset(PICK_W, 340),
 		ZIndex = 30 }, win._gui)
 	openPicker = p
 	round(p, R_CARD); edge(p, C.Edge, 0.1)
@@ -198,10 +212,10 @@ local function showPicker(win, title, values, current, onPick)
 		pcall(function()
 			local a, s = card.AbsolutePosition, card.AbsoluteSize
 			local v = viewport()
-			if a.X + s.X + 238 < v.X then p.Position = UDim2.fromOffset(a.X + s.X + 10, a.Y)
-			elseif a.X - 238 > 0 then p.Position = UDim2.fromOffset(a.X - 238, a.Y)
+			if a.X + s.X + PICK_W + 10 < v.X then p.Position = UDim2.fromOffset(a.X + s.X + 10, a.Y)
+			elseif a.X - PICK_W - 10 > 0 then p.Position = UDim2.fromOffset(a.X - PICK_W - 10, a.Y)
 			else p.Position = UDim2.fromOffset(a.X, a.Y + s.Y + 8) end
-			p.Size = UDim2.fromOffset(228, math.max(240, math.min(s.Y, 380)))
+			p.Size = UDim2.fromOffset(PICK_W, math.max(240, math.min(s.Y, 400)))
 		end)
 	end
 	place()
@@ -241,37 +255,68 @@ local function showPicker(win, title, values, current, onPick)
 			if c:IsA("GuiObject") then c:Destroy() end
 		end
 		filter = tostring(filter or ""):lower()
-		local shown, total = 0, 0
+		local shown, total, exact = 0, 0, false
+
+		-- one row, drawn the same way whether it came from the list or was typed
+		local function put(text, sub, image, value, circle, sel, order, accentText)
+			local tall = (sub ~= nil and sub ~= "") or (image ~= nil and image ~= "")
+			local row = new("TextButton", { BackgroundColor3 = sel and C.Raised or C.Surface,
+				Size = UDim2.new(1, -4, 0, tall and 40 or 32), Text = "", ZIndex = 32,
+				AutoButtonColor = false, LayoutOrder = order }, sc)
+			round(row, R_CHIP)
+			local left = 12
+			if image and image ~= "" then
+				local pic = new("ImageLabel", { BackgroundColor3 = C.Raised, ZIndex = 33,
+					Position = UDim2.fromOffset(7, 6), Size = UDim2.fromOffset(28, 28),
+					Image = image, ScaleType = Enum.ScaleType.Fit }, row)
+				round(pic, circle and 14 or 8)
+				left = 43
+			end
+			local t = label(row, text, 12, accentText or (sel and C.Ink or C.Ink2), sel)
+			t.ZIndex = 33
+			t.Position = UDim2.fromOffset(left, sub and 5 or 0)
+			t.Size = UDim2.new(1, -left - 10, 0, sub and 16 or (tall and 40 or 32))
+			if sub and sub ~= "" then
+				local d = label(row, sub, 10, C.Ink3)
+				d.ZIndex = 33
+				d.Position = UDim2.fromOffset(left, 22)
+				d.Size = UDim2.new(1, -left - 10, 0, 13)
+			end
+			if sel then
+				new("Frame", { BackgroundColor3 = C.Accent, BorderSizePixel = 0, ZIndex = 34,
+					Position = UDim2.fromOffset(0, 10), Size = UDim2.fromOffset(3, 20) }, row)
+			end
+			row.MouseEnter:Connect(function() tw(row, 0.1, { BackgroundColor3 = C.Raised }) end)
+			row.MouseLeave:Connect(function()
+				tw(row, 0.1, { BackgroundColor3 = sel and C.Raised or C.Surface })
+			end)
+			row.MouseButton1Click:Connect(function()
+				pcall(function() p:Destroy() end) openPicker = nil
+				if onPick then task.spawn(function() pcall(onPick, value) end) end
+			end)
+			return row
+		end
+
 		for _, v in ipairs(values) do
-			local text = tostring(v)
-			if filter == "" or text:lower():find(filter, 1, true) then
+			local text, sub, image, value, circle = pickRow(v)
+			local hay = (text .. " " .. tostring(sub or "")):lower()
+			if filter == "" or hay:find(filter, 1, true) then
 				total = total + 1
-				if shown < 200 then
+				if text:lower() == filter then exact = true end
+				if shown < 150 then
 					shown = shown + 1
-					local sel = (text == tostring(current))
-					local row = new("TextButton", { BackgroundColor3 = sel and C.Raised or C.Surface,
-						Size = UDim2.new(1, -4, 0, 32), Font = F, TextSize = 12, ZIndex = 32,
-						TextColor3 = sel and C.Ink or C.Ink2, AutoButtonColor = false,
-						TextXAlignment = Enum.TextXAlignment.Left, Text = "    " .. text,
-						LayoutOrder = shown }, sc)
-					round(row, R_CHIP)
-					if sel then
-						new("Frame", { BackgroundColor3 = C.Accent, BorderSizePixel = 0, ZIndex = 33,
-							Position = UDim2.fromOffset(0, 8), Size = UDim2.fromOffset(3, 16) }, row)
-					end
-					row.MouseEnter:Connect(function() tw(row, 0.1, { BackgroundColor3 = C.Raised }) end)
-					row.MouseLeave:Connect(function()
-						tw(row, 0.1, { BackgroundColor3 = sel and C.Raised or C.Surface })
-					end)
-					row.MouseButton1Click:Connect(function()
-						pcall(function() p:Destroy() end) openPicker = nil
-						if onPick then task.spawn(function() pcall(onPick, v) end) end
-					end)
+					put(text, sub, image, value, circle,
+						tostring(text) == tostring(current), shown + 1)
 				end
 			end
 		end
-		count.Text = (total == 0) and "no matches"
-			or (tostring(total) .. " item" .. (total == 1 and "" or "s")
+		-- A name that is not in the list is still a name: let it be used rather
+		-- than sending you off to find a separate text box for it.
+		if opts.FreeText and filter ~= "" and not exact then
+			put('use "' .. search.Text .. '"', "not on this list", nil, search.Text, false, false, 1, C.Accent)
+		end
+		count.Text = (total == 0) and (opts.FreeText and "nothing matches — you can still use it" or "no matches")
+			or (tostring(total) .. " " .. (opts.Noun or "item") .. (total == 1 and "" or "s")
 				.. (total > shown and ("  -  showing " .. shown) or ""))
 	end
 	render("")
@@ -525,6 +570,23 @@ local function iconOf(src)
 end
 UI.Icon = iconOf
 
+-- Somebody's head, by name. Roblox renders an avatar from a user id, and the
+-- server list is names, so look the name up first — display name included, since
+-- that is what the game shows you.
+local function avatarOf(name)
+	local id
+	pcall(function()
+		name = tostring(name or "")
+		if name == "" then return end
+		for _, pl in ipairs(Players:GetPlayers()) do
+			if pl.Name == name or tostring(pl.DisplayName) == name then id = pl.UserId break end
+		end
+	end)
+	if not id then return "" end
+	return "rbxthumb://type=AvatarHeadShot&id=" .. tostring(id) .. "&w=150&h=150"
+end
+UI.Avatar = avatarOf
+
 -- A search field with a quiet prefix, the way the reference has it.
 function Tab:Search(o)
 	o = o or {}
@@ -666,9 +728,201 @@ function Tab:List(o)
 			end)
 		end
 	end
+	-- Fill = true: take whatever room the page has left instead of a fixed
+	-- height. A fixed one either wastes a desktop's space or pushes the buttons
+	-- under the fold on a phone, and then the page scrolls as well as the list —
+	-- two scrolls for one screen, which is what made this annoying to use.
+	if o.Fill then
+		local body, layout = self._body, nil
+		pcall(function() layout = body:FindFirstChildWhichIsA("UIListLayout") end)
+		local function refit()
+			pcall(function()
+				local mine = row.AbsoluteSize.Y
+				local others = layout.AbsoluteContentSize.Y - mine
+				local want = math.clamp(body.AbsoluteSize.Y - others - 24,
+					tonumber(o.Min) or 120, tonumber(o.Max) or 460)
+				if math.abs(want - mine) > 3 then row.Size = UDim2.new(1, 0, 0, want) end
+			end)
+		end
+		task.defer(refit)
+		pcall(function()
+			body:GetPropertyChangedSignal("AbsoluteSize"):Connect(refit)
+			if layout then layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(refit) end
+		end)
+	end
+
 	return { Instance = row, Set = function(_, items, note) draw(items, note) end,
 		OnPick = function(_, fn) onPick = fn end,
 		Select = function(_, k) selected = k end }
+end
+
+-- Open the side panel from anywhere, with rich rows. Values may be a list or a
+-- function returning one, so a list that changes (who is in the server) is fresh
+-- every time it opens rather than fixed at build time.
+function Tab:Pick(o)
+	o = o or {}
+	local vals = o.Values
+	if type(vals) == "function" then
+		local ok, got = pcall(vals)
+		vals = (ok and type(got) == "table") and got or {}
+	end
+	return showPicker(self._win, o.Title or "Choose", vals or {}, o.Value, o.Callback,
+		{ FreeText = o.FreeText, Noun = o.Noun })
+end
+
+-- WHO you are trading with, as a card: their head, their name, one tap to
+-- change it. The picker lists the server with avatars, and anything you type
+-- that is not in it can still be used.
+function Tab:Player(o)
+	o = o or {}
+	local row = shell(self, 76)
+	local pic = new("ImageLabel", { BackgroundColor3 = C.Raised, Position = UDim2.fromOffset(12, 12),
+		Size = UDim2.fromOffset(52, 52), Image = "", ScaleType = Enum.ScaleType.Fit }, row)
+	round(pic, 26)
+	local name = label(row, tostring(o.Value or "Player2"), 15.5, C.Ink, true)
+	name.Position = UDim2.fromOffset(78, 17); name.Size = UDim2.new(1, -116, 0, 20)
+	local sub = label(row, o.Desc or "tap to choose from the server", 10.5, C.Ink3)
+	sub.Position = UDim2.fromOffset(78, 40); sub.Size = UDim2.new(1, -116, 0, 14)
+	local chev = label(row, ">", 13, C.Ink3, true)
+	chev.AnchorPoint = Vector2.new(1, 0.5); chev.Position = UDim2.new(1, -14, 0.5, 0)
+	chev.Size = UDim2.fromOffset(10, 18); chev.TextXAlignment = Enum.TextXAlignment.Right
+
+	local self_ = self
+	local function set(v)
+		name.Text = tostring(v)
+		pic.Image = avatarOf(v)
+	end
+	set(o.Value or "Player2")
+	local hit = new("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.fromScale(1, 1),
+		AutoButtonColor = false }, row)
+	hit.MouseEnter:Connect(function() tw(row, 0.1, { BackgroundColor3 = C.Raised }) end)
+	hit.MouseLeave:Connect(function() tw(row, 0.1, { BackgroundColor3 = C.Surface }) end)
+	hit.MouseButton1Click:Connect(function()
+		local vals = o.Values
+		if type(vals) == "function" then
+			local ok, got = pcall(vals)
+			vals = (ok and type(got) == "table") and got or {}
+		end
+		local rows = {}
+		for _, v in ipairs(vals or {}) do
+			if type(v) == "table" then rows[#rows + 1] = v
+			else rows[#rows + 1] = { value = v, text = tostring(v), image = avatarOf(v), circle = true } end
+		end
+		showPicker(self_._win, o.Title or "Who are you trading with", rows, name.Text, function(v)
+			set(v)
+			if o.Callback then task.spawn(function() pcall(o.Callback, tostring(v)) end) end
+		end, { FreeText = true, Noun = "player" })
+	end)
+	return { Instance = row, Set = function(_, v) set(v) end, Get = function() return name.Text end }
+end
+
+-- The table itself: your side and theirs, what each has staged, and who has
+-- accepted. Tapping a side accepts for it — theirs is the interesting one.
+function Tab:Deal(o)
+	o = o or {}
+	local row = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 92),
+		LayoutOrder = self:_order() }, self._body)
+	local cbs = {}
+
+	local function side(x, title)
+		local f = new("Frame", { BackgroundColor3 = C.Surface, Position = UDim2.new(x, x > 0 and 3 or 0, 0, 0),
+			Size = UDim2.new(0.5, -3, 1, 0) }, row)
+		round(f, R_ROW)
+		local who = label(f, title, 10.5, C.Ink3, true)
+		who.Position = UDim2.fromOffset(13, 12); who.Size = UDim2.new(1, -26, 0, 13)
+		local dot = new("Frame", { BackgroundColor3 = C.Ink3, Position = UDim2.fromOffset(13, 39),
+			Size = UDim2.fromOffset(8, 8) }, f)
+		round(dot, 4)
+		local state = label(f, "Waiting", 12.5, C.Ink2, true)
+		state.Position = UDim2.fromOffset(27, 35); state.Size = UDim2.new(1, -40, 0, 16)
+		local items = label(f, "nothing staged", 10.5, C.Ink3)
+		items.Position = UDim2.fromOffset(13, 60); items.Size = UDim2.new(1, -26, 0, 13)
+		local hit = new("TextButton", { BackgroundTransparency = 1, Text = "",
+			Size = UDim2.fromScale(1, 1), AutoButtonColor = false }, f)
+		local on = false
+		local function paint()
+			tw(dot, 0.14, { BackgroundColor3 = on and C.Good or C.Ink3 })
+			tw(f, 0.14, { BackgroundColor3 = on and Color3.fromRGB(20, 34, 28) or C.Surface })
+			state.Text = on and "Accepted" or "Waiting"
+			state.TextColor3 = on and C.Good or C.Ink2
+		end
+		return {
+			frame = f, hit = hit,
+			set = function(v, count)
+				on = v and true or false
+				paint()
+				if count ~= nil then
+					items.Text = (count == 0) and "nothing staged"
+						or (tostring(count) .. " item" .. (count == 1 and "" or "s") .. " staged")
+				end
+			end,
+			title = function(t) who.Text = string.upper(tostring(t)) end,
+			get = function() return on end,
+		}
+	end
+
+	local you = side(0, "YOU")
+	local them = side(0.5, "THEM")
+	you.hit.MouseButton1Click:Connect(function()
+		you.set(not you.get())
+		if cbs.you then task.spawn(function() pcall(cbs.you, you.get()) end) end
+	end)
+	them.hit.MouseButton1Click:Connect(function()
+		them.set(not them.get())
+		if cbs.them then task.spawn(function() pcall(cbs.them, them.get()) end) end
+	end)
+
+	return {
+		Instance = row,
+		OnYou = function(_, fn) cbs.you = fn end,
+		OnThem = function(_, fn) cbs.them = fn end,
+		Set = function(_, s)
+			s = s or {}
+			you.set(s.youAccepted, s.yours)
+			them.set(s.theyAccepted, s.theirs)
+			if s.partner then them.title(s.partner) end
+		end,
+	}
+end
+
+-- Two or three actions on one line. A page of full-width buttons for things
+-- that belong together reads as a list of unrelated choices; side by side they
+-- read as the pair they are.
+function Tab:Actions(o)
+	o = o or {}
+	local items = o.Items or {}
+	local n = math.max(1, #items)
+	local row = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, o.Height or 46),
+		LayoutOrder = self:_order() }, self._body)
+	for i, it in ipairs(items) do
+		local style = tostring(it.Style or ""):lower()
+		local b = new("TextButton", { BackgroundColor3 = (style == "primary") and C.Accent or C.Surface,
+			Position = UDim2.new((i - 1) / n, (i > 1) and 3 or 0, 0, 0),
+			Size = UDim2.new(1 / n, -3, 1, 0), Text = "", AutoButtonColor = false }, row)
+		round(b, R_ROW)
+		local t = label(b, it.Title, 12, (style == "primary") and C.On
+			or ((style == "danger") and C.Danger or C.Ink), true)
+		t.Position = UDim2.fromOffset(12, it.Desc and 9 or 0)
+		t.Size = UDim2.new(1, -16, 0, it.Desc and 16 or (o.Height or 46))
+		if it.Desc then
+			local d = label(b, it.Desc, 10, (style == "primary") and Color3.fromRGB(220, 214, 255) or C.Ink3)
+			d.Position = UDim2.fromOffset(12, 26); d.Size = UDim2.new(1, -16, 0, 13)
+		end
+		local base = b.BackgroundColor3
+		b.MouseEnter:Connect(function()
+			tw(b, 0.1, { BackgroundColor3 = (style == "primary") and C.Accent or C.Raised,
+				BackgroundTransparency = (style == "primary") and 0.12 or 0 })
+		end)
+		b.MouseLeave:Connect(function()
+			tw(b, 0.1, { BackgroundColor3 = base, BackgroundTransparency = 0 })
+		end)
+		b.MouseButton1Click:Connect(function()
+			tw(b, 0.06, { BackgroundTransparency = 0.35 })
+			task.delay(0.08, function() tw(b, 0.12, { BackgroundTransparency = 0 }) end)
+			if it.Callback then task.spawn(function() pcall(it.Callback) end) end
+		end)
+	end
+	return { Instance = row }
 end
 
 --==============================================================================

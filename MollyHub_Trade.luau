@@ -81,44 +81,78 @@ local Win = UI:CreateWindow({
 })
 
 --== trade =====================================================================
+-- One screen that reads like the table it drives: who you are trading with, the
+-- two invitations, both sides of the deal with their accept state, and one way
+-- to put an item on their side. No page of switches to hunt through.
 local T = Win:Tab({ Title = "Trade" })
 
-T:Section({ Title = "Partner" })
-local partnerRow = T:Paragraph({ Title = "Player 2", Desc = tostring(API.partner and API.partner() or "Player2") })
-local function showPartner()
-	pcall(function() partnerRow:Set(tostring(API.partner())) end)
-end
-
--- Picking who to trade with opens its own panel, listing the server.
-T:Dropdown({
-	Title = "Choose from the server", Values = API.players and API.players() or {},
+local partner = T:Player({
+	Value = tostring((API.partner and API.partner()) or "Player2"),
+	Desc = "tap to pick who you are trading with",
+	Values = function() return (API.players and API.players()) or {} end,
 	Callback = function(v)
-		API.setPartner(tostring(v))
-		showPartner()
-		UI:Notify({ Title = "Partner", Content = tostring(v) })
+		API.setPartner(v)
+		UI:Notify({ Title = "Trading with", Content = tostring(v) })
 	end,
 })
-T:Input({
-	Title = "...or type a name", Placeholder = "name",
-	Callback = function(v) API.setPartner(v) showPartner() end,
-})
 
-T:Section({ Title = "Request" })
-T:Button({ Title = "Incoming request", Desc = "they send YOU one", Style = "primary",
-	Callback = function() API.request(true) end })
-T:Button({ Title = "Outgoing request", Desc = "you send one, and wait",
-	Callback = function() API.request(false) end })
+T:Actions({ Items = {
+	{ Title = "They invite you", Desc = "opens straight away", Style = "primary",
+		Callback = function() API.request(true) end },
+	{ Title = "You invite them", Desc = "then they answer",
+		Callback = function() API.request(false) end },
+} })
 
-T:Section({ Title = "Accept" })
-T:Toggle({ Title = "You accepted", Desc = "your side of the table",
-	Callback = function(on) API.acceptP1(on) end })
-T:Toggle({ Title = "They accepted", Desc = "the other side — this is the one you want",
-	Callback = function(on) _G.MH_ForceP2Accept = on and true or false end })
-T:Toggle({ Title = "Overlay on a real trade", Desc = "fake items on your side, visual only",
+T:Section({ Title = "The deal" })
+local deal = T:Deal({})
+deal:OnYou(function(on) API.acceptP1(on) end)
+deal:OnThem(function(on)
+	if API.acceptP2 then API.acceptP2(on) else UI:Notify({ Title = "Trade", Content = "engine is out of date" }) end
+end)
+
+-- what the table actually holds, rather than what we last pressed
+local function pulse()
+	if not API.state then return end
+	local ok, s = pcall(API.state)
+	if ok and type(s) == "table" then
+		deal:Set(s)
+		pcall(function() partner:Set(s.partner) end)
+	end
+end
+task.spawn(function()
+	while true do
+		task.wait(0.6)
+		pcall(pulse)
+	end
+end)
+
+local giveAmount = 1
+T:Button({ Title = "Put an item on their side", Desc = "pick from the catalog, with pictures",
+	Callback = function()
+		local rows = {}
+		for _, it in ipairs(API.rank("") or {}) do
+			local d = API.item(it.key) or {}
+			rows[#rows + 1] = { value = it.name, text = it.name,
+				sub = tostring(d.Rarity or d.ItemType or "item"), image = d.Image }
+			if #rows >= 400 then break end
+		end
+		T:Pick({ Title = "Give them", Values = rows, Noun = "item", Callback = function(v)
+			API.spawn(v, giveAmount, true)
+			UI:Notify({ Title = "On their side", Content = tostring(v) .. "  x" .. tostring(giveAmount) })
+		end })
+	end })
+T:Slider({ Title = "How many", Min = 1, Max = 100, Default = 1,
+	Callback = function(v) giveAmount = v end })
+
+T:Toggle({ Title = "Overlay on a real trade", Desc = "your fake items over a genuine trade, visual only",
 	Callback = function(on) API.overlay(on) end })
-
-T:Section({ Title = "Danger" })
-T:Button({ Title = "Terminate and wipe", Style = "danger", Callback = function() API.terminate() end })
+T:Actions({ Height = 40, Items = {
+	{ Title = "Clear the table", Callback = function()
+		if API.clear then API.clear() pulse() UI:Notify({ Title = "Trade", Content = "both sides emptied" })
+		else UI:Notify({ Title = "Trade", Content = "engine is out of date" }) end
+	end },
+	{ Title = "Terminate", Style = "danger", Callback = function() API.terminate() end },
+} })
 
 --== spawner ===================================================================
 local S = Win:Tab({ Title = "Spawner" })
@@ -167,7 +201,7 @@ S:Search({ Prefix = "find", Placeholder = "Search by name or original id...",
 S:Chips({ Values = { "All", "Guns", "Knives", "Chroma" }, Value = "All",
 	Callback = function(v) filter = v refresh() end })
 hero = S:Hero({})
-listView = S:List({ Height = 260 })
+listView = S:List({ Height = 260, Fill = true, Min = 140, Max = 430 })
 listView:OnPick(function(it)
 	picked = it
 	local d = API.item(it.key) or {}
@@ -230,7 +264,7 @@ end })
 
 --== go ========================================================================
 refresh()
-showPartner()
+pulse()
 
 task.spawn(function()
 	local seen = select(2, rows())
