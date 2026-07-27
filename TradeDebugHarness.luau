@@ -7213,6 +7213,18 @@ task.spawn(function()
 	MH_watchTools()
 end)
 
+-- A small, stable surface so a separate front-end can drive the spawner without
+-- rebuilding any of it. Everything here already existed; this only names it.
+_G.MH_API = {
+	spawn   = function(name, amount, toP2) return doSpawn(name, amount, toP2) end,
+	rank    = function(q) return rankMatches(q) end,
+	catalog = function() return spawnIndex end,
+	item    = function(k) return ItemDB[k] end,
+	equip   = function(k, n) return MH_equipItem(k, n) end,
+	status  = function() return CatalogStatus end,
+	reload  = function() return pcall(loadLiveCatalog) end,
+}
+
 print("[TradeDebug] Harness loaded. Layout: " .. (TradeGUI and TradeGUI.Name or "NOT FOUND") ..
 	" | Use the TradeDebugPanel to drive the offline trade.")
 
