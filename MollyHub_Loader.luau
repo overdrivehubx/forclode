@@ -53,16 +53,16 @@ end
 
 local Win = UI:CreateWindow({
 	Title = "MollyHub", SubTitle = "Murder Mystery 2  |  loader", Badge = "MH",
+	Compact = true,
 })
 local Tab = Win:Tab({ Title = "Scripts" })
 Tab:Section({ Title = "Choose one" })
 
 local busy = false
 for _, s in ipairs(SCRIPTS) do
-	Tab:Paragraph({ Title = s.name .. "   [" .. s.tag .. "]", Desc = s.desc })
 	Tab:Button({
 		Title = "Launch " .. s.name,
-		Desc = s.file,
+		Desc = s.desc,
 		Callback = function()
 			if busy then return end
 			busy = true
