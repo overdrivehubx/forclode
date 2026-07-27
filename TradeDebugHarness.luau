@@ -4700,15 +4700,15 @@ function MH_cfFrom(t)
 	return cf
 end
 
--- The Attachment a weapon display is actually held by. Prefer the one we
--- recorded, then the one the RigidConstraint uses, then the plain "Attachment".
--- GLOBAL.
+-- The Attachment a weapon display is actually held by: the one the display's own
+-- RigidConstraint holds, then the name we recorded, then the plain "Attachment".
+-- The recorded name used to win, which was backwards — a display whose constraint
+-- uses the OTHER attachment then had its placement written onto an attachment
+-- that holds nothing, and the weapon sat wherever the game had left it. Both live
+-- on the same part, so their CFrames are in the same space and the recorded one
+-- fits either. GLOBAL.
 function MH_weaponAttachment(part, want)
 	if not part then return nil end
-	if want then
-		local a = part:FindFirstChild(want)
-		if a and a:IsA("Attachment") then return a end
-	end
 	local rc = part:FindFirstChildWhichIsA("RigidConstraint")
 	if rc then
 		local ok, a = pcall(function()
@@ -4719,6 +4719,10 @@ function MH_weaponAttachment(part, want)
 			return nil
 		end)
 		if ok and a then return a end
+	end
+	if want then
+		local a = part:FindFirstChild(want)
+		if a and a:IsA("Attachment") then return a end
 	end
 	local named = part:FindFirstChild("Attachment")
 	if named and named:IsA("Attachment") then return named end
@@ -5344,13 +5348,35 @@ function MH_toolSlot(tool)
 	local n = tostring(tool.Name):lower()
 	if n:find("gun") or n:find("revolver") or n:find("pistol") then return "Gun" end
 	if n:find("knife") or n:find("blade") then return "Knife" end
-	-- MM2 can hand out a tool named after the item itself, so fall back to what
-	-- we are pretending to wear rather than leaving the weapon unskinned.
-	for _, slot in ipairs({ "Knife", "Gun" }) do
-		local k = (_G.MH_SkinKey or {})[slot]
-		if k and tostring(k):lower() == n then return slot end
-		local d = k and ItemDB[k]
-		if d and d.ItemName and tostring(d.ItemName):lower() == n then return slot end
+	-- MM2 can hand out a tool named after the item itself. What the tool DOES
+	-- still gives it away, and that beats guessing from a name two items share.
+	local hint
+	pcall(function()
+		for _, d in ipairs(tool:GetDescendants()) do
+			local dn = tostring(d.Name):lower()
+			if dn:find("shoot") or dn:find("bullet") or dn:find("muzzle") or dn:find("reload") then
+				hint = "Gun"
+				return
+			end
+			if dn:find("slash") or dn:find("stab") or dn:find("blade") then
+				hint = "Knife"
+				return
+			end
+		end
+	end)
+	if hint then return hint end
+	-- last resort: what we are pretending to wear. An exact key beats a display
+	-- name, because a knife and a gun can share the name and not the key.
+	for _, how in ipairs({ "key", "name" }) do
+		for _, slot in ipairs({ "Knife", "Gun" }) do
+			local k = (_G.MH_SkinKey or {})[slot]
+			if how == "key" then
+				if k and tostring(k):lower() == n then return slot end
+			else
+				local d = k and ItemDB[k]
+				if d and d.ItemName and tostring(d.ItemName):lower() == n then return slot end
+			end
+		end
 	end
 	return nil
 end
@@ -5408,8 +5434,16 @@ function MH_applySkin(itemType, mesh, tex, sx, sy, sz, kind, rec)
 	local use = MH_skinRecord(mesh, tex, sx, sy, sz, kind)
 	-- carry the placement fields through: a mesh alone is not the whole look
 	if type(rec) == "table" and use then
-		for _, f in ipairs({ "ox", "oy", "oz", "vx", "vy", "vz", "cf", "grip" }) do
+		for _, f in ipairs({ "ox", "oy", "oz", "vx", "vy", "vz", "an", "slot" }) do
 			use[f] = rec[f]
+		end
+		-- Where a weapon hangs is per SLOT: a knife rides the back, a gun the
+		-- belt. A record read off the wrong slot puts the gun through the
+		-- character. Take the placement only when the slots agree, and let
+		-- _G.MH_SkinPlace = false keep the game's own placement throughout.
+		local sameSlot = (rec.slot == nil) or (rec.slot == itemType)
+		if sameSlot and _G.MH_SkinPlace ~= false then
+			use.cf, use.grip = rec.cf, rec.grip
 		end
 	end
 	_G.MH_SkinOverride[itemType] = use
@@ -5603,6 +5637,27 @@ function MH_rarityColor(rarity)
 	return col
 end
 
+-- Turn the per-weapon placement (where it hangs on the body, how it sits in the
+-- hand) on or off and put the change into effect right away. Off means the game
+-- keeps every weapon where it normally puts it, which is the escape hatch when a
+-- learned placement is wrong. Returns meshes repainted. GLOBAL.
+function MH_setPlacement(on)
+	_G.MH_SkinPlace = on and true or false
+	local keep = {}
+	for k, v in pairs(_G.MH_SkinOverride or {}) do keep[k] = v end
+	MH_restoreSkins()
+	local n = 0
+	for slot, v in pairs(keep) do
+		-- the stored override may have been written with the placement stripped,
+		-- so put it back from the record the skin came from
+		local key = (_G.MH_SkinKey or {})[slot]
+		local rec = (key and MH_normRec((_G.MH_MeshMap or {})[key])) or v
+		local got = MH_applySkin(slot, v.mesh, v.tex, v.sx, v.sy, v.sz, v.k, rec)
+		n = n + (tonumber(got) or 0)
+	end
+	return n
+end
+
 -- Drop the skin on ONE slot and leave the other one alone, so equipping a real
 -- knife does not also strip a faked gun. GLOBAL.
 function MH_clearSkin(slot)
@@ -5615,30 +5670,128 @@ function MH_clearSkin(slot)
 	end
 end
 
--- Display name (what an inventory tile shows) -> catalog key. GLOBAL.
-function MH_keyForName(txt)
+-- The live ProfileData the game itself equips out of. GLOBAL.
+function MH_profile()
+	local pd
+	pcall(function()
+		local cs = game:GetService("ReplicatedStorage"):FindFirstChild("ClientServices")
+		local esM = cs and cs:FindFirstChild("EquipService")
+		if not esM then return end
+		local okr, ES = pcall(require, esM)
+		if not (okr and type(ES) == "table" and type(ES.EquipItem) == "function") then return end
+		if type(debug) ~= "table" or type(debug.getupvalue) ~= "function" then return end
+		pcall(function() pd = debug.getupvalue(ES.EquipItem, 2) end)
+	end)
+	if type(pd) == "table" and type(pd.Weapons) == "table" then return pd end
+	return nil
+end
+
+-- What the game has equipped RIGHT NOW, as { Knife = key, Gun = key }. GLOBAL.
+function MH_equippedNow()
+	local out = {}
+	local pd = MH_profile()
+	pcall(function()
+		if type(pd.Weapons.Equipped) == "table" then
+			out.Knife = pd.Weapons.Equipped.Knife
+			out.Gun = pd.Weapons.Equipped.Gun
+		end
+	end)
+	return out
+end
+
+-- Wait a moment for the game's OWN equip to land and report (slot, key). This is
+-- the only source that cannot be ambiguous: it carries the exact catalog key, so
+-- a name two items share tells us nothing it does not already know. GLOBAL.
+function MH_equipChange(before, timeout)
+	before = before or {}
+	-- nothing to read means nothing to wait for: never sit on a click for a
+	-- second to watch a table we cannot reach
+	if not MH_profile() then return nil end
+	for _ = 1, math.max(1, math.floor((tonumber(timeout) or 0.7) / 0.05)) do
+		local now = MH_equippedNow()
+		for _, slot in ipairs({ "Knife", "Gun" }) do
+			local v = now[slot]
+			if v and v ~= "" and v ~= before[slot] then return slot, v end
+		end
+		task.wait(0.05)
+	end
+	return nil
+end
+
+-- Which slot an inventory tile belongs to. MM2 has a knife and a gun sharing a
+-- name (Sunset, among others), so a tile resolved by its label alone landed on
+-- whichever the catalog listed first — clicking the knife equipped the gun. The
+-- tile knows better: it either carries the type outright or lives in the list
+-- for one kind. GLOBAL.
+function MH_tileSlot(frame)
+	if not frame then return nil end
+	local function fromText(s)
+		s = tostring(s or ""):lower()
+		if s == "" then return nil end
+		if s:find("knife") or s:find("knives") or s:find("melee") then return "Knife" end
+		if s:find("gun") or s:find("pistol") or s:find("revolver") then return "Gun" end
+		return nil
+	end
+	local got
+	pcall(function()
+		for _, a in ipairs({ "ItemType", "Type", "Slot", "Category" }) do
+			got = got or fromText(frame:GetAttribute(a))
+		end
+		for _, n in ipairs({ "ItemType", "Type", "Slot" }) do
+			local c = frame:FindFirstChild(n)
+			if c and c:IsA("StringValue") then got = got or fromText(c.Value) end
+		end
+	end)
+	if got then return got end
+	pcall(function()
+		local p, hops = frame.Parent, 0
+		while p and hops < 8 and not got do
+			got = fromText(p.Name)
+			p = p.Parent
+			hops = hops + 1
+		end
+	end)
+	return got
+end
+
+-- Display name (what an inventory tile shows) -> catalog key. `slot` narrows a
+-- name two items share. Returns (key, slot of that key). GLOBAL.
+function MH_keyForName(txt, slot)
 	txt = tostring(txt or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
 	if txt == "" then return nil end
 	local look = _G.MH_NameToKey
-	if not look then
-		look = {}
+	if not look or look.__bySlot ~= true then
+		look = { __bySlot = true }
 		for k, v in pairs(ItemDB) do
 			if type(v) == "table" and (v.ItemType == "Knife" or v.ItemType == "Gun") then
-				local lk = tostring(k):lower()
-				look[lk] = look[lk] or k
-				if v.ItemName then
-					local n = tostring(v.ItemName):lower()
-					look[n] = look[n] or k
+				local function put(n)
+					n = tostring(n or ""):lower()
+					if n == "" then return end
+					local e = look[n]
+					if not e then e = {}; look[n] = e end
+					e[v.ItemType] = e[v.ItemType] or k
 				end
+				put(k)
+				put(v.ItemName)
 			end
 		end
 		_G.MH_NameToKey = look
 	end
-	if look[txt] then return look[txt] end
+	local e = look[txt]
+	if type(e) == "table" then
+		-- the asked-for slot first; a name that only exists in the other one means
+		-- the guess about the tile was wrong, so take what is really there
+		if slot and e[slot] then return e[slot], slot end
+		if e.Knife then return e.Knife, "Knife" end
+		if e.Gun then return e.Gun, "Gun" end
+	end
 	-- A skin we have already learned is itself proof the item exists, even when
 	-- the catalog has not caught up with it.
-	for k in pairs(_G.MH_MeshMap or {}) do
-		if tostring(k):lower() == txt then return k end
+	for k, rec in pairs(_G.MH_MeshMap or {}) do
+		if tostring(k):lower() == txt then
+			local s = (type(rec) == "table" and rec.slot) or slot
+			return k, (s == "Gun" and "Gun") or "Knife"
+		end
 	end
 	return nil
 end
@@ -5670,19 +5823,32 @@ function MH_hookInventory()
 			if btn then
 				_G.MH_InvHooked[f] = true
 				hooked = hooked + 1
+				local tile = f
 				btn.MouseButton1Click:Connect(function()
 					if _G.MH_InventoryEquip == false then return end
+					-- Snapshot BEFORE the game reacts, so we can tell what it did.
+					local before = MH_equippedNow()
 					task.spawn(function()
-						local key = MH_keyForName(label.Text)
+						-- Let the game answer first: whatever it equips is the truth,
+						-- and it names the exact key. Going by the tile's label alone
+						-- sent a knife called Sunset to the gun of the same name.
+						local slot, key = MH_equipChange(before, 0.7)
+						if not key then
+							slot = MH_tileSlot(tile)
+							key, slot = MH_keyForName(label.Text, slot)
+						end
 						if not key then return end
 						local d0 = ItemDB[key]
 						local rec = MH_normRec((_G.MH_MeshMap or {})[key])
-						local slot = "Knife"
-						if d0 and d0.ItemType == "Gun" then slot = "Gun"
-						elseif not d0 and type(rec) == "table" and rec.slot == "Gun" then slot = "Gun" end
+						if d0 and (d0.ItemType == "Gun" or d0.ItemType == "Knife") then
+							slot = d0.ItemType
+						elseif type(rec) == "table" and rec.slot then
+							slot = rec.slot
+						end
 						if type(rec) == "table" and MH_shortId(rec.mesh) ~= "" then
 							MH_equipItem(key, (d0 and d0.ItemName) or key)
-						else
+						elseif slot then
+							-- a real item we have no skin for: get out of its way
 							MH_clearSkin(slot)
 						end
 					end)
@@ -6204,7 +6370,7 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v40")   -- freshness marker so a stale-cache test is obvious
+	add("v41")   -- freshness marker so a stale-cache test is obvious
 	MH_loadMeshMap()
 	local lrn, tot = MH_learnMeshes()
 	add("learn=+" .. tostring(lrn) .. "/" .. tostring(tot))

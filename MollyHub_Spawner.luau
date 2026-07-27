@@ -175,6 +175,15 @@ K:Button({ Title = "Learn my whole inventory", Desc = "equips each item you own,
 					or ("failed: " .. tostring(a)) })
 		end)
 	end })
+K:Section({ Title = "Fixes" })
+K:Toggle({ Title = "Keep the game's placement",
+	Desc = "turn on if a weapon hangs wrong on your body",
+	Callback = function(on)
+		local n = MH_setPlacement(not on)
+		UI:Notify({ Title = "Skins", Content = (on and "the game's own placement" or "the skin's placement")
+			.. "  -  " .. tostring(n) .. " repainted" })
+	end })
+
 K:Section({ Title = "Undo" })
 K:Button({ Title = "Remove skin", Style = "danger", Callback = function()
 	UI:Notify({ Title = "Skins", Content = "restored " .. MH_restoreSkins() .. " mesh(es)" })

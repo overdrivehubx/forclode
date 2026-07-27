@@ -754,12 +754,16 @@ function UI:CreateWindow(o)
 	local gui = hostGui()
 	local scale = tonumber(_G.MH_MenuScale) or 1
 
-	-- tall and narrow: a launcher is short, a working menu is long
-	-- A phone running Roblox is usually on its side, so sizing the height from
-	-- the screen height made the card short and wide — the opposite of the ask.
-	-- On a landscape screen take a slice of the width and nearly all the height.
-	local wantW = o.Compact and 300 or 336
+	-- tall and narrow: a launcher is short, a working menu is long.
+	-- A phone and a monitor are both "landscape", but only one of them is big,
+	-- and one set of numbers cannot serve both: sized for the phone, the card
+	-- came out on a desktop as a 336x820 ribbon. So keep two targets — a phone
+	-- one that takes a slice of the width and nearly all the height, and a
+	-- desktop one that is wider and stops well short of the screen's bottom.
+	local wantW = o.Compact and 300 or 336        -- phone
 	local wantH = o.Compact and 230 or 820
+	local deskW = o.Compact and 380 or 470        -- desktop
+	local deskH = o.Compact and 250 or 640
 
 	local card = new("Frame", { BackgroundColor3 = C.Bg, AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(wantW, wantH),
@@ -775,9 +779,17 @@ function UI:CreateWindow(o)
 		pcall(function()
 			local v = viewport()
 			local wide = v.X > v.Y
-			card.Size = UDim2.fromOffset(
-				math.min(wantW, math.floor(v.X * (wide and 0.42 or 0.94))),
-				math.min(wantH, math.floor(v.Y * (wide and 0.94 or 0.86))))
+			-- a monitor is wide AND tall; a phone on its side is wide and short
+			local desk = wide and v.Y >= 600
+			local w, h
+			if desk then
+				w, h = math.min(deskW, math.floor(v.X * 0.40)), math.min(deskH, math.floor(v.Y * 0.80))
+			elseif wide then
+				w, h = math.min(wantW, math.floor(v.X * 0.42)), math.min(wantH, math.floor(v.Y * 0.94))
+			else
+				w, h = math.min(wantW, math.floor(v.X * 0.94)), math.min(wantH, math.floor(v.Y * 0.86))
+			end
+			card.Size = UDim2.fromOffset(w, h)
 			uiscale.Scale = scale * ((v.X < 480) and 0.92 or 1)
 			if readout then readout.Text = tostring(math.floor(scale * 100 + 0.5)) .. "%" end
 		end)
