@@ -6434,7 +6434,9 @@ if true then
 	-- warning so you're not left staring at a false error.
 	task.spawn(function()
 		task.wait(30)
-		if not Runtime.RubisReady then
+		-- A front end running the engine headless draws its own window, so this
+		-- notice would be a red panel over a menu that is working fine.
+		if not Runtime.RubisReady and not _G.MH_Headless then
 			__showFatal("Rubis is slow to load (executor/connection). It may still appear shortly — if not, re-run.")
 			-- Keep watching: clear the notice the moment Rubis reports ready.
 			for _ = 1, 60 do
