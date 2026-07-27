@@ -2303,7 +2303,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v35 (reverted the inventory hook + catalog removal)")
+	w("BUILD          = equip-v36 (equipping one weapon no longer takes off the other)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -5020,9 +5020,13 @@ function MH_paintMesh(root, mesh, tex, rec)
 	_G.MH_SkinSeen = _G.MH_SkinSeen or {}
 	local okd, ds = pcall(function() return root:GetDescendants() end)
 	if not okd then ds = {} end
+	MH_normRec(rec)
+	-- Clear a MeshPart overlay left by the PREVIOUS item. It hides the display it
+	-- sits on, so repainting the mesh underneath changed nothing visible and the
+	-- old weapon stayed on screen however many times you clicked.
+	MH_dropOverlay(root, (type(rec) == "table" and rec.k == "size") and mnum or nil)
 	-- A skin recorded off a MeshPart has an ABSOLUTE size, which no SpecialMesh
 	-- can match. Rebuild it as a real MeshPart at that size and wear that instead.
-	MH_normRec(rec)
 	if type(rec) == "table" and rec.k == "size" and _G.MH_MeshPartSkins ~= false then
 		local host = (root:IsA("BasePart") and root) or root:FindFirstChildWhichIsA("BasePart", true)
 		if host then
@@ -5192,6 +5196,25 @@ function MH_makeMeshPart(mesh, tex, sx, sy, sz)
 	return mp, "meshpart:" .. mnum
 end
 
+-- Remove an overlay we welded on earlier and unhide what it was covering, so a
+-- new skin is not left buried under an old one. `keep` is the mesh id of an
+-- overlay that is still correct and should stay. GLOBAL.
+function MH_dropOverlay(root, keep)
+	pcall(function()
+		local list = { root }
+		for _, d in ipairs(root:GetDescendants()) do list[#list + 1] = d end
+		for _, p in ipairs(list) do
+			if p:IsA("BasePart") then
+				local sk = p:FindFirstChild("__MHskin")
+				if sk and not (keep and sk:IsA("MeshPart") and MH_shortId(sk.MeshId) == keep) then
+					sk:Destroy()
+					p.LocalTransparencyModifier = 0
+				end
+			end
+		end
+	end)
+end
+
 -- Hide `target` for our eyes only and weld a ready-made part in its place.
 -- Returns 1 when the overlay is up. GLOBAL.
 function MH_overlayWith(target, newPart)
@@ -5319,10 +5342,15 @@ function MH_applySkin(itemType, mesh, tex, sx, sy, sz, kind, rec)
 		if old then old:Destroy() end
 	end)
 	local n = MH_applySkinNow()
+	-- One keep-alive, not one per equip. Restoring stops the loop, and the next
+	-- equip started another while the stopped one was still asleep in its wait —
+	-- so they stacked up, each repainting on its own schedule.
 	if not _G.MH_SkinLoop then
 		_G.MH_SkinLoop = true
+		_G.MH_SkinGen = (_G.MH_SkinGen or 0) + 1
+		local myGen = _G.MH_SkinGen
 		task.spawn(function()
-			while _G.MH_SkinLoop do
+			while _G.MH_SkinLoop and _G.MH_SkinGen == myGen do
 				task.wait(0.5)
 				pcall(MH_applySkinNow)
 			end
@@ -5373,7 +5401,10 @@ end
 -- it keeps growing across servers and sessions. Returns (learned, total). GLOBAL.
 function MH_learnMeshes()
 	MH_loadMeshMap()
-	if _G.MH_SkinLoop then MH_restoreSkins() end   -- never learn our own paint          -- never learn onto an empty map and save over the file
+	-- NB: do NOT strip the skins you are wearing here. This learner only ever
+	-- reads OTHER players' displays, never our own, and it runs at the top of
+	-- every equip — so stripping meant equipping a knife took off your gun, and
+	-- equipping the gun took off the knife.
 	local map = _G.MH_MeshMap or {}
 	_G.MH_MeshMap = map
 	local learned, total = 0, 0
@@ -5800,7 +5831,7 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v35")   -- freshness marker so a stale-cache test is obvious
+	add("v36")   -- freshness marker so a stale-cache test is obvious
 	MH_loadMeshMap()
 	local lrn, tot = MH_learnMeshes()
 	add("learn=+" .. tostring(lrn) .. "/" .. tostring(tot))
