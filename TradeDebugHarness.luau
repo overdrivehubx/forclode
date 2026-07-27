@@ -95,7 +95,7 @@ _G.MH_MeshMap = _G.MH_MeshMap or {
 	-- the same two ids off the game. Kept as a worked example of the format.
 	["Gingerscope"] = {
 		mesh = "15374602183", tex = "15409041564",
-		sx = 0.084, sy = 0.084, sz = 0.084, k = "scale",
+		sx = 0.084, sy = 0.084, sz = 0.084, k = "scale", slot = "Gun",
 		ox = 0, oy = 0, oz = 0, vx = 1, vy = 1, vz = 1,
 		cf = { 0.13, 0, 0.075, 1, 0, 0, 0, 0.707388222, 0.706825197, 0, -0.706825197, 0.707388222 },
 		grip = { 0, -0.4, 0.9, 1, 0, 0, 0, 1, 0, 0, 0, 1 },
@@ -105,6 +105,10 @@ _G.MH_MeshMap = _G.MH_MeshMap or {
 -- Weapon looking too big or too small? Multiplies every skin's scale. 1 = the
 -- size the game itself uses.
 _G.MH_SkinScale = _G.MH_SkinScale or 1
+
+-- Equipping an item in the GAME'S OWN inventory wears its skin, when we know
+-- one. Set false to only equip from the Spawner tab's button.
+if _G.MH_InventoryEquip == nil then _G.MH_InventoryEquip = true end
 
 -- Where the equipped weapon sits in your hand: {x, y, z, rotX, rotY, rotZ} —
 -- studs and degrees. Tweak if the model floats or points the wrong way.
@@ -2303,7 +2307,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v36 (equipping one weapon no longer takes off the other)")
+	w("BUILD          = equip-v37 (inventory equip back, catalog untouched)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -3968,6 +3972,7 @@ end)
 local spawnIndex = {}
 local function buildSpawnIndex()
 	spawnIndex = {}
+	_G.MH_NameToKey = nil        -- rebuilt from whatever catalog we have now
 	for k, v in pairs(ItemDB) do
 		-- Only real, individually-tradeable weapons (Knife / Gun). This drops the
 		-- non-tradeable "Item Pack" / Misc bundles that showed as fake entries.
@@ -5380,6 +5385,123 @@ function MH_restoreSkins()
 	return n
 end
 
+-- Drop the skin on ONE slot and leave the other one alone, so equipping a real
+-- knife does not also strip a faked gun. GLOBAL.
+function MH_clearSkin(slot)
+	local ov = _G.MH_SkinOverride or {}
+	local keep = {}
+	for k, v in pairs(ov) do if k ~= slot then keep[k] = v end end
+	MH_restoreSkins()
+	for k, v in pairs(keep) do
+		MH_applySkin(k, v.mesh, v.tex, v.sx, v.sy, v.sz, v.k, v)
+	end
+end
+
+-- Display name (what an inventory tile shows) -> catalog key. GLOBAL.
+function MH_keyForName(txt)
+	txt = tostring(txt or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+	if txt == "" then return nil end
+	local look = _G.MH_NameToKey
+	if not look then
+		look = {}
+		for k, v in pairs(ItemDB) do
+			if type(v) == "table" and (v.ItemType == "Knife" or v.ItemType == "Gun") then
+				local lk = tostring(k):lower()
+				look[lk] = look[lk] or k
+				if v.ItemName then
+					local n = tostring(v.ItemName):lower()
+					look[n] = look[n] or k
+				end
+			end
+		end
+		_G.MH_NameToKey = look
+	end
+	if look[txt] then return look[txt] end
+	-- A skin we have already learned is itself proof the item exists, even when
+	-- the catalog has not caught up with it.
+	for k in pairs(_G.MH_MeshMap or {}) do
+		if tostring(k):lower() == txt then return k end
+	end
+	return nil
+end
+
+-- EQUIP FROM THE GAME'S OWN INVENTORY. Every inventory tile is a frame with an
+-- ItemName.Label and a Container.ActionButton, so hook the button and read the
+-- item off the label. Clicking a tile we have a skin for wears that skin;
+-- clicking anything else drops our skin for THAT slot so the game's own equip
+-- shows through instead of being repainted over. This only ADDS a listener — it
+-- never blocks the game's own handler and never writes to any frame, so the
+-- inventory keeps rendering exactly as it did. Returns tiles newly hooked. GLOBAL.
+function MH_hookInventory()
+	local gui = PlayerGui and PlayerGui:FindFirstChild("MainGUI")
+	if not gui then return 0 end
+	_G.MH_InvHooked = _G.MH_InvHooked or setmetatable({}, { __mode = "k" })
+	local hooked = 0
+	local okd, ds = pcall(function() return gui:GetDescendants() end)
+	if not okd then return 0 end
+	for _, f in ipairs(ds) do
+		if not _G.MH_InvHooked[f] then
+			local btn, label
+			pcall(function()
+				local nm = f:FindFirstChild("ItemName")
+				local cn = f:FindFirstChild("Container")
+				label = nm and nm:FindFirstChild("Label")
+				local b = cn and cn:FindFirstChild("ActionButton")
+				if label and label:IsA("TextLabel") and b and b:IsA("GuiButton") then btn = b end
+			end)
+			if btn then
+				_G.MH_InvHooked[f] = true
+				hooked = hooked + 1
+				btn.MouseButton1Click:Connect(function()
+					if _G.MH_InventoryEquip == false then return end
+					task.spawn(function()
+						local key = MH_keyForName(label.Text)
+						if not key then return end
+						local d0 = ItemDB[key]
+						local rec = MH_normRec((_G.MH_MeshMap or {})[key])
+						local slot = "Knife"
+						if d0 and d0.ItemType == "Gun" then slot = "Gun"
+						elseif not d0 and type(rec) == "table" and rec.slot == "Gun" then slot = "Gun" end
+						if type(rec) == "table" and MH_shortId(rec.mesh) ~= "" then
+							MH_equipItem(key, (d0 and d0.ItemName) or key)
+						else
+							MH_clearSkin(slot)
+						end
+					end)
+				end)
+			end
+		end
+	end
+	return hooked
+end
+
+-- Keep the hook alive: the inventory rebuilds its tiles constantly (filters,
+-- tabs, new items), so re-scan when the GUI grows and on a slow tick. GLOBAL.
+function MH_watchInventory()
+	if _G.MH_InvWatch then return end
+	_G.MH_InvWatch = true
+	MH_hookInventory()
+	pcall(function()
+		local gui = PlayerGui and PlayerGui:FindFirstChild("MainGUI")
+		if gui then
+			gui.DescendantAdded:Connect(function()
+				if _G.MH_InvPending then return end
+				_G.MH_InvPending = true
+				task.delay(0.3, function()
+					_G.MH_InvPending = false
+					pcall(MH_hookInventory)
+				end)
+			end)
+		end
+	end)
+	task.spawn(function()
+		while _G.MH_InvWatch do
+			task.wait(3)
+			pcall(MH_hookInventory)
+		end
+	end)
+end
+
 -- Throw away every learned skin (on disk too). Use it if the map picked up a
 -- bad entry — an older build could pair an item with the default weapon's mesh.
 -- Hand-pinned _G.MH_MeshMap entries are re-applied from the file you edited, so
@@ -5435,7 +5557,9 @@ function MH_learnMeshes()
 					-- re-learn entries saved before we recorded scale, otherwise the
 					-- swapped-in weapon keeps the previous item's size
 					if type(cur) ~= "table" or MH_shortId(cur.mesh) == "" or not cur.k or cur.g then
-						map[wornKey] = MH_readSkin(dpart)
+						local r = MH_readSkin(dpart)
+						if r then r.slot = slot end
+						map[wornKey] = r
 						learned = learned + 1
 					end
 				end
@@ -5764,7 +5888,9 @@ function MH_learnOwned(onProgress)
 				-- waiting for it to change would time out on correct data
 				if plr:GetAttribute("Equipped" .. slot) == k and MH_shortId(was0) ~= "" then
 					local dpart = MH_displayPart(slot)
-					map[k] = MH_readSkin(dpart)
+					local r = MH_readSkin(dpart)
+					if r then r.slot = slot end
+					map[k] = r
 					learned = learned + 1
 					got = true
 				elseif MH_equipReal(k, slot, wait4) then
@@ -5778,7 +5904,9 @@ function MH_learnOwned(onProgress)
 						if MH_shortId(mid) ~= "" and tostring(mid) ~= tostring(was0) then break end
 					end
 					if MH_shortId(mid) ~= "" and tostring(mid) ~= tostring(was0) then
-						map[k] = MH_readSkin(dpart)
+						local r = MH_readSkin(dpart)
+						if r then r.slot = slot end
+						map[k] = r
 						learned = learned + 1
 						got = true
 						if learned % 10 == 0 then MH_saveMeshMap() end
@@ -5831,12 +5959,17 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v36")   -- freshness marker so a stale-cache test is obvious
+	add("v37")   -- freshness marker so a stale-cache test is obvious
 	MH_loadMeshMap()
 	local lrn, tot = MH_learnMeshes()
 	add("learn=+" .. tostring(lrn) .. "/" .. tostring(tot))
 	local d0 = ItemDB[key]
-	local itemType = (d0 and d0.ItemType == "Gun") and "Gun" or "Knife"
+	local mrec = MH_normRec((_G.MH_MeshMap or {})[key])
+	-- An item the catalog has not caught up with must not silently become a
+	-- knife: the learned skin knows which slot it was read off.
+	local itemType = "Knife"
+	if d0 and d0.ItemType == "Gun" then itemType = "Gun"
+	elseif not d0 and type(mrec) == "table" and mrec.slot == "Gun" then itemType = "Gun" end
 	add("type=" .. itemType)
 	-- Snapshot what the game REALLY has equipped + the mesh its display shows
 	-- right now, so we can (a) find the replicated markers that hold that key and
@@ -6314,6 +6447,12 @@ if true then
 							notify("Equip", it.name .. (okq and (" - in hand [" .. tostring(how) .. "]")
 								or " - menu only (diag copied)"))
 						end)
+					end })
+				S:Toggle({ Title = "Equip from inventory", Default = true,
+					Desc = "clicking an item in the game's own inventory wears its skin",
+					Callback = function(v)
+						_G.MH_InventoryEquip = v and true or false
+						if v then MH_watchInventory() end
 					end })
 				S:Button({ Title = "Remove skin", Desc = "put your real weapon look back",
 					Callback = function()
@@ -6817,6 +6956,12 @@ task.spawn(function()
 	end
 	-- getgc/require never produced the catalog — try the server probe as a fallback.
 	if not RealCatalog then task.spawn(applyRealData) end
+end)
+
+-- Watch the game's own inventory so equipping there wears the skin.
+task.spawn(function()
+	MH_loadMeshMap()
+	MH_watchInventory()
 end)
 
 print("[TradeDebug] Harness loaded. Layout: " .. (TradeGUI and TradeGUI.Name or "NOT FOUND") ..
