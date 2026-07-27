@@ -2307,7 +2307,7 @@ function MH_Dump()
 		if n > lim then w(string.rep("  ", depth + 1) .. "... (" .. (n - lim) .. " more of " .. n .. ")") end
 	end
 	w("===== MollyHub DUMP =====")
-	w("BUILD          = equip-v37 (inventory equip back, catalog untouched)")
+	w("BUILD          = equip-v38 (right attachment; equipped-tile icon)")
 	w("TradeGUI       = " .. fn(TradeGUI))
 	w("TradeRoot      = " .. fn(TradeRoot))
 	w("ItemsPicker    = " .. fn(ItemsPicker))
@@ -4668,6 +4668,31 @@ function MH_cfFrom(t)
 	return cf
 end
 
+-- The Attachment a weapon display is actually held by. Prefer the one we
+-- recorded, then the one the RigidConstraint uses, then the plain "Attachment".
+-- GLOBAL.
+function MH_weaponAttachment(part, want)
+	if not part then return nil end
+	if want then
+		local a = part:FindFirstChild(want)
+		if a and a:IsA("Attachment") then return a end
+	end
+	local rc = part:FindFirstChildWhichIsA("RigidConstraint")
+	if rc then
+		local ok, a = pcall(function()
+			local a1 = rc.Attachment1
+			if a1 and a1.Parent == part then return a1 end
+			local a0 = rc.Attachment0
+			if a0 and a0.Parent == part then return a0 end
+			return nil
+		end)
+		if ok and a then return a end
+	end
+	local named = part:FindFirstChild("Attachment")
+	if named and named:IsA("Attachment") then return named end
+	return part:FindFirstChildWhichIsA("Attachment")
+end
+
 -- Read EVERYTHING that makes a weapon look like itself, not just its mesh:
 -- the mesh's Offset and VertexColor, and the Attachment CFrame that decides
 -- where the weapon sits on the body. Skipping these is why a swapped weapon
@@ -4685,8 +4710,12 @@ function MH_readSkin(part)
 		end)
 	end
 	pcall(function()
-		local at = part:FindFirstChildWhichIsA("Attachment")
-		if at then rec.cf = MH_cfTo(at.CFrame) end
+		-- A display carries more than one Attachment ("Attachment" and
+		-- "CustomAttachment"), and the RigidConstraint holds the weapon by ONE of
+		-- them. Taking whichever came first meant writing a placement onto the
+		-- wrong one, which left the weapon hanging loose. Remember the name.
+		local at = MH_weaponAttachment(part)
+		if at then rec.cf = MH_cfTo(at.CFrame); rec.an = at.Name end
 	end)
 	return rec
 end
@@ -5079,7 +5108,7 @@ function MH_paintMesh(root, mesh, tex, rec)
 	-- wrong angle.
 	if n > 0 and type(rec) == "table" and rec.cf then
 		pcall(function()
-			local at = root:FindFirstChildWhichIsA("Attachment")
+			local at = MH_weaponAttachment(root, rec.an)
 			if not at then return end
 			local want = MH_cfFrom(rec.cf)
 			if not want then return end
@@ -5347,6 +5376,9 @@ function MH_applySkin(itemType, mesh, tex, sx, sy, sz, kind, rec)
 		if old then old:Destroy() end
 	end)
 	local n = MH_applySkinNow()
+	if _G.MH_SkinKey and _G.MH_SkinKey[itemType] then
+		pcall(MH_setEquippedTile, itemType, _G.MH_SkinKey[itemType])
+	end
 	-- One keep-alive, not one per equip. Restoring stops the loop, and the next
 	-- equip started another while the stopped one was still asleep in its wait —
 	-- so they stacked up, each repainting on its own schedule.
@@ -5383,6 +5415,86 @@ function MH_restoreSkins()
 	_G.MH_SkinUndo = {}
 	_G.MH_SkinSeen = {}
 	return n
+end
+
+-- The equipped-weapon tile in the game's menu keeps showing the default weapon,
+-- because the game draws it from what the SERVER says you have on. Repaint just
+-- that one tile: its icon, its name and its rarity colour. Everything is
+-- remembered so "Remove skin" puts the real one back. GLOBAL.
+function MH_setEquippedTile(slot, key)
+	_G.MH_SkinUndo = _G.MH_SkinUndo or {}
+	_G.MH_SkinSeen = _G.MH_SkinSeen or {}
+	local d = ItemDB[key]
+	local img = d and d.Image
+	if not img or tostring(img) == "" then return 0 end
+	local gui = PlayerGui and PlayerGui:FindFirstChild("MainGUI")
+	if not gui then return 0 end
+	local done = 0
+	pcall(function()
+		for _, eq in ipairs(gui:GetDescendants()) do
+			if eq.Name == "Equipped" then
+				local box = eq:FindFirstChild("Container")
+				box = box and box:FindFirstChild(slot)
+				box = box and box:FindFirstChild("Container")
+				if box then
+					local icon = box:FindFirstChild("Container")
+					icon = icon and icon:FindFirstChild("Icon")
+					local nameF = box:FindFirstChild("ItemName")
+					local label = nameF and nameF:FindFirstChild("Label")
+					if icon then
+						if not _G.MH_SkinSeen[icon] then
+							_G.MH_SkinSeen[icon] = true
+							local was = icon.Image
+							_G.MH_SkinUndo[#_G.MH_SkinUndo + 1] = function() icon.Image = was end
+						end
+						icon.Image = tostring(img)
+						done = done + 1
+					end
+					if label then
+						if not _G.MH_SkinSeen[label] then
+							_G.MH_SkinSeen[label] = true
+							local wasT = label.Text
+							_G.MH_SkinUndo[#_G.MH_SkinUndo + 1] = function() label.Text = wasT end
+						end
+						label.Text = tostring((d and d.ItemName) or key)
+					end
+					local col = MH_rarityColor(d and d.Rarity)
+					if col and nameF then
+						if not _G.MH_SkinSeen[nameF] then
+							_G.MH_SkinSeen[nameF] = true
+							local wasC = nameF.BackgroundColor3
+							_G.MH_SkinUndo[#_G.MH_SkinUndo + 1] = function()
+								nameF.BackgroundColor3 = wasC
+							end
+						end
+						nameF.BackgroundColor3 = col
+					end
+				end
+			end
+		end
+	end)
+	return done
+end
+
+-- The colour the game itself paints a rarity, straight from its own helper so it
+-- always matches. GLOBAL.
+function MH_rarityColor(rarity)
+	if not rarity then return nil end
+	local col
+	pcall(function()
+		local cs = game:GetService("ReplicatedStorage"):FindFirstChild("ClientServices")
+		local esM = cs and cs:FindFirstChild("EquipService")
+		local okr, ES = pcall(require, esM)
+		if not (okr and type(ES) == "table" and type(ES.EquipItem) == "function") then return end
+		local IU
+		pcall(function() IU = debug.getupvalue(ES.EquipItem, 1) end)
+		if type(IU) == "table" and type(IU.GetRarityColor) == "function" then
+			col = IU.GetRarityColor(rarity)
+			if typeof(col) ~= "Color3" then col = IU.GetRarityColor(IU, rarity) end
+			if typeof(col) ~= "Color3" then col = nil end
+		end
+	end)
+	return col
 end
 
 -- Drop the skin on ONE slot and leave the other one alone, so equipping a real
@@ -5959,7 +6071,7 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v37")   -- freshness marker so a stale-cache test is obvious
+	add("v38")   -- freshness marker so a stale-cache test is obvious
 	MH_loadMeshMap()
 	local lrn, tot = MH_learnMeshes()
 	add("learn=+" .. tostring(lrn) .. "/" .. tostring(tot))
@@ -5970,6 +6082,9 @@ function MH_equipItem(key, dispName)
 	local itemType = "Knife"
 	if d0 and d0.ItemType == "Gun" then itemType = "Gun"
 	elseif not d0 and type(mrec) == "table" and mrec.slot == "Gun" then itemType = "Gun" end
+	-- remember what this slot is pretending to be, so the menu tile can match
+	_G.MH_SkinKey = _G.MH_SkinKey or {}
+	_G.MH_SkinKey[itemType] = key
 	add("type=" .. itemType)
 	-- Snapshot what the game REALLY has equipped + the mesh its display shows
 	-- right now, so we can (a) find the replicated markers that hold that key and
