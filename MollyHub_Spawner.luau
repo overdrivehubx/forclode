@@ -140,7 +140,7 @@ S:Search({ Prefix = "find", Placeholder = "Search by name or original id...",
 S:Chips({ Values = { "All", "Guns", "Knives", "Chroma" }, Value = "All",
 	Callback = function(v) filter = v refresh() end })
 hero = S:Hero({})
-listView = S:List({ Height = 300 })
+listView = S:List({ Height = 300, Fill = true, Min = 150, Max = 460 })
 listView:OnPick(function(it) choose(it) end)
 S:Slider({ Title = "Amount", Min = 1, Max = 100, Default = 1,
 	Callback = function(v) amount = v end })
