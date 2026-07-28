@@ -1037,6 +1037,122 @@ do
 		end
 	})
 
+	--== your weapon ============================================================
+	VisTab:Section({ Title = "Your weapon" })
+
+	-- A copy of whatever is in your hand, welded into the other one and turned
+	-- around so it reads as a mirrored pair. It is a PICTURE of the weapon: the
+	-- clone is stripped of scripts, sounds and touch, so it cannot shoot, stab
+	-- or trip anything. Built on the client, so only you ever see it.
+	local twin, twinThread, twinTool = nil, nil, nil
+	local twinOn, twinMirror = false, true
+
+	local function limbs()
+		local char = LocalPlayer.Character
+		if not char then return nil, nil end
+		return (char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm")),
+			(char:FindFirstChild("LeftHand") or char:FindFirstChild("Left Arm"))
+	end
+	local function heldTool()
+		local char = LocalPlayer.Character
+		if not char then return nil end
+		for _, t in ipairs(char:GetChildren()) do
+			if t:IsA("Tool") and t:FindFirstChild("Handle") then return t end
+		end
+		return nil
+	end
+	local function dropTwin()
+		if twin then pcall(function() twin:Destroy() end) end
+		twin, twinTool = nil, nil
+	end
+	-- reflect a transform across the body's centre line, so the copy sits in the
+	-- other hand the way a mirror would show it
+	local function mirrorCF(cf)
+		local c = { }
+		pcall(function() c = { cf:GetComponents() } end)
+		for i = 1, 12 do
+			-- a transform we cannot read is one we must not invent
+			if type(c[i]) ~= "number" then return cf end
+		end
+		return CFrame.new(-c[1], c[2], c[3], c[4], -c[5], -c[6],
+			-c[7], c[8], c[9], -c[10], c[11], c[12])
+	end
+
+	local function buildTwin()
+		dropTwin()
+		local tool = heldTool()
+		local right, left = limbs()
+		local handle = tool and tool:FindFirstChild("Handle")
+		if not (handle and right and left) then return end
+		local ok = pcall(function()
+			local clone = handle:Clone()
+			for _, d in ipairs(clone:GetDescendants()) do
+				if d:IsA("BaseScript") or d:IsA("Sound") or d:IsA("ParticleEmitter")
+					or d:IsA("Fire") or d:IsA("Smoke") or d:IsA("Attachment") then
+					pcall(function() d:Destroy() end)
+				end
+			end
+			clone.Name = "MH_Twin"
+			clone.Anchored = false
+			pcall(function() clone.CanCollide = false end)
+			pcall(function() clone.CanQuery = false end)
+			pcall(function() clone.CanTouch = false end)
+			pcall(function() clone.Massless = true end)
+			-- where the real one sits relative to the hand that holds it
+			local rel = right.CFrame:ToObjectSpace(handle.CFrame)
+			local weld = Instance.new("Weld")
+			weld.Name = "MH_TwinWeld"
+			weld.Part0 = left
+			weld.Part1 = clone
+			weld.C0 = twinMirror and mirrorCF(rel) or rel
+			weld.Parent = clone
+			clone.Parent = LocalPlayer.Character
+			twin = clone
+		end)
+		twinTool = ok and tool or nil
+		if not ok then dropTwin() end
+	end
+
+	local function twinSync()
+		if not twinOn then
+			dropTwin()
+			return
+		end
+		if twinThread then return end
+		twinThread = task.spawn(function()
+			while twinOn do
+				pcall(function()
+					local tool = heldTool()
+					if not tool then
+						dropTwin()
+					elseif tool ~= twinTool or not (twin and twin.Parent) then
+						-- a different weapon, or a respawn took the old copy away
+						buildTwin()
+					end
+				end)
+				task.wait(0.3)
+			end
+			dropTwin()
+			twinThread = nil
+		end)
+	end
+
+	VisTab:Toggle({
+		Title = "Weapon in both hands",
+		Desc = "a copy of what you are holding, in your other hand — only you see it",
+		Default = false,
+		Callback = function(on) twinOn = on twinSync() end
+	})
+	VisTab:Toggle({
+		Title = "Mirror the copy",
+		Desc = "off = the same way round as the real one",
+		Default = true,
+		Callback = function(on)
+			twinMirror = on
+			if twinOn then buildTwin() end
+		end
+	})
+
 	--== undo ===================================================================
 	VisTab:Section({ Title = "Undo" })
 	VisTab:Button({
@@ -1046,6 +1162,8 @@ do
 			V.chams, V.box, V.cross, V.mark, V.tracer, V.arrows = false, false, false, false, false, false
 			V.radar, V.gunEsp, V.coinEsp, V.headDot = false, false, false, false
 			fog.on = false
+			twinOn = false
+			dropTwin()
 			stopLoop()
 			for pl in pairs(pool) do dropPool(pl) end
 			local g = Lighting:FindFirstChild("MH_Grade")
