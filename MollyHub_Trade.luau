@@ -97,12 +97,11 @@ local partner = T:Player({
 	end,
 })
 
-T:Actions({ Items = {
-	{ Title = "They invite you", Desc = "opens straight away", Style = "primary",
-		Callback = function() API.request(true) end },
-	{ Title = "You invite them", Desc = "then they answer",
-		Callback = function() API.request(false) end },
-} })
+-- One way in. The outgoing variant (you ask them, and wait) is still there —
+-- it lives on the Binds page, where it is out of the way of the normal flow.
+T:Button({ Title = "Start the trade", Style = "primary",
+	Desc = "opens the trade window as if they had invited you",
+	Callback = function() API.request(true) end })
 
 T:Section({ Title = "The deal" })
 local deal = T:Deal({})
@@ -145,11 +144,12 @@ local giveAmount = 1
 
 local function catalogRows()
 	local out = {}
-	for _, it in ipairs(API.rank("") or {}) do
+	-- the WHOLE catalog: the picker has its own search, and half a catalog is
+	-- worse than none — you cannot tell what is missing
+	for _, it in ipairs(API.rank("", 0) or {}) do
 		local d = API.item(it.key) or {}
 		out[#out + 1] = { value = it.name, text = it.name,
 			sub = tostring(d.Rarity or d.ItemType or "item"), image = d.Image }
-		if #out >= 400 then break end
 	end
 	return out
 end
@@ -227,10 +227,10 @@ end
 
 local function rows()
 	local out, total = {}, 0
-	for _, it in ipairs(API.rank(query) or {}) do
+	for _, it in ipairs(API.rank(query, 0) or {}) do
 		if passes(it) then
 			total = total + 1
-			if #out < 60 then
+			if #out < 120 then
 				local d = API.item(it.key) or {}
 				local badges = {}
 				if d.ItemType then badges[#badges + 1] = d.ItemType end
@@ -329,7 +329,9 @@ local B = Win:Tab({ Title = "Binds" })
 B:Section({ Title = "Menu and trade" })
 B:Keybind({ Title = "Show or hide the menu", Default = "RightShift",
 	OnPress = function() Win:Toggle() end })
-B:Keybind({ Title = "They invite you", Default = "F", OnPress = function() API.request(true) end })
+B:Keybind({ Title = "Start the trade", Default = "F", OnPress = function() API.request(true) end })
+B:Keybind({ Title = "You invite them instead", Desc = "the outgoing request, if you want it",
+	OnPress = function() API.request(false) end })
 B:Keybind({ Title = "They accept", Default = "G",
 	OnPress = function() if API.acceptP2 then API.acceptP2(true) pulse() end end })
 B:Keybind({ Title = "You accept", Default = "H",

@@ -53,6 +53,9 @@ local FB = Enum.Font.GothamBold
 local R_CARD, R_ROW, R_CHIP = 18, 12, 9
 local ROW_H, GAP, PAGE_PAD = 42, 5, 12
 
+-- defined further down, with the widgets; the picker needs them earlier
+local avatarOf, avatarInto
+
 --==============================================================================
 -- builders
 --==============================================================================
@@ -191,9 +194,9 @@ end
 local function pickRow(v)
 	if type(v) == "table" then
 		return tostring(v.text or v.value or ""), v.sub, v.image, (v.value ~= nil) and v.value or v.text,
-			v.circle and true or false
+			v.circle and true or false, v.avatar
 	end
-	return tostring(v), nil, nil, v, false
+	return tostring(v), nil, nil, v, false, nil
 end
 
 local PICK_W = 250
@@ -258,18 +261,25 @@ local function showPicker(win, title, values, current, onPick, opts)
 		local shown, total, exact = 0, 0, false
 
 		-- one row, drawn the same way whether it came from the list or was typed
-		local function put(text, sub, image, value, circle, sel, order, accentText)
+		local function put(text, sub, image, value, circle, sel, order, accentText, avatar)
 			local tall = (sub ~= nil and sub ~= "") or (image ~= nil and image ~= "")
+				or (avatar ~= nil and avatar ~= "")
 			local row = new("TextButton", { BackgroundColor3 = sel and C.Raised or C.Surface,
 				Size = UDim2.new(1, -4, 0, tall and 40 or 32), Text = "", ZIndex = 32,
 				AutoButtonColor = false, LayoutOrder = order }, sc)
 			round(row, R_CHIP)
 			local left = 12
-			if image and image ~= "" then
+			if (image and image ~= "") or (avatar and avatar ~= "") then
 				local pic = new("ImageLabel", { BackgroundColor3 = C.Raised, ZIndex = 33,
 					Position = UDim2.fromOffset(7, 6), Size = UDim2.fromOffset(28, 28),
-					Image = image, ScaleType = Enum.ScaleType.Fit }, row)
+					Image = image or "", ScaleType = Enum.ScaleType.Fit }, row)
 				round(pic, circle and 14 or 8)
+				if avatar and avatar ~= "" then
+					local ini = label(pic, "", 12, C.Ink2, true)
+					ini.Size = UDim2.fromScale(1, 1); ini.ZIndex = 34
+					ini.TextXAlignment = Enum.TextXAlignment.Center
+					avatarInto(pic, ini, avatar)
+				end
 				left = 43
 			end
 			local t = label(row, text, 12, accentText or (sel and C.Ink or C.Ink2), sel)
@@ -298,7 +308,7 @@ local function showPicker(win, title, values, current, onPick, opts)
 		end
 
 		for _, v in ipairs(values) do
-			local text, sub, image, value, circle = pickRow(v)
+			local text, sub, image, value, circle, avatar = pickRow(v)
 			local hay = (text .. " " .. tostring(sub or "")):lower()
 			if filter == "" or hay:find(filter, 1, true) then
 				total = total + 1
@@ -306,7 +316,7 @@ local function showPicker(win, title, values, current, onPick, opts)
 				if shown < 150 then
 					shown = shown + 1
 					put(text, sub, image, value, circle,
-						tostring(text) == tostring(current), shown + 1)
+						tostring(text) == tostring(current), shown + 1, nil, avatar)
 				end
 			end
 		end
@@ -623,20 +633,54 @@ local function iconOf(src)
 end
 UI.Icon = iconOf
 
--- Somebody's head, by name. Roblox renders an avatar from a user id, and the
--- server list is names, so look the name up first — display name included, since
--- that is what the game shows you.
-local function avatarOf(name)
+-- Somebody's head, by name. Roblox renders an avatar from a USER ID and every
+-- list here is names, so the name has to be resolved first. Looking only at who
+-- is in the server left the picture blank for anyone who had left — or for
+-- everyone, when you are testing on your own — so a name we do not know is
+-- asked of Roblox instead. That call yields, hence the thread and the cache.
+local avatarIds = {}
+local function avatarUrl(id)
+	return "rbxthumb://type=AvatarHeadShot&id=" .. tostring(id) .. "&w=150&h=150"
+end
+local function idInServer(name)
+	if avatarIds[name] ~= nil then return avatarIds[name] or nil end
 	local id
 	pcall(function()
-		name = tostring(name or "")
-		if name == "" then return end
 		for _, pl in ipairs(Players:GetPlayers()) do
 			if pl.Name == name or tostring(pl.DisplayName) == name then id = pl.UserId break end
 		end
 	end)
-	if not id then return "" end
-	return "rbxthumb://type=AvatarHeadShot&id=" .. tostring(id) .. "&w=150&h=150"
+	if id then avatarIds[name] = id end
+	return id
+end
+function avatarOf(name)
+	local id = idInServer(tostring(name or ""))
+	return id and avatarUrl(id) or ""
+end
+-- Paint an avatar onto a picture, with the name's first letter standing in
+-- until (or unless) a face arrives, so the circle is never just a hole.
+function avatarInto(pic, initial, name)
+	name = tostring(name or "")
+	if not pic then return end
+	pcall(function() pic.Image = "" end)
+	local letter = (name ~= "") and name:sub(1, 1):upper() or "?"
+	local function show(id)
+		pcall(function()
+			pic.Image = avatarUrl(id)
+			if initial then initial.Text = "" end
+		end)
+	end
+	pcall(function() if initial then initial.Text = letter end end)
+	if name == "" then return end
+	local id = idInServer(name)
+	if id then return show(id) end
+	if avatarIds[name] == false then return end        -- asked already, no such user
+	task.spawn(function()
+		local got
+		pcall(function() got = Players:GetUserIdFromNameAsync(name) end)
+		avatarIds[name] = got or false
+		if got then show(got) end
+	end)
 end
 UI.Avatar = avatarOf
 
@@ -845,10 +889,18 @@ function Tab:Player(o)
 	chev.AnchorPoint = Vector2.new(1, 0.5); chev.Position = UDim2.new(1, -14, 0.5, 0)
 	chev.Size = UDim2.fromOffset(10, 18); chev.TextXAlignment = Enum.TextXAlignment.Right
 
+	-- their initial stands in until the face loads, or for a name Roblox does
+	-- not know at all
+	local ini = label(pic, "", 20, C.Ink2, true)
+	ini.Size = UDim2.fromScale(1, 1)
+	ini.TextXAlignment = Enum.TextXAlignment.Center
+
 	local self_ = self
+	local shown
 	local function set(v)
-		name.Text = tostring(v)
-		pic.Image = avatarOf(v)
+		v = tostring(v)
+		name.Text = v
+		if v ~= shown then shown = v avatarInto(pic, ini, v) end
 	end
 	set(o.Value or "Player2")
 	local hit = new("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.fromScale(1, 1),
@@ -864,7 +916,7 @@ function Tab:Player(o)
 		local rows = {}
 		for _, v in ipairs(vals or {}) do
 			if type(v) == "table" then rows[#rows + 1] = v
-			else rows[#rows + 1] = { value = v, text = tostring(v), image = avatarOf(v), circle = true } end
+			else rows[#rows + 1] = { value = v, text = tostring(v), avatar = v, circle = true } end
 		end
 		showPicker(self_._win, o.Title or "Who are you trading with", rows, name.Text, function(v)
 			set(v)
