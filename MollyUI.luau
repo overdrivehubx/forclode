@@ -43,8 +43,10 @@ local C = {
 	Ink2    = Color3.fromRGB(150, 157, 175),
 	Ink3    = Color3.fromRGB(96, 103, 122),
 	Accent  = Color3.fromRGB(124, 106, 255),
+	Accent2 = Color3.fromRGB(168, 120, 255),  -- the far end of the brand gradient
 	Danger  = Color3.fromRGB(238, 84, 96),
 	Good    = Color3.fromRGB(58, 196, 134),  -- accepted, done, green in the game too
+	Panel   = Color3.fromRGB(16, 18, 24),    -- a group's card, between Bg and a row
 	On      = Color3.fromRGB(255, 255, 255),
 }
 local F  = Enum.Font.GothamMedium
@@ -470,11 +472,65 @@ Tab.__index = Tab
 
 function Tab:_order() self._n = (self._n or 0) + 1 return self._n end
 
+-- Where the next widget goes. On the narrow layout that is simply the page. On
+-- the wide one it is the card opened by the last Section, in whichever of the
+-- two columns that card was placed.
+function Tab:_host()
+	if self._card then return self._card end
+	-- On the wide layout everything lives in a card. A tab that starts straight
+	-- in with controls and never calls Section gets one opened for it, named
+	-- after the tab — otherwise its rows would stack down the left column with
+	-- the right one left empty.
+	if self._cols then
+		if not self._auto then
+			self._auto = true
+			self:Section({ Title = self.Title })
+			if self._card then return self._card end
+		end
+		return self._cols[self._curCol or 1]
+	end
+	return self._body
+end
+
+-- Rough running height per column, so the next card can open in the shorter one.
+-- Exact measurement would need a render pass; this only has to be close.
+function Tab:_grew(h)
+	if not self._colH then return end
+	local i = self._curCol or 1
+	self._colH[i] = (self._colH[i] or 0) + (h or 0) + GAP
+end
+
 local function shell(tab, h)
-	local row = new("Frame", { BackgroundColor3 = C.Surface, Size = UDim2.new(1, 0, 0, h or ROW_H),
-		LayoutOrder = tab:_order() }, tab._body)
-	round(row, R_ROW)
+	h = h or ROW_H
+	local flat = tab._flat        -- inside a card: hairlines, not floating boxes
+	local row = new("Frame", { BackgroundColor3 = flat and C.Raised or C.Surface,
+		BackgroundTransparency = flat and 1 or 0,
+		Size = UDim2.new(1, 0, 0, h), LayoutOrder = tab:_order() }, tab:_host())
+	if flat then
+		new("Frame", { BackgroundColor3 = C.Edge, BorderSizePixel = 0, BackgroundTransparency = 0.5,
+			AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, 0),
+			Size = UDim2.new(1, -24, 0, 1), ZIndex = 2 }, row)
+	else
+		round(row, R_ROW)
+	end
+	tab:_grew(h)
 	return row
+end
+
+-- A row lights up on hover: filled when it floats, a faint wash when it sits in
+-- a card. Returns the "resting" transparency so a caller can restore it.
+local function hoverable(tab, row, tint)
+	local flat = tab._flat
+	local base = row.BackgroundColor3
+	local rest = flat and 1 or 0
+	return function(on)
+		if flat then
+			tw(row, 0.1, { BackgroundTransparency = on and 0.85 or 1 })
+		else
+			tw(row, 0.1, { BackgroundColor3 = on and (tint or C.Raised) or base,
+				BackgroundTransparency = 0 })
+		end
+	end, rest
 end
 
 -- Rubis calls it Desc in some widgets and Description in others, and a script
@@ -520,11 +576,51 @@ end
 
 function Tab:Section(o)
 	o = o or {}
-	local wrap = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 26),
-		LayoutOrder = self:_order() }, self._body)
-	local l = label(wrap, string.upper(tostring(o.Title or "")), 10.5, C.Ink3, true)
-	l.Position = UDim2.fromOffset(4, 8); l.Size = UDim2.new(1, -8, 0, 14)
-	return { Instance = wrap, Set = function(_, v) l.Text = string.upper(tostring(v)) end }
+	local desc = descOf(o)
+
+	-- narrow layout: a quiet label between groups, as before
+	if not self._cols then
+		local wrap = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 26),
+			LayoutOrder = self:_order() }, self:_host())
+		local l = label(wrap, string.upper(tostring(o.Title or "")), 10.5, C.Ink3, true)
+		l.Position = UDim2.fromOffset(4, 8); l.Size = UDim2.new(1, -8, 0, 14)
+		return { Instance = wrap, Set = function(_, v) l.Text = string.upper(tostring(v)) end }
+	end
+
+	-- wide layout: everything after this lands inside a card of its own, and the
+	-- card opens in whichever column is currently shorter
+	self._auto = true          -- an explicit Section: no implicit card needed
+	self._card = nil
+	self._flat = false
+	local shorter = 1
+	for i = 2, #self._cols do
+		if (self._colH[i] or 0) < (self._colH[shorter] or 0) then shorter = i end
+	end
+	self._curCol = shorter
+
+	local card = new("Frame", { BackgroundColor3 = C.Panel, Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = self:_order() }, self._cols[shorter])
+	round(card, 14); edge(card, C.Edge, 0.55)
+	new("UIPadding", { PaddingBottom = UDim.new(0, 10) }, card)
+	col(card, 0)
+
+	local head = new("Frame", { BackgroundTransparency = 1, LayoutOrder = 0,
+		Size = UDim2.new(1, 0, 0, desc and 58 or 44) }, card)
+	local t = label(head, tostring(o.Title or ""), 14, C.Ink, true)
+	t.Position = UDim2.fromOffset(16, desc and 12 or 14)
+	t.Size = UDim2.new(1, -32, 0, 18)
+	if desc then
+		local d = label(head, desc, 10.5, C.Ink3)
+		d.Position = UDim2.fromOffset(16, 33); d.Size = UDim2.new(1, -32, 0, 14)
+	end
+	new("Frame", { BackgroundColor3 = C.Edge, BorderSizePixel = 0, BackgroundTransparency = 0.5,
+		AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, 0),
+		Size = UDim2.new(1, -24, 0, 1) }, head)
+
+	self._card = card
+	self._flat = true
+	self:_grew((desc and 58 or 44) + 14)
+	return { Instance = card, Set = function(_, v) t.Text = tostring(v) end }
 end
 
 function Tab:Paragraph(o)
@@ -570,19 +666,14 @@ function Tab:Button(o)
 	local chev = label(row, ">", 13, (style == "primary") and C.On or C.Ink3, true)
 	chev.AnchorPoint = Vector2.new(1, 0.5); chev.Position = UDim2.new(1, -14, 0.5, 0)
 	chev.Size = UDim2.fromOffset(10, 18); chev.TextXAlignment = Enum.TextXAlignment.Right
-	local base = row.BackgroundColor3
+	local wash, rest = hoverable(self, row, (style == "primary") and C.Accent or C.Raised)
 	local hit = new("TextButton", { BackgroundTransparency = 1, Text = "",
 		Size = UDim2.fromScale(1, 1), AutoButtonColor = false }, row)
-	hit.MouseEnter:Connect(function()
-		tw(row, 0.1, { BackgroundColor3 = (style == "primary") and C.Accent or C.Raised,
-			BackgroundTransparency = (style == "primary") and 0.12 or 0 })
-	end)
-	hit.MouseLeave:Connect(function()
-		tw(row, 0.1, { BackgroundColor3 = base, BackgroundTransparency = 0 })
-	end)
+	hit.MouseEnter:Connect(function() wash(true) end)
+	hit.MouseLeave:Connect(function() wash(false) end)
 	hit.MouseButton1Click:Connect(function()
-		tw(row, 0.06, { BackgroundTransparency = 0.35 })
-		task.delay(0.08, function() tw(row, 0.12, { BackgroundTransparency = 0 }) end)
+		tw(row, 0.06, { BackgroundTransparency = rest == 1 and 0.7 or 0.35 })
+		task.delay(0.08, function() tw(row, 0.12, { BackgroundTransparency = rest }) end)
 		if o.Callback then task.spawn(function() pcall(o.Callback) end) end
 	end)
 	return { Instance = row }
@@ -842,7 +933,7 @@ end
 -- script leans on for rhythm, and both cost one small frame.
 function Tab:Divider()
 	local row = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 9),
-		LayoutOrder = self:_order() }, self._body)
+		LayoutOrder = self:_order() }, self:_host())
 	new("Frame", { BackgroundColor3 = C.Edge, BorderSizePixel = 0, BackgroundTransparency = 0.3,
 		AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 4, 0.5, 0),
 		Size = UDim2.new(1, -8, 0, 1) }, row)
@@ -851,7 +942,7 @@ end
 
 function Tab:Space(h)
 	local row = new("Frame", { BackgroundTransparency = 1,
-		Size = UDim2.new(1, 0, 0, tonumber(h) or 6), LayoutOrder = self:_order() }, self._body)
+		Size = UDim2.new(1, 0, 0, tonumber(h) or 6), LayoutOrder = self:_order() }, self:_host())
 	return { Instance = row }
 end
 
@@ -979,7 +1070,7 @@ end
 function Tab:Chips(o)
 	o = o or {}
 	local row = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 32),
-		LayoutOrder = self:_order() }, self._body)
+		LayoutOrder = self:_order() }, self:_host())
 	local sc = new("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0,
 		ClipsDescendants = true, Size = UDim2.fromScale(1, 1), CanvasSize = UDim2.new(),
 		AutomaticCanvasSize = Enum.AutomaticSize.X, ScrollBarThickness = 0,
@@ -1049,7 +1140,7 @@ end
 function Tab:List(o)
 	o = o or {}
 	local row = new("Frame", { BackgroundTransparency = 1,
-		Size = UDim2.new(1, 0, 0, tonumber(o.Height) or 210), LayoutOrder = self:_order() }, self._body)
+		Size = UDim2.new(1, 0, 0, tonumber(o.Height) or 210), LayoutOrder = self:_order() }, self:_host())
 	local head = label(row, "", 10.5, C.Ink3)
 	head.Position = UDim2.fromOffset(4, 0); head.Size = UDim2.new(1, -8, 0, 14)
 	local sc = new("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0,
@@ -1177,8 +1268,9 @@ function Tab:Player(o)
 	set(o.Value or "Player2")
 	local hit = new("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.fromScale(1, 1),
 		AutoButtonColor = false }, row)
-	hit.MouseEnter:Connect(function() tw(row, 0.1, { BackgroundColor3 = C.Raised }) end)
-	hit.MouseLeave:Connect(function() tw(row, 0.1, { BackgroundColor3 = C.Surface }) end)
+	local wash = hoverable(self, row, C.Raised)
+	hit.MouseEnter:Connect(function() wash(true) end)
+	hit.MouseLeave:Connect(function() wash(false) end)
 	hit.MouseButton1Click:Connect(function()
 		local vals = o.Values
 		if type(vals) == "function" then
@@ -1203,7 +1295,7 @@ end
 function Tab:Deal(o)
 	o = o or {}
 	local row = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 92),
-		LayoutOrder = self:_order() }, self._body)
+		LayoutOrder = self:_order() }, self:_host())
 	local cbs = {}
 
 	local function side(x, title)
@@ -1275,7 +1367,7 @@ function Tab:Actions(o)
 	local items = o.Items or {}
 	local n = math.max(1, #items)
 	local row = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, o.Height or 46),
-		LayoutOrder = self:_order() }, self._body)
+		LayoutOrder = self:_order() }, self:_host())
 	for i, it in ipairs(items) do
 		local style = tostring(it.Style or ""):lower()
 		local b = new("TextButton", { BackgroundColor3 = (style == "primary") and C.Accent or C.Surface,
@@ -1342,6 +1434,24 @@ function Window:Tab(o)
 	pad(page, 2, 8, 16, 0)
 	col(page, GAP)
 
+	-- On a wide window the cards flow down TWO columns, which is what stops a hub
+	-- of a dozen groups from being one endless ribbon you scroll forever.
+	local columns, colH
+	if (self._colCount or 1) > 1 then
+		local rowf = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0),
+			AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 1 }, page)
+		new("UIListLayout", { Padding = UDim.new(0, 10), FillDirection = Enum.FillDirection.Horizontal,
+			SortOrder = Enum.SortOrder.LayoutOrder, VerticalAlignment = Enum.VerticalAlignment.Top }, rowf)
+		columns, colH = {}, {}
+		for i = 1, self._colCount do
+			local c = new("Frame", { BackgroundTransparency = 1, LayoutOrder = i,
+				Size = UDim2.new(1 / self._colCount, -5, 0, 0),
+				AutomaticSize = Enum.AutomaticSize.Y }, rowf)
+			col(c, GAP)
+			columns[i], colH[i] = c, 0
+		end
+	end
+
 	local btn, mark
 	if shown and self._sidebar then
 		self._sideOrder = (self._sideOrder or 0)
@@ -1357,15 +1467,14 @@ function Window:Tab(o)
 			self._lastGroup = nil
 		end
 		self._sideOrder = self._sideOrder + 1
-		btn = new("TextButton", { BackgroundColor3 = C.Surface, BackgroundTransparency = 1,
-			Size = UDim2.new(1, 0, 0, 32), Font = FB, TextSize = 12, TextColor3 = C.Ink3,
-			Text = "   " .. title, TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false,
-			LayoutOrder = self._sideOrder }, self._tabbar)
-		round(btn, R_CHIP)
+		btn = new("TextButton", { BackgroundColor3 = C.Raised, BackgroundTransparency = 1,
+			Size = UDim2.new(1, 0, 0, 36), Font = F, TextSize = 13, TextColor3 = C.Ink3,
+			Text = "      " .. string.lower(title), TextXAlignment = Enum.TextXAlignment.Left,
+			AutoButtonColor = false, LayoutOrder = self._sideOrder }, self._tabbar)
+		-- the active page is marked by an accent bar at the edge, not a filled box
 		mark = new("Frame", { BackgroundColor3 = C.Accent, BorderSizePixel = 0,
 			AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 0, 0.5, 0),
-			Size = UDim2.fromOffset(3, 16), Visible = false }, btn)
-		round(mark, 1)
+			Size = UDim2.fromOffset(2, 18), Visible = false }, btn)
 	elseif shown then
 		btn = new("TextButton", { BackgroundTransparency = 1, Size = UDim2.fromOffset(0, 34),
 			AutomaticSize = Enum.AutomaticSize.X, Font = FB, TextSize = 12.5, TextColor3 = C.Ink3,
@@ -1379,7 +1488,7 @@ function Window:Tab(o)
 	end
 
 	local tab = setmetatable({ _body = page, _btn = btn, _mark = mark, _win = self, Title = title,
-		Group = o.Group }, Tab)
+		Group = o.Group, _cols = columns, _colH = colH, _curCol = 1 }, Tab)
 	self._tabs[#self._tabs + 1] = tab
 	self._byTitle[title] = tab
 
@@ -1390,8 +1499,9 @@ function Window:Tab(o)
 			if t._btn then
 				t._btn.TextColor3 = on and C.Ink or C.Ink3
 				if self._sidebar then
-					-- a sidebar row lights up as a filled pill with an accent edge
-					tw(t._btn, 0.12, { BackgroundTransparency = on and 0 or 1 })
+					-- accent text and an accent bar; the row itself stays quiet
+					t._btn.TextColor3 = on and C.Accent2 or C.Ink3
+					tw(t._btn, 0.12, { BackgroundTransparency = on and 0.92 or 1 })
 					if t._mark then t._mark.Visible = on end
 				elseif t._mark then
 					t._mark.Visible = on
@@ -1406,18 +1516,23 @@ function Window:Tab(o)
 	tab._activate = function()
 		self._active = tab
 		activate()
+		if self._pageTitle then self._pageTitle.Text = string.lower(title) end
 		self:_syncTabs()
 	end
 	if btn and self._sidebar then
 		btn.MouseEnter:Connect(function()
-			if self._active ~= tab then tw(btn, 0.1, { BackgroundTransparency = 0.55 }) end
+			if self._active ~= tab then btn.TextColor3 = C.Ink2 end
 		end)
 		btn.MouseLeave:Connect(function()
-			if self._active ~= tab then tw(btn, 0.1, { BackgroundTransparency = 1 }) end
+			if self._active ~= tab then btn.TextColor3 = C.Ink3 end
 		end)
 	end
 	if btn then btn.MouseButton1Click:Connect(tab._activate) end
-	if not self._active and shown then self._active = tab activate() end
+	if not self._active and shown then
+		self._active = tab
+		activate()
+		if self._pageTitle then self._pageTitle.Text = string.lower(title) end
+	end
 	self:_syncTabs()
 	return tab
 end
@@ -1620,7 +1735,7 @@ function UI:CreateWindow(o)
 	round(card, R_CARD); edge(card, C.Edge, 0.1)
 	local uiscale = new("UIScale", { Scale = scale }, card)
 
-	local readout
+	local readout, win_pageTitle, win_hint
 	local function fit()
 		pcall(function()
 			local v = viewport()
@@ -1657,8 +1772,10 @@ function UI:CreateWindow(o)
 		end)
 	end
 
-	-- header
+	-- header. On the wide layout the brand lives in the sidebar and the page has
+	-- its own title bar, so this strip is only the drag handle and the close X.
 	local head = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 54) }, card)
+	if sidebar then head.Size = UDim2.new(1, 0, 0, 56) end
 	local badge = new("Frame", { BackgroundColor3 = C.Accent, Position = UDim2.fromOffset(14, 11),
 		Size = UDim2.fromOffset(32, 32) }, head)
 	round(badge, 10)
@@ -1668,6 +1785,9 @@ function UI:CreateWindow(o)
 	ttl.Position = UDim2.fromOffset(56, 11); ttl.Size = UDim2.new(1, -100, 0, 17)
 	local sub = label(head, o.SubTitle or o.Author or "", 10.5, C.Ink3)
 	sub.Position = UDim2.fromOffset(56, 29); sub.Size = UDim2.new(1, -100, 0, 13)
+	if sidebar then
+		badge.Visible = false; ttl.Visible = false; sub.Visible = false
+	end
 	local close = new("TextButton", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0.5),
 		Position = UDim2.new(1, -12, 0, 27), Size = UDim2.fromOffset(26, 26), Font = FB,
 		TextSize = 16, TextColor3 = C.Ink3, Text = "X", AutoButtonColor = false }, head)
@@ -1676,41 +1796,90 @@ function UI:CreateWindow(o)
 
 	local tabbar, pages, foot
 	if sidebar then
-		-- a proper sidebar: the tabs are a vertical list down the left, grouped
-		-- under their section headers, and the page fills the rest. No popup, no
-		-- horizontal scroll — the tabs are simply always there.
+		-- The hub: a quiet sidebar down the left, the page beside it, a title bar
+		-- across the top of the page and a status strip along the bottom. Nothing
+		-- is boxed that does not need to be — the divider rules do the work.
+		local HEAD_H, FOOT_H = 56, 34
+
+		-- brand cell, top of the sidebar
+		local brandCell = new("Frame", { BackgroundTransparency = 1,
+			Size = UDim2.fromOffset(SIDE, HEAD_H) }, card)
+		local mark = new("Frame", { BackgroundColor3 = C.Accent, Position = UDim2.fromOffset(18, 15),
+			Size = UDim2.fromOffset(26, 26) }, brandCell)
+		round(mark, 9)
+		local ml = label(mark, o.Badge or "MH", 11, C.On, true)
+		ml.Size = UDim2.fromScale(1, 1); ml.TextXAlignment = Enum.TextXAlignment.Center
+		local bt = label(brandCell, tostring(o.Title or "MollyHub"):lower(), 13.5, C.Ink, true)
+		bt.Position = UDim2.fromOffset(54, 19); bt.Size = UDim2.new(1, -62, 0, 18)
+
+		-- rules: under the brand, and down the side of the whole sidebar
+		new("Frame", { BackgroundColor3 = C.Edge, BorderSizePixel = 0, BackgroundTransparency = 0.45,
+			Position = UDim2.fromOffset(0, HEAD_H), Size = UDim2.new(0, SIDE, 0, 1) }, card)
+		new("Frame", { BackgroundColor3 = C.Edge, BorderSizePixel = 0, BackgroundTransparency = 0.45,
+			Position = UDim2.fromOffset(SIDE, 0), Size = UDim2.new(0, 1, 1, -FOOT_H) }, card)
+
 		tabbar = new("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0,
-			ClipsDescendants = true, Position = UDim2.fromOffset(12, 60),
-			Size = UDim2.new(0, SIDE, 1, -96), CanvasSize = UDim2.new(),
+			ClipsDescendants = true, Position = UDim2.fromOffset(0, HEAD_H + 14),
+			Size = UDim2.new(0, SIDE, 1, -(HEAD_H + FOOT_H + 20)), CanvasSize = UDim2.new(),
 			AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 2,
 			ScrollBarImageColor3 = C.Edge, ScrollingDirection = Enum.ScrollingDirection.Y }, card)
-		new("UIListLayout", { Padding = UDim.new(0, 3), FillDirection = Enum.FillDirection.Vertical,
+		new("UIListLayout", { Padding = UDim.new(0, 2), FillDirection = Enum.FillDirection.Vertical,
 			SortOrder = Enum.SortOrder.LayoutOrder }, tabbar)
-		-- the rule between the sidebar and the page
-		new("Frame", { BackgroundColor3 = C.Edge, BorderSizePixel = 0, BackgroundTransparency = 0.3,
-			Position = UDim2.fromOffset(SIDE + 20, 60), Size = UDim2.new(0, 1, 1, -70) }, card)
-		pages = new("Frame", { BackgroundTransparency = 1, ClipsDescendants = true,
-			Position = UDim2.fromOffset(SIDE + 30, 58),
-			Size = UDim2.new(1, -(SIDE + 40), 1, -66) }, card)
 
-		-- footer sits under the sidebar
+		-- title bar over the page: what you are looking at, and whether we are live
+		local topbar = new("Frame", { BackgroundTransparency = 1,
+			Position = UDim2.fromOffset(SIDE + 1, 0), Size = UDim2.new(1, -(SIDE + 1), 0, HEAD_H) }, card)
+		local pageTtl = label(topbar, "", 17, C.Ink, true)
+		pageTtl.Position = UDim2.fromOffset(24, 18); pageTtl.Size = UDim2.new(0, 200, 0, 22)
+		local crumb = label(topbar, tostring(o.SubTitle or o.Author or ""):lower(), 11, C.Ink3)
+		crumb.Position = UDim2.fromOffset(24, 20); crumb.Size = UDim2.new(1, -260, 0, 18)
+		-- the crumb sits after the title, so measure the title and shove it along
+		pcall(function()
+			pageTtl:GetPropertyChangedSignal("Text"):Connect(function()
+				local w = math.min(200, math.max(40, #tostring(pageTtl.Text) * 9))
+				crumb.Position = UDim2.fromOffset(24 + w + 10, 20)
+			end)
+		end)
+		local dot = new("Frame", { BackgroundColor3 = C.Good, AnchorPoint = Vector2.new(1, 0.5),
+			Position = UDim2.new(1, -116, 0.5, 0), Size = UDim2.fromOffset(7, 7) }, topbar)
+		round(dot, 4)
+		local live = label(topbar, "connected", 11, C.Ink2)
+		live.AnchorPoint = Vector2.new(1, 0.5); live.Position = UDim2.new(1, -46, 0.5, 0)
+		live.Size = UDim2.fromOffset(64, 14)
+		new("Frame", { BackgroundColor3 = C.Edge, BorderSizePixel = 0, BackgroundTransparency = 0.45,
+			Position = UDim2.fromOffset(SIDE + 1, HEAD_H), Size = UDim2.new(1, -(SIDE + 1), 0, 1) }, card)
+
+		pages = new("Frame", { BackgroundTransparency = 1, ClipsDescendants = true,
+			Position = UDim2.fromOffset(SIDE + 18, HEAD_H + 14),
+			Size = UDim2.new(1, -(SIDE + 34), 1, -(HEAD_H + FOOT_H + 16)) }, card)
+
+		-- status strip along the very bottom, across the whole window
+		new("Frame", { BackgroundColor3 = C.Edge, BorderSizePixel = 0, BackgroundTransparency = 0.45,
+			AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 0, 1, -FOOT_H),
+			Size = UDim2.new(1, 0, 0, 1) }, card)
 		foot = new("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0, 1),
-			Position = UDim2.new(0, 12, 1, -6), Size = UDim2.fromOffset(SIDE, 26) }, card)
+			Position = UDim2.new(0, 0, 1, 0), Size = UDim2.new(1, 0, 0, FOOT_H) }, card)
+		local hint = label(foot, "", 10.5, C.Ink3)
+		hint.Position = UDim2.fromOffset(20, 0); hint.Size = UDim2.new(1, -180, 1, 0)
+		win_hint = hint
 		readout = label(foot, "100%", 10.5, C.Ink2, true)
-		readout.Position = UDim2.fromOffset(4, 0); readout.Size = UDim2.new(1, -56, 1, 0)
+		readout.AnchorPoint = Vector2.new(1, 0.5); readout.Position = UDim2.new(1, -70, 0.5, 0)
+		readout.Size = UDim2.fromOffset(40, 14); readout.TextXAlignment = Enum.TextXAlignment.Right
 		local function stepper(x, glyph, delta)
-			local b = new("TextButton", { BackgroundColor3 = C.Surface, AnchorPoint = Vector2.new(1, 0.5),
-				Position = UDim2.new(1, x, 0.5, 0), Size = UDim2.fromOffset(22, 22), Font = FB,
-				TextSize = 13, TextColor3 = C.Ink2, Text = glyph, AutoButtonColor = false }, foot)
-			round(b, 7)
+			local b = new("TextButton", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0.5),
+				Position = UDim2.new(1, x, 0.5, 0), Size = UDim2.fromOffset(20, 20), Font = FB,
+				TextSize = 14, TextColor3 = C.Ink3, Text = glyph, AutoButtonColor = false }, foot)
+			b.MouseEnter:Connect(function() b.TextColor3 = C.Ink end)
+			b.MouseLeave:Connect(function() b.TextColor3 = C.Ink3 end)
 			b.MouseButton1Click:Connect(function()
 				scale = math.clamp(scale + delta, 0.6, 1.5)
 				_G.MH_MenuScale = scale
 				fit()
 			end)
 		end
-		stepper(-30, "-", -0.05)
-		stepper(-2, "+", 0.05)
+		stepper(-44, "-", -0.05)
+		stepper(-20, "+", 0.05)
+		win_pageTitle = pageTtl
 	else
 		-- tabs: text with an underline, not filled pills — legible in a narrow card
 		tabbar = new("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0,
@@ -1760,7 +1929,21 @@ function UI:CreateWindow(o)
 	draggable(card, head)
 
 	local win = setmetatable({ _gui = gui, _card = card, _tabbar = tabbar, _pages = pages,
-		_scale = uiscale, _sidebar = sidebar, _tabs = {}, _byTitle = {} }, Window)
+		_scale = uiscale, _sidebar = sidebar, _pageTitle = win_pageTitle, _hint = win_hint,
+		_tabs = {}, _byTitle = {} }, Window)
+	-- two columns of cards, but only when there is honestly room for them
+	win._colCount = 1
+	if sidebar then
+		local pw = 0
+		pcall(function() pw = card.Size.X.Offset - (SIDE + 34) end)
+		if pw >= 520 then win._colCount = 2 end
+	end
+	if sidebar and win._hint then
+		local exe = "MollyHub"
+		pcall(function() if identifyexecutor then exe = tostring(identifyexecutor()) end end)
+		win._hint.Text = "  " .. tostring(o.SubTitle or "murder mystery 2"):lower()
+			.. "   |   " .. exe:lower()
+	end
 	win.ConfigManager = ConfigManager.new(o.Folder)
 	win.CurrentConfig = win.ConfigManager:Config("default")
 
