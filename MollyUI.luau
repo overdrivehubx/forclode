@@ -187,6 +187,41 @@ function UI:SetTheme(t)
 	end
 end
 
+-- Recolour the whole library. A script used to do this by downloading this file
+-- and running string replacements over the token block — which broke the moment
+-- a token was added here, and left widgets holding a nil colour. Ask for the
+-- colours instead: names may be ours or the ones a themed script already uses,
+-- and values may be Color3 or "#RRGGBB". Anything unrecognised is ignored.
+local ALIAS = {
+	Bg = "Bg", Background = "Bg", Window = "Bg",
+	Surface = "Surface", Card = "Surface",
+	Raised = "Raised", SurfaceRaised = "Raised",
+	Panel = "Panel", SurfaceSoft = "Panel", Group = "Panel",
+	Edge = "Edge", Outline = "Edge", Border = "Edge", Stroke = "Edge",
+	Ink = "Ink", Text = "Ink",
+	Ink2 = "Ink2", Icon = "Ink2", Subtle = "Ink2",
+	Ink3 = "Ink3", Muted = "Ink3", Dim = "Ink3",
+	Accent = "Accent", Primary = "Accent",
+	Accent2 = "Accent2", PrimaryBright = "Accent2",
+	Good = "Good", Success = "Good",
+	Danger = "Danger", Error = "Danger",
+	On = "On", OnAccent = "On",
+}
+function UI:SetPalette(t)
+	if type(t) ~= "table" then return C end
+	for k, v in pairs(t) do
+		local key = ALIAS[tostring(k)]
+		local colr = v
+		if type(v) == "string" then
+			local ok, got = pcall(function() return Color3.fromHex(v) end)
+			colr = ok and got or nil
+		end
+		if key and typeof(colr) == "Color3" then C[key] = colr end
+	end
+	return C
+end
+UI.Palette = C
+
 --==============================================================================
 -- PICKER — choices live beside the window, not inside the page
 --==============================================================================
@@ -617,7 +652,8 @@ function Tab:Section(o)
 
 	local head = new("Frame", { BackgroundTransparency = 1, LayoutOrder = 0,
 		Size = UDim2.new(1, 0, 0, desc and 58 or 44) }, card)
-	local t = label(head, tostring(o.Title or ""), 14, C.Ink, true)
+	local t = label(head, tostring(o.Title or ""),
+		14, (typeof(o.Color) == "Color3") and o.Color or C.Ink, true)
 	t.Position = UDim2.fromOffset(16, desc and 12 or 14)
 	t.Size = UDim2.new(1, -32, 0, 18)
 	if desc then
@@ -1370,6 +1406,82 @@ function Tab:Deal(o)
 	}
 end
 
+-- An overview page: groups of rows that are either a reading (a label and a
+-- value) or a switch, followed by the handful of things you actually reach for.
+-- Built out of the ordinary widgets, so it inherits the palette and the card
+-- flow like everything else.
+function Tab:Dashboard(o)
+	o = o or {}
+	local stats = {}
+
+	local function group(title, rows)
+		if type(rows) ~= "table" or #rows == 0 then return end
+		self:Section({ Title = title })
+		for _, r in ipairs(rows) do
+			if type(r) ~= "table" then
+				-- skip
+			elseif r.Toggle ~= nil then
+				local key = r.Key
+				self:Toggle({ Title = r.Title, Desc = descOf(r), Default = r.Toggle,
+					Callback = function(on)
+						if o.OnToggle and key then
+							task.spawn(function() pcall(o.OnToggle, key, on) end)
+						end
+					end })
+			else
+				local row = shell(self, 38)
+				local l = label(row, r.Title, 12.5, C.Ink, true)
+				l.Position = UDim2.fromOffset(14, 0); l.Size = UDim2.new(1, -130, 1, 0)
+				local v = label(row, tostring(r.Value or ""), 12,
+					(typeof(r.Color) == "Color3") and r.Color or C.Ink2, true)
+				v.AnchorPoint = Vector2.new(1, 0.5); v.Position = UDim2.new(1, -14, 0.5, 0)
+				v.Size = UDim2.fromOffset(110, 16); v.TextXAlignment = Enum.TextXAlignment.Right
+				if r.Key then stats[tostring(r.Key)] = v end
+				stats[tostring(r.Title)] = v
+			end
+		end
+	end
+
+	group(o.CombatTitle or "match", o.CombatRows)
+	group(o.VisualTitle or "visuals", o.VisualRows)
+	group(o.UtilityTitle or "utility", o.UtilityRows)
+
+	local acts = o.Actions or {
+		{ Key = "kill_all", Title = "Kill all" },
+		{ Key = "sheriff", Title = "Sheriff" },
+		{ Key = "tp_murderer", Title = "To murderer" },
+		{ Key = "bring_all", Title = "Bring all" },
+		{ Key = "clear_weapons", Title = "Clear weapons" },
+		{ Key = "save_config", Title = "Save config" },
+	}
+	if o.OnAction and #acts > 0 then
+		self:Section({ Title = o.ActionTitle or "quick actions" })
+		local pair = {}
+		for i, a in ipairs(acts) do
+			pair[#pair + 1] = { Title = a.Title, Style = a.Style,
+				Callback = function() pcall(o.OnAction, a.Key) end }
+			if #pair == 2 or i == #acts then
+				self:Actions({ Height = 40, Items = pair })
+				pair = {}
+			end
+		end
+	end
+
+	return {
+		-- update a reading later: :Set("Murderer", "someone") or by its Key
+		Set = function(_, key, value, colr)
+			local v = stats[tostring(key)]
+			if not v then return end
+			v.Text = tostring(value)
+			if typeof(colr) == "Color3" then v.TextColor3 = colr end
+		end,
+		Get = function(_, key)
+			local v = stats[tostring(key)]
+			return v and v.Text or nil
+		end,
+	}
+end
+
 -- Two or three actions on one line. A page of full-width buttons for things
 -- that belong together reads as a list of unrelated choices; side by side they
 -- read as the pair they are.
@@ -1609,6 +1721,35 @@ end
 function Window:Divider() return { Instance = nil } end
 function Window:Space() return { Instance = nil } end
 
+-- Small chips in the title bar: "MM2", "LIVE". A script that has them expects
+-- them to show up somewhere sensible rather than to fail.
+function Window:Tag(o)
+	o = o or {}
+	local host = self._tagHost
+	if not host then return { Instance = nil } end
+	if not self._tagRow then
+		self._tagRow = new("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0.5),
+			Position = UDim2.new(1, self._sidebar and -150 or -44, 0.5, 0),
+			Size = UDim2.fromOffset(160, 22) }, host)
+		local l = new("UIListLayout", { Padding = UDim.new(0, 6),
+			FillDirection = Enum.FillDirection.Horizontal, SortOrder = Enum.SortOrder.LayoutOrder,
+			HorizontalAlignment = Enum.HorizontalAlignment.Right,
+			VerticalAlignment = Enum.VerticalAlignment.Center }, self._tagRow)
+		l.Name = "TagLayout"
+	end
+	local colr = (typeof(o.Color) == "Color3") and o.Color or C.Accent
+	local chip = new("TextLabel", { BackgroundColor3 = colr, BackgroundTransparency = 0.82,
+		Size = UDim2.fromOffset(0, 20), AutomaticSize = Enum.AutomaticSize.X, Font = FB,
+		TextSize = 10, TextColor3 = colr, Text = string.upper(tostring(o.Title or "")) },
+		self._tagRow)
+	pad(chip, 0, 8, 0, 8)
+	round(chip, tonumber(o.Radius) or 6)
+	return { Instance = chip, Set = function(_, v) chip.Text = string.upper(tostring(v)) end }
+end
+
+-- Rubis sizes its icons; we have none, so this only has to not blow up.
+function Window:SetIconSize() end
+
 -- Rubis lets a script pick the key that shows and hides the window.
 function Window:SetToggleKey(k)
 	if type(k) == "string" then pcall(function() k = Enum.KeyCode[k] end) end
@@ -1721,7 +1862,8 @@ function UI:CreateWindow(o)
 	-- tabs, so it wants to be WIDE with the tabs down the side — and a script says
 	-- which it is by asking for a sidebar (Rubis's SideBarWidth) or Wide.
 	local sidebar = (o.SideBarWidth ~= nil) or (o.Wide == true)
-	local SIDE = 170                              -- sidebar column, design px
+	-- the script's own numbers, when it gives them
+	local SIDE = math.clamp(math.floor(tonumber(o.SideBarWidth) or 170), 130, 240)
 
 	-- tall and narrow: a launcher is short, a working menu is long.
 	-- A phone and a monitor are both "landscape", but only one of them is big,
@@ -1736,6 +1878,12 @@ function UI:CreateWindow(o)
 	if sidebar then
 		wantW, wantH = 600, 440                   -- landscape phone fallback
 		deskW, deskH = 800, 560                   -- desktop: room for a sidebar + a page
+		-- a script that asks for a size gets it, within reason
+		local sz = o.Size
+		if type(sz) == "table" and type(sz.X) == "table" and tonumber(sz.X.Offset) then
+			if sz.X.Offset > 0 then deskW = math.clamp(sz.X.Offset, 560, 1200) end
+			if sz.Y.Offset > 0 then deskH = math.clamp(sz.Y.Offset, 380, 900) end
+		end
 	end
 
 	local card = new("Frame", { BackgroundColor3 = C.Bg, AnchorPoint = Vector2.new(0.5, 0.5),
@@ -1747,7 +1895,7 @@ function UI:CreateWindow(o)
 	round(card, R_CARD); edge(card, C.Edge, 0.1)
 	local uiscale = new("UIScale", { Scale = scale }, card)
 
-	local readout, win_pageTitle, win_hint, win_setDrawer
+	local readout, win_pageTitle, win_hint, win_setDrawer, win_tagHost
 	local shellFor          -- the wide layout sets this; fit() reports the width to it
 	local function fit()
 		pcall(function()
@@ -1929,6 +2077,7 @@ function UI:CreateWindow(o)
 			placeCrumb()
 		end
 		win_setDrawer = setDrawer
+		win_tagHost = topbar
 
 		-- status strip along the very bottom, across the whole window
 		new("Frame", { BackgroundColor3 = C.Edge, BorderSizePixel = 0, BackgroundTransparency = 0.45,
@@ -2007,7 +2156,8 @@ function UI:CreateWindow(o)
 
 	local win = setmetatable({ _gui = gui, _card = card, _tabbar = tabbar, _pages = pages,
 		_scale = uiscale, _sidebar = sidebar, _pageTitle = win_pageTitle, _hint = win_hint,
-		_setDrawer = win_setDrawer, _tabs = {}, _byTitle = {} }, Window)
+		_setDrawer = win_setDrawer, _tagHost = win_tagHost or head,
+		_tabs = {}, _byTitle = {} }, Window)
 	-- two columns of cards, but only when there is honestly room for them
 	win._colCount = 1
 	if sidebar then
