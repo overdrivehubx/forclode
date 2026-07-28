@@ -172,30 +172,533 @@ end
 --==============================================================================
 -- VISUALS
 --==============================================================================
--- Everything here is local to your client: Lighting properties, post-processing
--- effects we parent to Lighting ourselves, and LocalTransparencyModifier, which
--- by definition never replicates. Nothing is sent to the server, and every
--- switch remembers what it changed so turning it off puts the world back.
+-- The set an FPS cheat gives you, done for this game: chams you can read at a
+-- glance, boxes with a health bar, a crosshair, the aim circle, a watermark,
+-- and the world knobs.
 --
--- Wrapped in a do-block so its locals go out of scope at the end and do not eat
--- into the file's top-level local budget.
+-- All of it is drawn on YOUR screen only. Highlights and Drawing objects are
+-- client-side by construction, and the Lighting values are local properties;
+-- nothing here is sent to the server. Every switch remembers what it changed.
+--
+-- One RenderStepped drives everything, and each player owns a small pool of
+-- Drawing objects that is reused rather than rebuilt each frame.
 --==============================================================================
 do
-	local Lighting = game:GetService("Lighting")
 	local VisTab = t1.VisualsTab
+	local Camera = workspace.CurrentCamera
+	local HAVE_DRAWING = (type(Drawing) == "table" or type(Drawing) == "userdata")
 
-	-- what we changed, so "off" is a real undo rather than a guess
-	local saved = {}
-	local function remember(inst, prop)
-		local key = tostring(inst) .. "." .. prop
-		if saved[key] == nil then
-			local ok, v = pcall(function() return inst[prop] end)
-			if ok then saved[key] = { inst = inst, prop = prop, value = v } end
+	local V = {
+		chams = false, chamFill = 0.55, chamWalls = true, chamOutline = true,
+		box = false, boxCorners = true, boxName = true, boxDist = true, boxHealth = true,
+		cross = false, crossSize = 9, crossGap = 4, crossThick = 1, crossDot = false,
+		crossColor = Color3.fromRGB(255, 255, 255),
+		fov = false, fovRadius = 120, fovColor = Color3.fromRGB(139, 124, 255),
+		mark = false,
+		teamCheck = true,
+	}
+	local COL = {
+		Murderer = Color3.fromRGB(255, 78, 96),
+		Sheriff  = Color3.fromRGB(96, 160, 255),
+		Innocent = Color3.fromRGB(120, 235, 150),
+		Dead     = Color3.fromRGB(120, 120, 132),
+	}
+
+	--== roles ==================================================================
+	-- The game will tell you who is who, but it is a server round trip, so ask
+	-- twice a second and cache it — not once a frame.
+	local roles, rolesAt = {}, 0
+	local roleRemote = ReplicatedStorage:FindFirstChild("GetCurrentPlayerData", true)
+	local asking = false
+	local function pollRoles()
+		if asking or (os.clock() - rolesAt) < 0.5 then return end
+		asking = true
+		rolesAt = os.clock()
+		task.spawn(function()
+			local ok, res = pcall(function()
+				return roleRemote and roleRemote:InvokeServer()
+			end)
+			if ok and type(res) == "table" then roles = res end
+			asking = false
+		end)
+	end
+	local function roleOf(player)
+		local e = roles[player.Name]
+		if type(e) ~= "table" then return "Innocent", false end
+		return tostring(e.Role or "Innocent"), (e.Dead or e.Killed) and true or false
+	end
+	local function colorFor(player)
+		local role, dead = roleOf(player)
+		if dead then return COL.Dead, role, true end
+		return COL[role] or COL.Innocent, role, false
+	end
+
+	--== chams ==================================================================
+	local chams = {}
+	local function dropCham(player)
+		local h = chams[player]
+		if h then pcall(function() h:Destroy() end) end
+		chams[player] = nil
+	end
+	local function updateCham(player, char)
+		if not V.chams then return dropCham(player) end
+		local h = chams[player]
+		if not h or h.Parent ~= char then
+			dropCham(player)
+			local ok, made = pcall(function()
+				local n = Instance.new("Highlight")
+				n.Name = "MH_Cham"
+				n.Adornee = char
+				n.Parent = char
+				return n
+			end)
+			if not ok then return end
+			h = made
+			chams[player] = h
+		end
+		local colr, _, dead = colorFor(player)
+		pcall(function()
+			h.FillColor = colr
+			h.OutlineColor = colr
+			h.FillTransparency = V.chamFill
+			h.OutlineTransparency = V.chamOutline and 0 or 1
+			h.DepthMode = V.chamWalls and Enum.HighlightDepthMode.AlwaysOnTop
+				or Enum.HighlightDepthMode.Occluded
+			h.Enabled = not (dead and V.teamCheck)
+		end)
+	end
+
+	--== drawing pool ===========================================================
+	local pool = {}
+	local function draw(kind, props)
+		if not HAVE_DRAWING then return nil end
+		local ok, d = pcall(function() return Drawing.new(kind) end)
+		if not ok or not d then return nil end
+		pcall(function()
+			for k, v in pairs(props or {}) do d[k] = v end
+		end)
+		return d
+	end
+	local function poolFor(player)
+		local p = pool[player]
+		if p then return p end
+		p = {
+			lines = {},
+			square = draw("Square", { Thickness = 1, Filled = false, Visible = false }),
+			hpBack = draw("Square", { Thickness = 1, Filled = true, Visible = false,
+				Color = Color3.fromRGB(16, 16, 18) }),
+			hpFill = draw("Square", { Thickness = 1, Filled = true, Visible = false }),
+			name = draw("Text", { Size = 13, Center = true, Outline = true, Visible = false }),
+			dist = draw("Text", { Size = 12, Center = true, Outline = true, Visible = false,
+				Color = Color3.fromRGB(200, 200, 210) }),
+		}
+		for i = 1, 8 do
+			p.lines[i] = draw("Line", { Thickness = 1, Visible = false })
+		end
+		pool[player] = p
+		return p
+	end
+	local function hidePool(player)
+		local p = pool[player]
+		if not p then return end
+		pcall(function()
+			for _, l in ipairs(p.lines) do l.Visible = false end
+			p.square.Visible = false
+			p.hpBack.Visible = false
+			p.hpFill.Visible = false
+			p.name.Visible = false
+			p.dist.Visible = false
+		end)
+	end
+	local function dropPool(player)
+		local p = pool[player]
+		if not p then return end
+		pcall(function()
+			for _, l in ipairs(p.lines) do l:Remove() end
+			p.square:Remove(); p.hpBack:Remove(); p.hpFill:Remove()
+			p.name:Remove(); p.dist:Remove()
+		end)
+		pool[player] = nil
+	end
+
+	-- corner brackets: the four corners of the box, a quarter of the way in
+	local function corners(p, x, y, w, h, colr)
+		local cut = math.max(3, math.floor(math.min(w, h) * 0.28))
+		local seg = {
+			{ x, y, x + cut, y }, { x, y, x, y + cut },
+			{ x + w, y, x + w - cut, y }, { x + w, y, x + w, y + cut },
+			{ x, y + h, x + cut, y + h }, { x, y + h, x, y + h - cut },
+			{ x + w, y + h, x + w - cut, y + h }, { x + w, y + h, x + w, y + h - cut },
+		}
+		for i, s in ipairs(seg) do
+			local l = p.lines[i]
+			if l then
+				pcall(function()
+					l.From = Vector2.new(s[1], s[2])
+					l.To = Vector2.new(s[3], s[4])
+					l.Color = colr
+					l.Thickness = 1
+					l.Visible = true
+				end)
+			end
 		end
 	end
+
+	--== screen furniture =======================================================
+	local cross = { draw("Line", { Visible = false }), draw("Line", { Visible = false }),
+		draw("Line", { Visible = false }), draw("Line", { Visible = false }) }
+	local crossDot = draw("Circle", { Filled = true, Radius = 1.5, Visible = false })
+	local fovRing = draw("Circle", { Filled = false, Thickness = 1, Visible = false })
+	local mark = draw("Text", { Size = 14, Center = false, Outline = true, Visible = false })
+
+	local fps, fpsAt, frames = 60, os.clock(), 0
+	local function ping()
+		local v = 0
+		pcall(function()
+			v = math.floor(game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue())
+		end)
+		return v
+	end
+
+	local function drawScreen()
+		local vp = Camera.ViewportSize
+		local cx, cy = vp.X / 2, vp.Y / 2
+
+		for i, l in ipairs(cross) do
+			if l then
+				pcall(function()
+					if not V.cross then l.Visible = false return end
+					local g, s = V.crossGap, V.crossSize
+					local a, b
+					if i == 1 then a, b = Vector2.new(cx - g - s, cy), Vector2.new(cx - g, cy)
+					elseif i == 2 then a, b = Vector2.new(cx + g, cy), Vector2.new(cx + g + s, cy)
+					elseif i == 3 then a, b = Vector2.new(cx, cy - g - s), Vector2.new(cx, cy - g)
+					else a, b = Vector2.new(cx, cy + g), Vector2.new(cx, cy + g + s) end
+					l.From, l.To = a, b
+					l.Color = V.crossColor
+					l.Thickness = V.crossThick
+					l.Visible = true
+				end)
+			end
+		end
+		if crossDot then
+			pcall(function()
+				crossDot.Visible = V.cross and V.crossDot
+				crossDot.Position = Vector2.new(cx, cy)
+				crossDot.Color = V.crossColor
+			end)
+		end
+		if fovRing then
+			pcall(function()
+				fovRing.Visible = V.fov
+				fovRing.Position = Vector2.new(cx, cy)
+				fovRing.Radius = V.fovRadius
+				fovRing.Color = V.fovColor
+				fovRing.Thickness = 1
+			end)
+		end
+		if mark then
+			pcall(function()
+				mark.Visible = V.mark
+				if not V.mark then return end
+				mark.Position = Vector2.new(14, 12)
+				mark.Color = Color3.fromRGB(235, 235, 240)
+				mark.Text = string.format("MollyHub  |  %s  |  %d fps  |  %d ms",
+					LocalPlayer.Name, math.floor(fps + 0.5), ping())
+			end)
+		end
+	end
+
+	--== the loop ===============================================================
+	local function anythingOn()
+		return V.chams or V.box or V.cross or V.fov or V.mark
+	end
+
+	local conn
+	local function stopLoop()
+		if conn then pcall(function() conn:Disconnect() end) conn = nil end
+		for pl in pairs(pool) do hidePool(pl) end
+		for pl in pairs(chams) do dropCham(pl) end
+		pcall(function()
+			for _, l in ipairs(cross) do if l then l.Visible = false end end
+			if crossDot then crossDot.Visible = false end
+			if fovRing then fovRing.Visible = false end
+			if mark then mark.Visible = false end
+		end)
+	end
+
+	local function startLoop()
+		if conn then return end
+		conn = RunService.RenderStepped:Connect(function(dt)
+			-- frame counter for the watermark
+			frames = frames + 1
+			if os.clock() - fpsAt >= 0.5 then
+				fps = frames / (os.clock() - fpsAt)
+				frames, fpsAt = 0, os.clock()
+			end
+
+			if not anythingOn() then return end
+			pollRoles()
+			drawScreen()
+
+			for _, player in ipairs(Players:GetPlayers()) do
+				if player ~= LocalPlayer then
+					local char = player.Character
+					local root = char and char:FindFirstChild("HumanoidRootPart")
+					local hum = char and char:FindFirstChildOfClass("Humanoid")
+					if not (char and root) then
+						hidePool(player)
+						dropCham(player)
+					else
+						updateCham(player, char)
+						local p = poolFor(player)
+						if not V.box or not p then
+							hidePool(player)
+						else
+							pcall(function()
+								local colr = colorFor(player)
+								local top, onTop = Camera:WorldToViewportPoint(root.Position + Vector3.new(0, 3.1, 0))
+								local bot = Camera:WorldToViewportPoint(root.Position - Vector3.new(0, 3.3, 0))
+								if not onTop then
+									for _, l in ipairs(p.lines) do l.Visible = false end
+									p.square.Visible = false
+									p.hpBack.Visible = false
+									p.hpFill.Visible = false
+									p.name.Visible = false
+									p.dist.Visible = false
+									return
+								end
+								local h = math.abs(bot.Y - top.Y)
+								local w = h * 0.52
+								local x, y = top.X - w / 2, top.Y
+
+								if V.boxCorners then
+									p.square.Visible = false
+									corners(p, x, y, w, h, colr)
+								else
+									for _, l in ipairs(p.lines) do l.Visible = false end
+									p.square.Position = Vector2.new(x, y)
+									p.square.Size = Vector2.new(w, h)
+									p.square.Color = colr
+									p.square.Visible = true
+								end
+
+								if V.boxHealth and hum and hum.MaxHealth > 0 then
+									local frac = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
+									local bx, bw = x - 6, 3
+									p.hpBack.Position = Vector2.new(bx, y)
+									p.hpBack.Size = Vector2.new(bw, h)
+									p.hpBack.Visible = true
+									p.hpFill.Position = Vector2.new(bx, y + h * (1 - frac))
+									p.hpFill.Size = Vector2.new(bw, h * frac)
+									p.hpFill.Color = Color3.fromRGB(
+										math.floor(255 * (1 - frac)), math.floor(230 * frac), 90)
+									p.hpFill.Visible = true
+								else
+									p.hpBack.Visible = false
+									p.hpFill.Visible = false
+								end
+
+								if V.boxName then
+									p.name.Text = player.Name
+									p.name.Color = colr
+									p.name.Position = Vector2.new(top.X, y - 16)
+									p.name.Visible = true
+								else
+									p.name.Visible = false
+								end
+
+								if V.boxDist then
+									local me = LocalPlayer.Character
+										and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+									local d = me and math.floor((me.Position - root.Position).Magnitude) or 0
+									local _, role = colorFor(player)
+									p.dist.Text = string.format("%s  %dm", string.lower(role), d)
+									p.dist.Position = Vector2.new(top.X, y + h + 2)
+									p.dist.Visible = true
+								else
+									p.dist.Visible = false
+								end
+							end)
+						end
+					end
+				end
+			end
+		end)
+	end
+
+	local function sync()
+		if anythingOn() then startLoop() else stopLoop() end
+	end
+
+	pcall(function()
+		Players.PlayerRemoving:Connect(function(player)
+			dropPool(player)
+			dropCham(player)
+		end)
+	end)
+
+	--== chams ==================================================================
+	VisTab:Section({ Title = "Chams" })
+	if not HAVE_DRAWING then
+		VisTab:Paragraph({
+			Title = "No Drawing library",
+			Desc = "Your executor has no Drawing API, so boxes, the crosshair, the aim "
+				.. "circle and the watermark cannot be shown. Chams and the world "
+				.. "settings work regardless.",
+			Color = "Red"
+		})
+	end
+	VisTab:Toggle({
+		Title = "Chams",
+		Desc = "players lit up in their role's colour",
+		Default = false,
+		Callback = function(on) V.chams = on sync() end
+	})
+	VisTab:Toggle({
+		Title = "Through walls",
+		Desc = "off = only when you could actually see them",
+		Default = true,
+		Callback = function(on) V.chamWalls = on end
+	})
+	VisTab:Toggle({
+		Title = "Outline",
+		Default = true,
+		Callback = function(on) V.chamOutline = on end
+	})
+	VisTab:Slider({
+		Title = "Fill",
+		Step = 0.05,
+		Value = { Min = 0, Max = 1, Default = 0.55 },
+		Callback = function(v) V.chamFill = v end
+	})
+	VisTab:Toggle({
+		Title = "Grey out the dead",
+		Default = true,
+		Callback = function(on) V.teamCheck = on end
+	})
+
+	--== boxes ==================================================================
+	VisTab:Section({ Title = "Boxes" })
+	VisTab:Toggle({
+		Title = "Boxes",
+		Default = false,
+		Callback = function(on) V.box = on sync() end
+	})
+	VisTab:Toggle({
+		Title = "Corner style",
+		Desc = "off = a full rectangle",
+		Default = true,
+		Callback = function(on) V.boxCorners = on end
+	})
+	VisTab:Toggle({
+		Title = "Health bar",
+		Default = true,
+		Callback = function(on) V.boxHealth = on end
+	})
+	VisTab:Toggle({
+		Title = "Names",
+		Default = true,
+		Callback = function(on) V.boxName = on end
+	})
+	VisTab:Toggle({
+		Title = "Role and distance",
+		Default = true,
+		Callback = function(on) V.boxDist = on end
+	})
+
+	--== colours ================================================================
+	VisTab:Section({ Title = "Colours" })
+	VisTab:Colorpicker({
+		Title = "Murderer",
+		Default = COL.Murderer,
+		Callback = function(c) COL.Murderer = c end
+	})
+	VisTab:Colorpicker({
+		Title = "Sheriff",
+		Default = COL.Sheriff,
+		Callback = function(c) COL.Sheriff = c end
+	})
+	VisTab:Colorpicker({
+		Title = "Innocent",
+		Default = COL.Innocent,
+		Callback = function(c) COL.Innocent = c end
+	})
+
+	--== crosshair ==============================================================
+	VisTab:Section({ Title = "Crosshair" })
+	VisTab:Toggle({
+		Title = "Crosshair",
+		Default = false,
+		Callback = function(on) V.cross = on sync() end
+	})
+	VisTab:Slider({
+		Title = "Length",
+		Step = 1,
+		Value = { Min = 2, Max = 30, Default = 9 },
+		Callback = function(v) V.crossSize = v end
+	})
+	VisTab:Slider({
+		Title = "Gap",
+		Step = 1,
+		Value = { Min = 0, Max = 20, Default = 4 },
+		Callback = function(v) V.crossGap = v end
+	})
+	VisTab:Slider({
+		Title = "Thickness",
+		Step = 1,
+		Value = { Min = 1, Max = 5, Default = 1 },
+		Callback = function(v) V.crossThick = v end
+	})
+	VisTab:Toggle({
+		Title = "Centre dot",
+		Default = false,
+		Callback = function(on) V.crossDot = on end
+	})
+	VisTab:Colorpicker({
+		Title = "Crosshair colour",
+		Default = V.crossColor,
+		Callback = function(c) V.crossColor = c end
+	})
+
+	--== aim circle =============================================================
+	VisTab:Section({ Title = "Aim circle" })
+	VisTab:Toggle({
+		Title = "Show the aim circle",
+		Desc = "the reach of camlock and auto shoot",
+		Default = false,
+		Callback = function(on) V.fov = on sync() end
+	})
+	VisTab:Slider({
+		Title = "Radius",
+		Step = 5,
+		Value = { Min = 30, Max = 600, Default = 120 },
+		Callback = function(v) V.fovRadius = v end
+	})
+	VisTab:Colorpicker({
+		Title = "Circle colour",
+		Default = V.fovColor,
+		Callback = function(c) V.fovColor = c end
+	})
+
+	--== watermark ==============================================================
+	VisTab:Section({ Title = "Watermark" })
+	VisTab:Toggle({
+		Title = "Watermark",
+		Desc = "name, frames and ping, top left",
+		Default = false,
+		Callback = function(on) V.mark = on sync() end
+	})
+
+	--== world ==================================================================
+	VisTab:Section({ Title = "World" })
+
+	local Lighting = game:GetService("Lighting")
+	local saved = {}
 	local function set(inst, prop, value)
 		pcall(function()
-			remember(inst, prop)
+			local key = tostring(inst) .. "." .. prop
+			if saved[key] == nil then saved[key] = { inst = inst, prop = prop, value = inst[prop] } end
 			inst[prop] = value
 		end)
 	end
@@ -207,34 +710,23 @@ do
 			saved[key] = nil
 		end
 	end
-
-	-- our own effects, named so they can be found again and removed
-	local function effect(class, name)
-		local found = Lighting:FindFirstChild(name)
-		if found then return found end
+	local function grading()
+		local g = Lighting:FindFirstChild("MH_Grade")
+		if g then return g end
 		local ok, made = pcall(function()
-			local e = Instance.new(class)
-			e.Name = name
-			e.Parent = Lighting
-			return e
+			local n = Instance.new("ColorCorrectionEffect")
+			n.Name = "MH_Grade"
+			n.Parent = Lighting
+			return n
 		end)
 		return ok and made or nil
 	end
-	local function dropEffect(name)
-		local found = Lighting:FindFirstChild(name)
-		if found then pcall(function() found:Destroy() end) end
-	end
 
-	--== light ==================================================================
-	VisTab:Section({ Title = "Light" })
-
-	local fullbright = false
 	VisTab:Toggle({
 		Title = "Fullbright",
 		Desc = "no dark corners, no shadows",
 		Default = false,
 		Callback = function(on)
-			fullbright = on
 			if on then
 				set(Lighting, "Ambient", Color3.fromRGB(178, 178, 178))
 				set(Lighting, "OutdoorAmbient", Color3.fromRGB(178, 178, 178))
@@ -251,97 +743,23 @@ do
 		end
 	})
 	VisTab:Toggle({
-		Title = "No fog",
+		Title = "Night mode",
+		Desc = "the map goes dark so the colours read",
 		Default = false,
 		Callback = function(on)
 			if on then
-				set(Lighting, "FogEnd", 100000)
-				set(Lighting, "FogStart", 100000)
+				set(Lighting, "ClockTime", 0)
+				set(Lighting, "Ambient", Color3.fromRGB(26, 28, 44))
+				set(Lighting, "OutdoorAmbient", Color3.fromRGB(26, 28, 44))
+				set(Lighting, "Brightness", 1)
 			else
-				restore(Lighting, "FogEnd")
-				restore(Lighting, "FogStart")
-			end
-		end
-	})
-	VisTab:Slider({
-		Title = "Time of day",
-		Step = 0.5,
-		Value = { Min = 0, Max = 24, Default = 14 },
-		Callback = function(v)
-			set(Lighting, "ClockTime", v)
-		end
-	})
-	VisTab:Slider({
-		Title = "Brightness",
-		Step = 0.1,
-		Value = { Min = 0, Max = 5, Default = 2 },
-		Callback = function(v)
-			if not fullbright then remember(Lighting, "Brightness") end
-			pcall(function() Lighting.Brightness = v end)
-		end
-	})
-
-	--== mood ===================================================================
-	VisTab:Section({ Title = "Mood" })
-
-	-- Presets are pure Lighting values, so they need no assets and cannot fail
-	-- to load. Each one is a whole look rather than a single knob.
-	local MOODS = {
-		Default   = false,
-		Midnight  = { ClockTime = 0,    Ambient = Color3.fromRGB(28, 32, 60),   Outdoor = Color3.fromRGB(30, 36, 70),
-			Brightness = 1,   Fog = Color3.fromRGB(12, 14, 30),  Density = 0.42, Haze = 1.4, Glare = 0.1 },
-		Sunset    = { ClockTime = 17.4, Ambient = Color3.fromRGB(92, 60, 48),   Outdoor = Color3.fromRGB(120, 74, 52),
-			Brightness = 2.2, Fog = Color3.fromRGB(196, 118, 78), Density = 0.34, Haze = 2.6, Glare = 0.35 },
-		Overcast  = { ClockTime = 11,   Ambient = Color3.fromRGB(120, 124, 132), Outdoor = Color3.fromRGB(128, 132, 140),
-			Brightness = 1.4, Fog = Color3.fromRGB(150, 154, 162), Density = 0.5,  Haze = 3.2, Glare = 0 },
-		Void      = { ClockTime = 2,    Ambient = Color3.fromRGB(0, 0, 0),      Outdoor = Color3.fromRGB(0, 0, 0),
-			Brightness = 0.4, Fog = Color3.fromRGB(0, 0, 0),     Density = 0.6,  Haze = 0,   Glare = 0 },
-		Aurora    = { ClockTime = 1.2,  Ambient = Color3.fromRGB(36, 74, 84),   Outdoor = Color3.fromRGB(44, 96, 108),
-			Brightness = 1.6, Fog = Color3.fromRGB(28, 78, 92),   Density = 0.38, Haze = 2.0, Glare = 0.25 },
-	}
-	local MOOD_NAMES = { "Default", "Midnight", "Sunset", "Overcast", "Void", "Aurora" }
-
-	VisTab:Dropdown({
-		Title = "Mood",
-		Desc = "a whole look, not one setting",
-		Values = MOOD_NAMES,
-		Value = "Default",
-		Callback = function(name)
-			local m = MOODS[tostring(name)]
-			if not m then
 				restore(Lighting, "ClockTime")
 				restore(Lighting, "Ambient")
 				restore(Lighting, "OutdoorAmbient")
 				restore(Lighting, "Brightness")
-				restore(Lighting, "FogColor")
-				dropEffect("MH_Atmosphere")
-				return
-			end
-			set(Lighting, "ClockTime", m.ClockTime)
-			set(Lighting, "Ambient", m.Ambient)
-			set(Lighting, "OutdoorAmbient", m.Outdoor)
-			set(Lighting, "Brightness", m.Brightness)
-			set(Lighting, "FogColor", m.Fog)
-			local atm = effect("Atmosphere", "MH_Atmosphere")
-			if atm then
-				pcall(function()
-					atm.Density = m.Density
-					atm.Haze = m.Haze
-					atm.Glare = m.Glare
-					atm.Color = m.Fog
-				end)
 			end
 		end
 	})
-
-	--== grade ==================================================================
-	VisTab:Section({ Title = "Grade" })
-
-	local grade
-	local function grading()
-		grade = grade or effect("ColorCorrectionEffect", "MH_Grade")
-		return grade
-	end
 	VisTab:Slider({
 		Title = "Saturation",
 		Step = 0.05,
@@ -360,234 +778,25 @@ do
 			if g then pcall(function() g.Contrast = v end) end
 		end
 	})
-	VisTab:Colorpicker({
-		Title = "Tint",
-		Default = Color3.fromRGB(255, 255, 255),
-		Callback = function(c)
-			local g = grading()
-			if g then pcall(function() g.TintColor = c end) end
-		end
-	})
-	VisTab:Button({
-		Title = "Reset grade",
-		Callback = function()
-			dropEffect("MH_Grade")
-			grade = nil
-		end
-	})
-
-	--== effects ================================================================
-	VisTab:Section({ Title = "Effects" })
-
-	VisTab:Toggle({
-		Title = "Bloom",
-		Desc = "bright things glow",
-		Default = false,
-		Callback = function(on)
-			if not on then return dropEffect("MH_Bloom") end
-			local b = effect("BloomEffect", "MH_Bloom")
-			if b then
-				pcall(function()
-					b.Intensity = 0.9
-					b.Size = 24
-					b.Threshold = 0.9
-				end)
-			end
-		end
-	})
-	VisTab:Slider({
-		Title = "Bloom strength",
-		Step = 0.05,
-		Value = { Min = 0, Max = 4, Default = 0.9 },
-		Callback = function(v)
-			local b = Lighting:FindFirstChild("MH_Bloom")
-			if b then pcall(function() b.Intensity = v end) end
-		end
-	})
-	VisTab:Toggle({
-		Title = "Sun rays",
-		Default = false,
-		Callback = function(on)
-			if not on then return dropEffect("MH_Rays") end
-			local r = effect("SunRaysEffect", "MH_Rays")
-			if r then
-				pcall(function()
-					r.Intensity = 0.2
-					r.Spread = 0.9
-				end)
-			end
-		end
-	})
-	VisTab:Toggle({
-		Title = "Depth of field",
-		Desc = "the distance goes soft",
-		Default = false,
-		Callback = function(on)
-			if not on then return dropEffect("MH_DOF") end
-			local d = effect("DepthOfFieldEffect", "MH_DOF")
-			if d then
-				pcall(function()
-					d.FarIntensity = 0.6
-					d.NearIntensity = 0
-					d.FocusDistance = 40
-					d.InFocusRadius = 60
-				end)
-			end
-		end
-	})
-
-	--== world ==================================================================
-	VisTab:Section({ Title = "World" })
-
-	-- LocalTransparencyModifier is a client-only property: the server never
-	-- hears about it, and it is exactly what the game itself uses to hide your
-	-- own head in first person.
-	local seeThrough = {}
-	VisTab:Toggle({
-		Title = "See through walls",
-		Desc = "the map only — players are left alone",
-		Default = false,
-		Callback = function(on)
-			if not on then
-				for part in pairs(seeThrough) do
-					pcall(function() part.LocalTransparencyModifier = 0 end)
-				end
-				seeThrough = {}
-				return
-			end
-			local chars = {}
-			for _, pl in ipairs(game:GetService("Players"):GetPlayers()) do
-				if pl.Character then chars[pl.Character] = true end
-			end
-			for _, d in ipairs(workspace:GetDescendants()) do
-				if d:IsA("BasePart") and d.Transparency < 1 then
-					local mine = false
-					for c in pairs(chars) do
-						if d:IsDescendantOf(c) then mine = true break end
-					end
-					if not mine then
-						pcall(function() d.LocalTransparencyModifier = 0.65 end)
-						seeThrough[d] = true
-					end
-				end
-			end
-		end
-	})
-	VisTab:Toggle({
-		Title = "Hide clutter",
-		Desc = "particles, smoke and decals off",
-		Default = false,
-		Callback = function(on)
-			for _, d in ipairs(workspace:GetDescendants()) do
-				if d:IsA("ParticleEmitter") or d:IsA("Smoke") or d:IsA("Fire")
-					or d:IsA("Sparkles") or d:IsA("Decal") then
-					if on then set(d, "Enabled", false) else restore(d, "Enabled") end
-				end
-			end
-		end
-	})
-
-	--== you ====================================================================
-	VisTab:Section({ Title = "You" })
-
-	local neon, trail = false, nil
-	local function paintMe()
-		local char = LocalPlayer.Character
-		if not char then return end
-		for _, d in ipairs(char:GetDescendants()) do
-			if d:IsA("BasePart") and d.Name ~= "HumanoidRootPart" then
-				if neon then set(d, "Material", Enum.Material.Neon) else restore(d, "Material") end
-			end
-		end
-	end
-	VisTab:Toggle({
-		Title = "Neon body",
-		Desc = "your character glows — only you see it",
-		Default = false,
-		Callback = function(on)
-			neon = on
-			paintMe()
-		end
-	})
-
-	local trailColour = Color3.fromRGB(139, 124, 255)
-	local function makeTrail()
-		local char = LocalPlayer.Character
-		local root = char and char:FindFirstChild("HumanoidRootPart")
-		if not root then return end
-		if trail then pcall(function() trail:Destroy() end) end
-		pcall(function()
-			local a0 = Instance.new("Attachment")
-			a0.Name = "MH_TrailA"
-			a0.Position = Vector3.new(0, 1.4, 0)
-			a0.Parent = root
-			local a1 = Instance.new("Attachment")
-			a1.Name = "MH_TrailB"
-			a1.Position = Vector3.new(0, -1.4, 0)
-			a1.Parent = root
-			trail = Instance.new("Trail")
-			trail.Name = "MH_Trail"
-			trail.Attachment0 = a0
-			trail.Attachment1 = a1
-			trail.Lifetime = 0.6
-			trail.LightEmission = 1
-			trail.Color = ColorSequence.new(trailColour)
-			trail.Parent = root
-		end)
-	end
-	VisTab:Toggle({
-		Title = "Trail",
-		Default = false,
-		Callback = function(on)
-			if on then
-				makeTrail()
-			elseif trail then
-				pcall(function() trail:Destroy() end)
-				trail = nil
-			end
-		end
-	})
-	VisTab:Colorpicker({
-		Title = "Trail colour",
-		Default = trailColour,
-		Callback = function(c)
-			trailColour = c
-			if trail then pcall(function() trail.Color = ColorSequence.new(c) end) end
-		end
-	})
-
-	-- a fresh character loses everything that was hung on the old one
-	pcall(function()
-		LocalPlayer.CharacterAdded:Connect(function()
-			task.wait(0.6)
-			if neon then paintMe() end
-			if trail then makeTrail() end
-		end)
-	end)
 
 	--== undo ===================================================================
 	VisTab:Section({ Title = "Undo" })
 	VisTab:Button({
-		Title = "Put everything back",
-		Desc = "restores the world and drops every effect",
+		Title = "Turn everything off",
+		Desc = "clears the overlay and puts the world back",
 		Callback = function()
-			for _, name in ipairs({ "MH_Grade", "MH_Bloom", "MH_Rays", "MH_DOF", "MH_Atmosphere" }) do
-				dropEffect(name)
-			end
-			grade = nil
-			for part in pairs(seeThrough) do
-				pcall(function() part.LocalTransparencyModifier = 0 end)
-			end
-			seeThrough = {}
-			if trail then pcall(function() trail:Destroy() end) trail = nil end
-			neon = false
+			V.chams, V.box, V.cross, V.fov, V.mark = false, false, false, false, false
+			stopLoop()
+			for pl in pairs(pool) do dropPool(pl) end
+			local g = Lighting:FindFirstChild("MH_Grade")
+			if g then pcall(function() g:Destroy() end) end
 			for _, e in pairs(saved) do
 				pcall(function() e.inst[e.prop] = e.value end)
 			end
 			saved = {}
 			_Raw:Notify({
 				Title = "Visuals",
-				Content = "everything back the way it was",
+				Content = "overlay off, world back",
 				Duration = 4
 			})
 		end
