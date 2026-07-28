@@ -322,7 +322,7 @@ K:Toggle({ Title = "Keep the game's placement",
 
 K:Section({ Title = "What do I know?" })
 K:Button({ Title = "Count the skins I have",
-	Desc = "built in = shipped with the script, on disk = what you learned",
+	Desc = "on disk = what you learned; names known = the list that ships with it",
 	Callback = function()
 		UI:Notify({ Title = "Skins", Duration = 10, Content = MH_skinCounts() })
 	end })
