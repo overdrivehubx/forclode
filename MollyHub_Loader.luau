@@ -31,6 +31,13 @@ local SCRIPTS = {
 			.. "body and in your hand. No trade tabs.",
 		tag = "LIGHT",
 	},
+	{
+		name = "MollyHub",
+		file = "MollyHub_MM2.luau",
+		desc = "The whole game: roles, sheriff and murderer tools, ESP, farming, "
+			.. "teleports, player tweaks and trolling.",
+		tag = "HUB",
+	},
 }
 
 local function fetch(url)

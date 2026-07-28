@@ -203,6 +203,7 @@ local PICK_W = 250
 local openPicker
 local function showPicker(win, title, values, current, onPick, opts)
 	opts = opts or {}
+	opts.Selected = opts.Selected or {}
 	if openPicker then pcall(function() openPicker:Destroy() end) openPicker = nil end
 	local card = win._card
 	local p = new("Frame", { BackgroundColor3 = C.Bg, Size = UDim2.fromOffset(PICK_W, 340),
@@ -300,6 +301,24 @@ local function showPicker(win, title, values, current, onPick, opts)
 			row.MouseLeave:Connect(function()
 				tw(row, 0.1, { BackgroundColor3 = sel and C.Raised or C.Surface })
 			end)
+			-- a multi picker stays open and keeps a tick beside everything chosen
+			if opts.Multi then
+				local mark = new("Frame", { BackgroundColor3 = opts.Selected[value] and C.Accent or C.Raised,
+					AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0),
+					Size = UDim2.fromOffset(16, 16), ZIndex = 34 }, row)
+				round(mark, 5)
+				row.MouseButton1Click:Connect(function()
+					opts.Selected[value] = (not opts.Selected[value]) or nil
+					tw(mark, 0.1, { BackgroundColor3 = opts.Selected[value] and C.Accent or C.Raised })
+					if onPick then
+						local list = {}
+						for k in pairs(opts.Selected) do list[#list + 1] = k end
+						table.sort(list, function(a, b) return tostring(a) < tostring(b) end)
+						task.spawn(function() pcall(onPick, list) end)
+					end
+				end)
+				return row
+			end
 			row.MouseButton1Click:Connect(function()
 				pcall(function() p:Destroy() end) openPicker = nil
 				if onPick then task.spawn(function() pcall(onPick, value) end) end
@@ -338,6 +357,112 @@ local function showPicker(win, title, values, current, onPick, opts)
 end
 
 --==============================================================================
+-- COLOUR — the same side panel, with three channels and a row of presets
+--==============================================================================
+local openColor
+local function showColor(win, title, colr, onChange)
+	if openColor then pcall(function() openColor:Destroy() end) openColor = nil end
+	local card = win._card
+	local p = new("Frame", { BackgroundColor3 = C.Bg, Size = UDim2.fromOffset(PICK_W, 232),
+		ZIndex = 30 }, win._gui)
+	openColor = p
+	round(p, R_CARD); edge(p, C.Edge, 0.1)
+	new("UIScale", { Scale = tonumber(_G.MH_MenuScale) or 1 }, p)
+	pcall(function()
+		local a, s = card.AbsolutePosition, card.AbsoluteSize
+		local v = viewport()
+		if a.X + s.X + PICK_W + 10 < v.X then p.Position = UDim2.fromOffset(a.X + s.X + 10, a.Y)
+		elseif a.X - PICK_W - 10 > 0 then p.Position = UDim2.fromOffset(a.X - PICK_W - 10, a.Y)
+		else p.Position = UDim2.fromOffset(a.X, a.Y + s.Y + 8) end
+	end)
+
+	local head = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 44),
+		ZIndex = 31 }, p)
+	local ttl = label(head, title, 13, C.Ink, true)
+	ttl.Position = UDim2.fromOffset(14, 0); ttl.Size = UDim2.new(1, -50, 1, 0); ttl.ZIndex = 32
+	local x = new("TextButton", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(24, 24), ZIndex = 32,
+		Font = FB, TextSize = 15, TextColor3 = C.Ink3, Text = "X", AutoButtonColor = false }, head)
+	x.MouseButton1Click:Connect(function() pcall(function() p:Destroy() end) openColor = nil end)
+	draggable(p, head)
+
+	local preview = new("Frame", { BackgroundColor3 = colr, Position = UDim2.fromOffset(12, 42),
+		Size = UDim2.new(1, -24, 0, 34), ZIndex = 31 }, p)
+	round(preview, R_CHIP); edge(preview, C.Edge, 0.2)
+
+	local r, g, b = colr.R, colr.G, colr.B
+	local function push()
+		colr = Color3.new(r, g, b)
+		preview.BackgroundColor3 = colr
+		if onChange then task.spawn(function() pcall(onChange, colr) end) end
+	end
+
+	local bars = {}
+	local function channel(i, name, get, set)
+		local y = 86 + (i - 1) * 34
+		local tag = label(p, name, 10.5, C.Ink3, true)
+		tag.Position = UDim2.fromOffset(14, y); tag.Size = UDim2.fromOffset(14, 14); tag.ZIndex = 31
+		local bar = new("Frame", { BackgroundColor3 = C.Raised, Position = UDim2.fromOffset(32, y + 4),
+			Size = UDim2.new(1, -80, 0, 6), ZIndex = 31 }, p)
+		round(bar, 3)
+		local fill = new("Frame", { BackgroundColor3 = C.Ink2, BorderSizePixel = 0, ZIndex = 32,
+			Size = UDim2.fromScale(get(), 1) }, bar)
+		round(fill, 3)
+		local read = label(p, tostring(math.floor(get() * 255 + 0.5)), 10.5, C.Ink2)
+		read.AnchorPoint = Vector2.new(1, 0); read.Position = UDim2.new(1, -14, 0, y)
+		read.Size = UDim2.fromOffset(30, 14); read.ZIndex = 31
+		read.TextXAlignment = Enum.TextXAlignment.Right
+		local hit = new("TextButton", { BackgroundTransparency = 1, Text = "", ZIndex = 33,
+			AutoButtonColor = false, Position = UDim2.fromOffset(32, y),
+			Size = UDim2.new(1, -80, 0, 22) }, p)
+		local held = false
+		local function at(px)
+			local rel = math.clamp((px - bar.AbsolutePosition.X) / math.max(1, bar.AbsoluteSize.X), 0, 1)
+			set(rel)
+			fill.Size = UDim2.fromScale(rel, 1)
+			read.Text = tostring(math.floor(rel * 255 + 0.5))
+			push()
+		end
+		hit.InputBegan:Connect(function(i)
+			if i.UserInputType == Enum.UserInputType.MouseButton1
+				or i.UserInputType == Enum.UserInputType.Touch then held = true at(i.Position.X) end
+		end)
+		UserInput.InputChanged:Connect(function(i)
+			if held and (i.UserInputType == Enum.UserInputType.MouseMovement
+				or i.UserInputType == Enum.UserInputType.Touch) then at(i.Position.X) end
+		end)
+		UserInput.InputEnded:Connect(function(i)
+			if i.UserInputType == Enum.UserInputType.MouseButton1
+				or i.UserInputType == Enum.UserInputType.Touch then held = false end
+		end)
+		bars[i] = { fill = fill, read = read }
+	end
+	channel(1, "R", function() return r end, function(v) r = v end)
+	channel(2, "G", function() return g end, function(v) g = v end)
+	channel(3, "B", function() return b end, function(v) b = v end)
+
+	local presets = { Color3.fromRGB(255, 255, 255), Color3.fromRGB(255, 70, 70),
+		Color3.fromRGB(255, 170, 40), Color3.fromRGB(250, 220, 60), Color3.fromRGB(60, 220, 130),
+		Color3.fromRGB(70, 170, 255), Color3.fromRGB(150, 110, 255), Color3.fromRGB(20, 20, 24) }
+	for i, c in ipairs(presets) do
+		local sw = new("TextButton", { BackgroundColor3 = c, ZIndex = 32, Text = "",
+			AutoButtonColor = false, Size = UDim2.fromOffset(22, 22),
+			Position = UDim2.fromOffset(12 + (i - 1) * 28, 192) }, p)
+		round(sw, 7)
+		sw.MouseButton1Click:Connect(function()
+			r, g, b = c.R, c.G, c.B
+			for j, ch in ipairs(bars) do
+				local v = (j == 1 and r) or (j == 2 and g) or b
+				ch.fill.Size = UDim2.fromScale(v, 1)
+				ch.read.Text = tostring(math.floor(v * 255 + 0.5))
+			end
+			push()
+		end)
+	end
+	return p
+end
+
+--==============================================================================
 -- WIDGETS
 --==============================================================================
 local Tab = {}
@@ -350,6 +475,32 @@ local function shell(tab, h)
 		LayoutOrder = tab:_order() }, tab._body)
 	round(row, R_ROW)
 	return row
+end
+
+-- Rubis calls it Desc in some widgets and Description in others, and a script
+-- written against it uses both. Take either.
+local function descOf(o)
+	local d = o.Desc
+	if d == nil or tostring(d) == "" then d = o.Description end
+	return d
+end
+
+-- Rubis sliders carry Value = { Min, Max, Default }; ours took them flat. Read
+-- both, so one script can drive either library.
+local function rangeOf(o)
+	local v = (type(o.Value) == "table") and o.Value or nil
+	local lo = tonumber(o.Min) or (v and tonumber(v.Min)) or 0
+	local hi = tonumber(o.Max) or (v and tonumber(v.Max)) or 100
+	local def = tonumber(o.Default) or (v and tonumber(v.Default))
+		or (type(o.Value) == "number" and o.Value) or lo
+	return lo, hi, def, tonumber(o.Step) or 0
+end
+
+-- Default is ours, Value is theirs; false must survive either way.
+local function boolOf(o)
+	local v = o.Default
+	if v == nil then v = o.Value end
+	return v and true or false
 end
 
 -- title on top, quiet description under it
@@ -384,21 +535,29 @@ function Tab:Paragraph(o)
 		AutomaticSize = Enum.AutomaticSize.Y }, row)
 	pad(box, 12, 14, 13, 14)
 	col(box, 4)
-	label(box, o.Title, 12.5, C.Ink, true).Size = UDim2.new(1, 0, 0, 15)
-	local d = label(box, o.Desc or o.Content, 11.5, C.Ink2)
+	local t = label(box, o.Title, 12.5, C.Ink, true)
+	t.Size = UDim2.new(1, 0, 0, 15)
+	local d = label(box, descOf(o) or o.Content, 11.5, C.Ink2)
 	d.Size = UDim2.new(1, 0, 0, 0); d.AutomaticSize = Enum.AutomaticSize.Y; d.TextWrapped = true
-	return { Instance = row, Set = function(_, v) d.Text = tostring(v) end }
+	-- MM2 role readouts are rewritten several times a second, and they arrive as
+	-- rich text: <font color=...> and the rest, which is why RichText is on.
+	d.RichText = true
+	local function set(v) d.Text = tostring(v) end
+	return { Instance = row, Set = function(_, v) set(v) end,
+		SetDesc = function(_, v) set(v) end,
+		SetTitle = function(_, v) t.Text = tostring(v) end }
 end
 
 -- Neutral unless asked otherwise. Style = "primary" fills with the accent,
 -- "danger" reddens the label and leaves the surface alone.
 function Tab:Button(o)
 	o = o or {}
-	local hasDesc = o.Desc and tostring(o.Desc) ~= ""
+	local desc = descOf(o)
+	local hasDesc = desc and tostring(desc) ~= ""
 	local row = shell(self, hasDesc and 52 or 40)
 	local style = tostring(o.Style or ""):lower()
 	if style == "primary" then row.BackgroundColor3 = C.Accent end
-	local box = caption(row, o.Title, o.Desc, 34)
+	local box = caption(row, o.Title, desc, 34)
 	for _, c in ipairs(box:GetChildren()) do
 		if c:IsA("TextLabel") then
 			if style == "primary" then
@@ -431,10 +590,11 @@ end
 
 function Tab:Toggle(o)
 	o = o or {}
-	local hasDesc = o.Desc and tostring(o.Desc) ~= ""
+	local desc = descOf(o)
+	local hasDesc = desc and tostring(desc) ~= ""
 	local row = shell(self, hasDesc and 52 or 44)
-	caption(row, o.Title, o.Desc, 74)
-	local on = o.Default and true or false
+	caption(row, o.Title, desc, 74)
+	local on = boolOf(o)
 	local track = new("Frame", { BackgroundColor3 = on and C.Accent or C.Raised,
 		AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -14, 0.5, 0),
 		Size = UDim2.fromOffset(38, 22) }, row)
@@ -478,12 +638,21 @@ end
 
 function Tab:Slider(o)
 	o = o or {}
-	local lo, hi = tonumber(o.Min) or 0, tonumber(o.Max) or 100
-	local val = math.clamp(tonumber(o.Default) or lo, lo, hi)
+	local lo, hi, def, step = rangeOf(o)
+	local val = math.clamp(def, lo, hi)
+	-- a step of 0.05 must not be rounded to whole numbers
+	local function snap(v)
+		if step > 0 then v = math.floor(v / step + 0.5) * step else v = math.floor(v + 0.5) end
+		return math.clamp(v, lo, hi)
+	end
+	local function shownText(v)
+		if step > 0 and step < 1 then return string.format("%.2f", v) end
+		return tostring(math.floor(v + 0.5))
+	end
 	local row = shell(self, 60)
 	local l = label(row, o.Title, 11, C.Ink3, true)
 	l.Position = UDim2.fromOffset(14, 10); l.Size = UDim2.new(1, -70, 0, 13)
-	local read = label(row, tostring(val), 12, C.Ink, true)
+	local read = label(row, shownText(val), 12, C.Ink, true)
 	read.AnchorPoint = Vector2.new(1, 0); read.Position = UDim2.new(1, -14, 0, 9)
 	read.Size = UDim2.fromOffset(50, 14); read.TextXAlignment = Enum.TextXAlignment.Right
 	local bar = new("Frame", { BackgroundColor3 = C.Raised, Position = UDim2.fromOffset(14, 36),
@@ -494,8 +663,9 @@ function Tab:Slider(o)
 	round(fill, 3)
 	local function setX(x)
 		local rel = math.clamp((x - bar.AbsolutePosition.X) / math.max(1, bar.AbsoluteSize.X), 0, 1)
-		val = math.floor(lo + rel * (hi - lo) + 0.5)
-		fill.Size = UDim2.fromScale(rel, 1); read.Text = tostring(val)
+		val = snap(lo + rel * (hi - lo))
+		fill.Size = UDim2.fromScale((val - lo) / math.max(1e-6, hi - lo), 1)
+		read.Text = shownText(val)
 		if o.Callback then task.spawn(function() pcall(o.Callback, val) end) end
 	end
 	local hit = new("TextButton", { BackgroundTransparency = 1, Text = "", AutoButtonColor = false,
@@ -515,8 +685,8 @@ function Tab:Slider(o)
 	end)
 	return { Instance = row, Get = function() return val end, Set = function(_, v)
 		val = math.clamp(tonumber(v) or lo, lo, hi)
-		fill.Size = UDim2.fromScale((val - lo) / math.max(1, hi - lo), 1)
-		read.Text = tostring(val)
+		fill.Size = UDim2.fromScale((val - lo) / math.max(1e-6, hi - lo), 1)
+		read.Text = shownText(val)
 	end }
 end
 
@@ -525,8 +695,9 @@ end
 -- never fires a bind — Roblox marks those presses as already handled.
 function Tab:Keybind(o)
 	o = o or {}
-	local row = shell(self, (o.Desc and tostring(o.Desc) ~= "") and 50 or 40)
-	caption(row, o.Title, o.Desc, 92)
+	local desc = descOf(o)
+	local row = shell(self, (desc and tostring(desc) ~= "") and 50 or 40)
+	caption(row, o.Title, desc, 92)
 	local chip = new("TextButton", { BackgroundColor3 = C.Raised, AnchorPoint = Vector2.new(1, 0.5),
 		Position = UDim2.new(1, -14, 0.5, 0), Size = UDim2.fromOffset(70, 26), Font = FB,
 		TextSize = 11.5, TextColor3 = C.Ink2, Text = "None", AutoButtonColor = false }, row)
@@ -587,26 +758,127 @@ end
 function Tab:Dropdown(o)
 	o = o or {}
 	local values, chosen = o.Values or {}, o.Value
+	local multi = o.Multi and true or false
+	local picked = {}                       -- multi: a set of the chosen values
+	if multi and type(o.Value) == "table" then
+		for _, v in ipairs(o.Value) do picked[v] = true end
+	end
 	local row = shell(self, 66)
 	local l = label(row, o.Title, 11, C.Ink3, true)
 	l.Position = UDim2.fromOffset(14, 10); l.Size = UDim2.new(1, -28, 0, 13)
 	local btn = new("TextButton", { BackgroundColor3 = C.Raised, Position = UDim2.fromOffset(12, 28),
 		Size = UDim2.new(1, -24, 0, 30), Font = F, TextSize = 12.5, TextColor3 = C.Ink,
 		TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false,
-		Text = "   " .. tostring((chosen ~= nil and chosen ~= "") and chosen or "Choose...") }, row)
+		TextTruncate = Enum.TextTruncate.AtEnd, Text = "" }, row)
 	round(btn, R_CHIP)
 	local car = label(btn, ">", 12, C.Ink3, true)
 	car.AnchorPoint = Vector2.new(1, 0.5); car.Position = UDim2.new(1, -11, 0.5, 0)
 	car.Size = UDim2.fromOffset(10, 16); car.TextXAlignment = Enum.TextXAlignment.Right
+
+	local function list()
+		local out = {}
+		for k in pairs(picked) do out[#out + 1] = k end
+		table.sort(out, function(a, b) return tostring(a) < tostring(b) end)
+		return out
+	end
+	local function paint()
+		if multi then
+			local sel = list()
+			btn.Text = (#sel == 0) and "   Choose..." or ("   " .. table.concat(sel, ", "))
+		else
+			btn.Text = "   " .. tostring((chosen ~= nil and chosen ~= "") and chosen or "Choose...")
+		end
+	end
+	paint()
+
 	btn.MouseButton1Click:Connect(function()
-		showPicker(self._win, o.Title, values, chosen, function(v)
-			chosen = v; btn.Text = "   " .. tostring(v)
-			if o.Callback then pcall(o.Callback, v) end
-		end)
+		if multi then
+			showPicker(self._win, o.Title, values, nil, function(sel)
+				paint()
+				if o.Callback then pcall(o.Callback, sel) end
+			end, { Multi = true, Selected = picked })
+		else
+			showPicker(self._win, o.Title, values, chosen, function(v)
+				chosen = v; paint()
+				if o.Callback then pcall(o.Callback, v) end
+			end)
+		end
 	end)
-	return { Instance = row, Refresh = function(_, v) values = v or {} end,
-		Set = function(_, v) chosen = v; btn.Text = "   " .. tostring(v) end,
-		Get = function() return chosen end }
+	return {
+		Instance = row,
+		Refresh = function(_, v)
+			values = v or {}
+			-- drop anything that is no longer on offer (players who left)
+			if multi then
+				local have = {}
+				for _, x in ipairs(values) do have[x] = true end
+				for k in pairs(picked) do if not have[k] then picked[k] = nil end end
+				paint()
+			end
+		end,
+		Set = function(_, v)
+			if multi and type(v) == "table" then
+				picked = {}
+				for _, x in ipairs(v) do picked[x] = true end
+			else
+				chosen = v
+			end
+			paint()
+		end,
+		Select = function(_, v)
+			if multi and type(v) == "table" then
+				picked = {}
+				for _, x in ipairs(v) do picked[x] = true end
+			else
+				chosen = v
+			end
+			paint()
+		end,
+		Get = function() if multi then return list() end return chosen end,
+	}
+end
+
+-- A hairline between groups of rows, and a bit of air. Both are Rubis calls a
+-- script leans on for rhythm, and both cost one small frame.
+function Tab:Divider()
+	local row = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 9),
+		LayoutOrder = self:_order() }, self._body)
+	new("Frame", { BackgroundColor3 = C.Edge, BorderSizePixel = 0, BackgroundTransparency = 0.3,
+		AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 4, 0.5, 0),
+		Size = UDim2.new(1, -8, 0, 1) }, row)
+	return { Instance = row }
+end
+
+function Tab:Space(h)
+	local row = new("Frame", { BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, tonumber(h) or 6), LayoutOrder = self:_order() }, self._body)
+	return { Instance = row }
+end
+
+-- A colour, picked in its own panel: three channels and a row of presets. The
+-- swatch on the row is the value, so a page of colour settings reads at a
+-- glance instead of as a list of words.
+function Tab:Colorpicker(o)
+	o = o or {}
+	local desc = descOf(o)
+	local row = shell(self, (desc and tostring(desc) ~= "") and 50 or 44)
+	caption(row, o.Title, desc, 74)
+	local colr = C.Accent
+	if typeof(o.Default) == "Color3" then colr = o.Default
+	elseif typeof(o.Value) == "Color3" then colr = o.Value end
+	local sw = new("TextButton", { BackgroundColor3 = colr, AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -14, 0.5, 0), Size = UDim2.fromOffset(46, 24), Text = "",
+		AutoButtonColor = false }, row)
+	round(sw, 8); edge(sw, C.Edge, 0.2)
+	local function fire()
+		sw.BackgroundColor3 = colr
+		if o.Callback then task.spawn(function() pcall(o.Callback, colr) end) end
+	end
+	sw.MouseButton1Click:Connect(function()
+		showColor(self._win, o.Title or "Colour", colr, function(c) colr = c fire() end)
+	end)
+	return { Instance = row, Get = function() return colr end,
+		Set = function(_, c) if typeof(c) == "Color3" then colr = c fire() end end }
 end
 
 -- An item icon: MM2 stores these as thumbnail urls, and an ImageLabel wants an
@@ -1083,7 +1355,8 @@ function Window:Tab(o)
 		round(mark, 1)
 	end
 
-	local tab = setmetatable({ _body = page, _btn = btn, _mark = mark, _win = self, Title = title }, Tab)
+	local tab = setmetatable({ _body = page, _btn = btn, _mark = mark, _win = self, Title = title,
+		Group = o.Group }, Tab)
 	self._tabs[#self._tabs + 1] = tab
 	self._byTitle[title] = tab
 
@@ -1103,14 +1376,174 @@ function Window:Tab(o)
 			end
 		end
 	end
-	if btn then btn.MouseButton1Click:Connect(activate) end
+	tab._activate = function()
+		self._active = tab
+		activate()
+		self:_syncTabs()
+	end
+	if btn then btn.MouseButton1Click:Connect(tab._activate) end
 	if not self._active and shown then self._active = tab activate() end
+	self:_syncTabs()
 	return tab
+end
+
+-- With a handful of tabs the bar is the fastest thing there is. With eleven it
+-- becomes a thing to scroll before you can even start, so past a point the bar
+-- collapses into one button that opens the list — grouped by section, since a
+-- script that bothers to group its tabs means it.
+function Window:_syncTabs()
+	local shown = {}
+	for _, t in ipairs(self._tabs) do if t._btn then shown[#shown + 1] = t end end
+	local many = #shown > 5
+	for _, t in ipairs(shown) do t._btn.Visible = not many end
+	if not self._menuBtn then
+		self._menuBtn = new("TextButton", { BackgroundColor3 = C.Surface, Visible = false,
+			Size = UDim2.new(1, -4, 0, 30), LayoutOrder = -1, Font = FB,
+			TextSize = 12.5, TextColor3 = C.Ink, AutoButtonColor = false, ZIndex = 3,
+			TextXAlignment = Enum.TextXAlignment.Left, Text = "" }, self._tabbar)
+		round(self._menuBtn, R_CHIP)
+		local car = label(self._menuBtn, "v", 11, C.Ink3, true)
+		car.AnchorPoint = Vector2.new(1, 0.5); car.Position = UDim2.new(1, -12, 0.5, 0)
+		car.Size = UDim2.fromOffset(10, 14); car.TextXAlignment = Enum.TextXAlignment.Right
+		self._menuBtn.MouseButton1Click:Connect(function()
+			local rows = {}
+			for _, t in ipairs(self._tabs) do
+				if t._btn then
+					rows[#rows + 1] = { value = t.Title, text = t.Title, sub = t.Group }
+				end
+			end
+			showPicker(self, "Pages", rows, self._active and self._active.Title, function(v)
+				local t = self._byTitle[tostring(v)]
+				if t and t._activate then t._activate() end
+			end, { Noun = "page" })
+		end)
+	end
+	self._menuBtn.Visible = many
+	if many and self._active then
+		self._menuBtn.Text = "   " .. tostring(self._active.Title)
+	end
+end
+
+-- Rubis groups tabs under collapsible sections in its sidebar. We have no
+-- sidebar, so a section is simply a label the tab carries into the page list.
+local Group = {}
+Group.__index = Group
+function Group:Tab(o)
+	o = o or {}
+	o.Group = self._title
+	return self._win:Tab(o)
+end
+function Group:Divider() return { Instance = nil } end
+function Group:Space() return { Instance = nil } end
+function Group:Section(o) return self:Tab(o) end
+
+function Window:Section(o)
+	o = o or {}
+	return setmetatable({ _win = self, _title = tostring(o.Title or "") }, Group)
+end
+function Window:Divider() return { Instance = nil } end
+function Window:Space() return { Instance = nil } end
+
+-- Rubis lets a script pick the key that shows and hides the window.
+function Window:SetToggleKey(k)
+	if type(k) == "string" then pcall(function() k = Enum.KeyCode[k] end) end
+	self._toggleKey = k
+	if self._toggleHooked then return end
+	self._toggleHooked = true
+	UserInput.InputBegan:Connect(function(i, typing)
+		if typing or not self._toggleKey then return end
+		if i.UserInputType ~= Enum.UserInputType.Keyboard or i.KeyCode ~= self._toggleKey then return end
+		self:Toggle()
+	end)
 end
 
 function Window:Destroy() pcall(function() self._gui:Destroy() end) end
 function Window:Toggle(v)
 	self._card.Visible = (v == nil) and (not self._card.Visible) or (v and true or false)
+end
+
+-- Rubis hands a window a ConfigManager: named blobs saved to the executor's
+-- file store. A script that ships a Configs tab expects these calls to exist
+-- and to persist, so here is a small honest one backed by writefile/readfile.
+-- It stores whatever a script hands its config's Set; scripts that never call
+-- Set simply save an empty table, which is still better than a nil crash.
+local ConfigManager = {}
+ConfigManager.__index = ConfigManager
+local Config = {}
+Config.__index = Config
+
+local function cfgFolder(m) return "MollyHub_cfg/" .. (m._folder or "wwww") end
+local function cfgPath(m, name) return cfgFolder(m) .. "/" .. tostring(name) .. ".json" end
+local function cfgIndex(m) return cfgFolder(m) .. "/_index.json" end
+
+local function readJSON(path)
+	local out
+	pcall(function()
+		if isfile and isfile(path) and readfile then
+			out = game:GetService("HttpService"):JSONDecode(readfile(path))
+		end
+	end)
+	return out
+end
+local function writeJSON(path, tbl)
+	pcall(function()
+		if makefolder then pcall(makefolder, path:match("^(.*)/[^/]*$")) end
+		if writefile then writefile(path, game:GetService("HttpService"):JSONEncode(tbl)) end
+	end)
+end
+
+function Config.new(mgr, name)
+	return setmetatable({ _mgr = mgr, Name = tostring(name), Data = {}, AutoLoad = false }, Config)
+end
+function Config:Set(k, v) self.Data[k] = v end
+function Config:Get(k) return self.Data[k] end
+function Config:SetAutoLoad(on)
+	self.AutoLoad = on and true or false
+	local idx = readJSON(cfgIndex(self._mgr)) or {}
+	idx[self.Name] = idx[self.Name] or {}
+	idx[self.Name].autoLoad = self.AutoLoad
+	writeJSON(cfgIndex(self._mgr), idx)
+end
+function Config:Save()
+	writeJSON(cfgPath(self._mgr, self.Name), { data = self.Data, autoLoad = self.AutoLoad })
+	local idx = readJSON(cfgIndex(self._mgr)) or {}
+	idx[self.Name] = { autoLoad = self.AutoLoad }
+	writeJSON(cfgIndex(self._mgr), idx)
+	self._mgr._known[self.Name] = true
+	return true
+end
+function Config:Load()
+	local blob = readJSON(cfgPath(self._mgr, self.Name))
+	if type(blob) ~= "table" then return false end
+	self.Data = blob.data or {}
+	self.AutoLoad = blob.autoLoad and true or false
+	return true
+end
+
+function ConfigManager.new(folder)
+	local m = setmetatable({ _folder = folder or "wwww", _known = {} }, ConfigManager)
+	local idx = readJSON(cfgIndex(m)) or {}
+	for name in pairs(idx) do m._known[name] = true end
+	return m
+end
+function ConfigManager:Config(name) return Config.new(self, name) end
+function ConfigManager:CreateConfig(name) return Config.new(self, name) end
+function ConfigManager:GetConfig(name)
+	local c = Config.new(self, name)
+	c:Load()
+	return c
+end
+function ConfigManager:AllConfigs()
+	local out = {}
+	for name in pairs(self._known) do out[#out + 1] = name end
+	table.sort(out)
+	return out
+end
+function ConfigManager:GetAutoLoadConfigs()
+	local out = {}
+	local idx = readJSON(cfgIndex(self)) or {}
+	for name, meta in pairs(idx) do if type(meta) == "table" and meta.autoLoad then out[#out + 1] = name end end
+	return out
 end
 
 function UI:CreateWindow(o)
@@ -1231,6 +1664,8 @@ function UI:CreateWindow(o)
 
 	local win = setmetatable({ _gui = gui, _card = card, _tabbar = tabbar, _pages = pages,
 		_scale = uiscale, _tabs = {}, _byTitle = {} }, Window)
+	win.ConfigManager = ConfigManager.new(o.Folder)
+	win.CurrentConfig = win.ConfigManager:Config("default")
 
 	local pill = new("TextButton", { BackgroundColor3 = C.Accent, Position = UDim2.fromOffset(18, 18),
 		Size = UDim2.fromOffset(96, 30), Font = FB, TextSize = 12, TextColor3 = C.On,
