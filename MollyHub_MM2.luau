@@ -170,32 +170,31 @@ do
 end
 
 --==============================================================================
--- VISUALS
+-- VISUALS  (and the chams, which live on the ESP page where they belong)
 --==============================================================================
--- The set an FPS cheat gives you, done for this game: chams you can read at a
--- glance, boxes with a health bar, a crosshair, the aim circle, a watermark,
--- and the world knobs.
---
 -- All of it is drawn on YOUR screen only. Highlights and Drawing objects are
--- client-side by construction, and the Lighting values are local properties;
--- nothing here is sent to the server. Every switch remembers what it changed.
+-- client-side by construction and the Lighting values are local properties, so
+-- nothing here reaches the server. Every switch remembers what it overwrote.
 --
--- One RenderStepped drives everything, and each player owns a small pool of
--- Drawing objects that is reused rather than rebuilt each frame.
+-- One RenderStepped drives the lot and returns immediately when nothing is on.
+-- Each player owns a small pool of Drawing objects that is reused rather than
+-- rebuilt every frame, and freed when they leave.
 --==============================================================================
 do
 	local VisTab = t1.VisualsTab
+	local EspTab = t1.ESPTab
 	local Camera = workspace.CurrentCamera
 	local HAVE_DRAWING = (type(Drawing) == "table" or type(Drawing) == "userdata")
 
 	local V = {
-		chams = false, chamFill = 0.55, chamWalls = true, chamOutline = true,
+		chams = false, chamFill = 0.55, chamWalls = true, chamOutline = true, chamDead = true,
 		box = false, boxCorners = true, boxName = true, boxDist = true, boxHealth = true,
+		tracer = false, tracerFrom = "Bottom",
+		arrows = false,
 		cross = false, crossSize = 9, crossGap = 4, crossThick = 1, crossDot = false,
-		crossColor = Color3.fromRGB(255, 255, 255),
-		fov = false, fovRadius = 120, fovColor = Color3.fromRGB(139, 124, 255),
-		mark = false,
-		teamCheck = true,
+		crossSpin = false, crossSpeed = 90, crossColor = Color3.fromRGB(255, 255, 255),
+		hideCursor = true,
+		mark = false, rainbow = false,
 	}
 	local COL = {
 		Murderer = Color3.fromRGB(255, 78, 96),
@@ -203,13 +202,16 @@ do
 		Innocent = Color3.fromRGB(120, 235, 150),
 		Dead     = Color3.fromRGB(120, 120, 132),
 	}
+	-- one hue for everything that is not role-coloured, cycled when asked
+	local function accent()
+		if not V.rainbow then return V.crossColor end
+		return Color3.fromHSV((os.clock() * 0.18) % 1, 0.75, 1)
+	end
 
 	--== roles ==================================================================
-	-- The game will tell you who is who, but it is a server round trip, so ask
-	-- twice a second and cache it — not once a frame.
-	local roles, rolesAt = {}, 0
+	-- Who is who is a server round trip, so ask twice a second and cache it.
+	local roles, rolesAt, asking = {}, 0, false
 	local roleRemote = ReplicatedStorage:FindFirstChild("GetCurrentPlayerData", true)
-	local asking = false
 	local function pollRoles()
 		if asking or (os.clock() - rolesAt) < 0.5 then return end
 		asking = true
@@ -222,13 +224,11 @@ do
 			asking = false
 		end)
 	end
-	local function roleOf(player)
-		local e = roles[player.Name]
-		if type(e) ~= "table" then return "Innocent", false end
-		return tostring(e.Role or "Innocent"), (e.Dead or e.Killed) and true or false
-	end
 	local function colorFor(player)
-		local role, dead = roleOf(player)
+		local e = roles[player.Name]
+		if type(e) ~= "table" then return COL.Innocent, "Innocent", false end
+		local role = tostring(e.Role or "Innocent")
+		local dead = (e.Dead or e.Killed) and true or false
 		if dead then return COL.Dead, role, true end
 		return COL[role] or COL.Innocent, role, false
 	end
@@ -264,7 +264,7 @@ do
 			h.OutlineTransparency = V.chamOutline and 0 or 1
 			h.DepthMode = V.chamWalls and Enum.HighlightDepthMode.AlwaysOnTop
 				or Enum.HighlightDepthMode.Occluded
-			h.Enabled = not (dead and V.teamCheck)
+			h.Enabled = not (dead and V.chamDead)
 		end)
 	end
 
@@ -291,10 +291,10 @@ do
 			name = draw("Text", { Size = 13, Center = true, Outline = true, Visible = false }),
 			dist = draw("Text", { Size = 12, Center = true, Outline = true, Visible = false,
 				Color = Color3.fromRGB(200, 200, 210) }),
+			tracer = draw("Line", { Thickness = 1, Visible = false }),
+			arrow = draw("Triangle", { Thickness = 1, Filled = true, Visible = false }),
 		}
-		for i = 1, 8 do
-			p.lines[i] = draw("Line", { Thickness = 1, Visible = false })
-		end
+		for i = 1, 8 do p.lines[i] = draw("Line", { Thickness = 1, Visible = false }) end
 		pool[player] = p
 		return p
 	end
@@ -303,11 +303,9 @@ do
 		if not p then return end
 		pcall(function()
 			for _, l in ipairs(p.lines) do l.Visible = false end
-			p.square.Visible = false
-			p.hpBack.Visible = false
-			p.hpFill.Visible = false
-			p.name.Visible = false
-			p.dist.Visible = false
+			p.square.Visible = false; p.hpBack.Visible = false; p.hpFill.Visible = false
+			p.name.Visible = false; p.dist.Visible = false
+			p.tracer.Visible = false; p.arrow.Visible = false
 		end)
 	end
 	local function dropPool(player)
@@ -316,12 +314,11 @@ do
 		pcall(function()
 			for _, l in ipairs(p.lines) do l:Remove() end
 			p.square:Remove(); p.hpBack:Remove(); p.hpFill:Remove()
-			p.name:Remove(); p.dist:Remove()
+			p.name:Remove(); p.dist:Remove(); p.tracer:Remove(); p.arrow:Remove()
 		end)
 		pool[player] = nil
 	end
 
-	-- corner brackets: the four corners of the box, a quarter of the way in
 	local function corners(p, x, y, w, h, colr)
 		local cut = math.max(3, math.floor(math.min(w, h) * 0.28))
 		local seg = {
@@ -330,12 +327,12 @@ do
 			{ x, y + h, x + cut, y + h }, { x, y + h, x, y + h - cut },
 			{ x + w, y + h, x + w - cut, y + h }, { x + w, y + h, x + w, y + h - cut },
 		}
-		for i, s in ipairs(seg) do
+		for i, sg in ipairs(seg) do
 			local l = p.lines[i]
 			if l then
 				pcall(function()
-					l.From = Vector2.new(s[1], s[2])
-					l.To = Vector2.new(s[3], s[4])
+					l.From = Vector2.new(sg[1], sg[2])
+					l.To = Vector2.new(sg[3], sg[4])
 					l.Color = colr
 					l.Thickness = 1
 					l.Visible = true
@@ -348,10 +345,10 @@ do
 	local cross = { draw("Line", { Visible = false }), draw("Line", { Visible = false }),
 		draw("Line", { Visible = false }), draw("Line", { Visible = false }) }
 	local crossDot = draw("Circle", { Filled = true, Radius = 1.5, Visible = false })
-	local fovRing = draw("Circle", { Filled = false, Thickness = 1, Visible = false })
 	local mark = draw("Text", { Size = 14, Center = false, Outline = true, Visible = false })
 
-	local fps, fpsAt, frames = 60, os.clock(), 0
+	local spin, fps, fpsAt, frames = 0, 60, os.clock(), 0
+	local savedCursor = nil
 	local function ping()
 		local v = 0
 		pcall(function()
@@ -360,22 +357,42 @@ do
 		return v
 	end
 
-	local function drawScreen()
+	local function drawScreen(dt)
 		local vp = Camera.ViewportSize
 		local cx, cy = vp.X / 2, vp.Y / 2
+		local colr = accent()
 
+		-- A crosshair of our own and Roblox's shift-lock crosshair on top of each
+		-- other is two crosshairs. Ours wins while it is on.
+		pcall(function()
+			if V.cross and V.hideCursor then
+				if UserInputService.MouseIcon ~= "" then
+					savedCursor = savedCursor or UserInputService.MouseIcon
+					UserInputService.MouseIcon = ""
+				end
+			elseif savedCursor then
+				UserInputService.MouseIcon = savedCursor
+				savedCursor = nil
+			end
+		end)
+
+		if V.crossSpin then spin = (spin + V.crossSpeed * (dt or 0.016)) % 360 end
+		local rad = math.rad(V.crossSpin and spin or 0)
+		local cos, sin = math.cos(rad), math.sin(rad)
 		for i, l in ipairs(cross) do
 			if l then
 				pcall(function()
 					if not V.cross then l.Visible = false return end
-					local g, s = V.crossGap, V.crossSize
-					local a, b
-					if i == 1 then a, b = Vector2.new(cx - g - s, cy), Vector2.new(cx - g, cy)
-					elseif i == 2 then a, b = Vector2.new(cx + g, cy), Vector2.new(cx + g + s, cy)
-					elseif i == 3 then a, b = Vector2.new(cx, cy - g - s), Vector2.new(cx, cy - g)
-					else a, b = Vector2.new(cx, cy + g), Vector2.new(cx, cy + g + s) end
-					l.From, l.To = a, b
-					l.Color = V.crossColor
+					local g, sz = V.crossGap, V.crossSize
+					-- the four arms, then turned about the centre
+					local ax, ay, bx, by
+					if i == 1 then ax, ay, bx, by = -g - sz, 0, -g, 0
+					elseif i == 2 then ax, ay, bx, by = g, 0, g + sz, 0
+					elseif i == 3 then ax, ay, bx, by = 0, -g - sz, 0, -g
+					else ax, ay, bx, by = 0, g, 0, g + sz end
+					l.From = Vector2.new(cx + ax * cos - ay * sin, cy + ax * sin + ay * cos)
+					l.To = Vector2.new(cx + bx * cos - by * sin, cy + bx * sin + by * cos)
+					l.Color = colr
 					l.Thickness = V.crossThick
 					l.Visible = true
 				end)
@@ -385,16 +402,7 @@ do
 			pcall(function()
 				crossDot.Visible = V.cross and V.crossDot
 				crossDot.Position = Vector2.new(cx, cy)
-				crossDot.Color = V.crossColor
-			end)
-		end
-		if fovRing then
-			pcall(function()
-				fovRing.Visible = V.fov
-				fovRing.Position = Vector2.new(cx, cy)
-				fovRing.Radius = V.fovRadius
-				fovRing.Color = V.fovColor
-				fovRing.Thickness = 1
+				crossDot.Color = colr
 			end)
 		end
 		if mark then
@@ -402,7 +410,7 @@ do
 				mark.Visible = V.mark
 				if not V.mark then return end
 				mark.Position = Vector2.new(14, 12)
-				mark.Color = Color3.fromRGB(235, 235, 240)
+				mark.Color = V.rainbow and colr or Color3.fromRGB(235, 235, 240)
 				mark.Text = string.format("MollyHub  |  %s  |  %d fps  |  %d ms",
 					LocalPlayer.Name, math.floor(fps + 0.5), ping())
 			end)
@@ -411,7 +419,7 @@ do
 
 	--== the loop ===============================================================
 	local function anythingOn()
-		return V.chams or V.box or V.cross or V.fov or V.mark
+		return V.chams or V.box or V.cross or V.mark or V.tracer or V.arrows
 	end
 
 	local conn
@@ -422,24 +430,28 @@ do
 		pcall(function()
 			for _, l in ipairs(cross) do if l then l.Visible = false end end
 			if crossDot then crossDot.Visible = false end
-			if fovRing then fovRing.Visible = false end
 			if mark then mark.Visible = false end
+			if savedCursor then
+				UserInputService.MouseIcon = savedCursor
+				savedCursor = nil
+			end
 		end)
 	end
 
 	local function startLoop()
 		if conn then return end
 		conn = RunService.RenderStepped:Connect(function(dt)
-			-- frame counter for the watermark
 			frames = frames + 1
 			if os.clock() - fpsAt >= 0.5 then
 				fps = frames / (os.clock() - fpsAt)
 				frames, fpsAt = 0, os.clock()
 			end
-
 			if not anythingOn() then return end
 			pollRoles()
-			drawScreen()
+			drawScreen(dt)
+
+			local vp = Camera.ViewportSize
+			local cx, cy = vp.X / 2, vp.Y / 2
 
 			for _, player in ipairs(Players:GetPlayers()) do
 				if player ~= LocalPlayer then
@@ -452,25 +464,65 @@ do
 					else
 						updateCham(player, char)
 						local p = poolFor(player)
-						if not V.box or not p then
+						if not p then
+							-- nothing to draw with
+						elseif not (V.box or V.tracer or V.arrows) then
 							hidePool(player)
 						else
 							pcall(function()
 								local colr = colorFor(player)
-								local top, onTop = Camera:WorldToViewportPoint(root.Position + Vector3.new(0, 3.1, 0))
-								local bot = Camera:WorldToViewportPoint(root.Position - Vector3.new(0, 3.3, 0))
-								if not onTop then
+								local mid, onScreen = Camera:WorldToViewportPoint(root.Position)
+
+								-- off screen: an arrow at the edge pointing at them
+								if not onScreen then
 									for _, l in ipairs(p.lines) do l.Visible = false end
-									p.square.Visible = false
-									p.hpBack.Visible = false
-									p.hpFill.Visible = false
-									p.name.Visible = false
-									p.dist.Visible = false
+									p.square.Visible = false; p.hpBack.Visible = false
+									p.hpFill.Visible = false; p.name.Visible = false
+									p.dist.Visible = false; p.tracer.Visible = false
+									if not V.arrows then p.arrow.Visible = false return end
+									local dx, dy = mid.X - cx, mid.Y - cy
+									if mid.Z < 0 then dx, dy = -dx, -dy end
+									local ang = math.atan2(dy, dx)
+									local r = math.min(vp.X, vp.Y) * 0.3
+									local ax, ay = cx + math.cos(ang) * r, cy + math.sin(ang) * r
+									local size = 11
+									p.arrow.PointA = Vector2.new(ax + math.cos(ang) * size,
+										ay + math.sin(ang) * size)
+									p.arrow.PointB = Vector2.new(ax + math.cos(ang + 2.5) * size,
+										ay + math.sin(ang + 2.5) * size)
+									p.arrow.PointC = Vector2.new(ax + math.cos(ang - 2.5) * size,
+										ay + math.sin(ang - 2.5) * size)
+									p.arrow.Color = colr
+									p.arrow.Visible = true
 									return
 								end
+								p.arrow.Visible = false
+
+								local top = Camera:WorldToViewportPoint(root.Position + Vector3.new(0, 3.1, 0))
+								local bot = Camera:WorldToViewportPoint(root.Position - Vector3.new(0, 3.3, 0))
 								local h = math.abs(bot.Y - top.Y)
 								local w = h * 0.52
 								local x, y = top.X - w / 2, top.Y
+
+								if V.tracer then
+									local from = Vector2.new(cx, vp.Y)
+									if V.tracerFrom == "Centre" then from = Vector2.new(cx, cy)
+									elseif V.tracerFrom == "Top" then from = Vector2.new(cx, 0) end
+									p.tracer.From = from
+									p.tracer.To = Vector2.new(bot.X, bot.Y)
+									p.tracer.Color = colr
+									p.tracer.Visible = true
+								else
+									p.tracer.Visible = false
+								end
+
+								if not V.box then
+									for _, l in ipairs(p.lines) do l.Visible = false end
+									p.square.Visible = false; p.hpBack.Visible = false
+									p.hpFill.Visible = false; p.name.Visible = false
+									p.dist.Visible = false
+									return
+								end
 
 								if V.boxCorners then
 									p.square.Visible = false
@@ -538,157 +590,140 @@ do
 		end)
 	end)
 
-	--== chams ==================================================================
-	VisTab:Section({ Title = "Chams" })
-	if not HAVE_DRAWING then
-		VisTab:Paragraph({
-			Title = "No Drawing library",
-			Desc = "Your executor has no Drawing API, so boxes, the crosshair, the aim "
-				.. "circle and the watermark cannot be shown. Chams and the world "
-				.. "settings work regardless.",
-			Color = "Red"
-		})
-	end
-	VisTab:Toggle({
+	--== chams, on the ESP page =================================================
+	EspTab:Section({ Title = "Chams" })
+	EspTab:Toggle({
 		Title = "Chams",
-		Desc = "players lit up in their role's colour",
+		Desc = "players lit in their role's colour",
 		Default = false,
 		Callback = function(on) V.chams = on sync() end
 	})
-	VisTab:Toggle({
+	EspTab:Toggle({
 		Title = "Through walls",
-		Desc = "off = only when you could actually see them",
+		Desc = "off = only where you could really see them",
 		Default = true,
 		Callback = function(on) V.chamWalls = on end
 	})
-	VisTab:Toggle({
-		Title = "Outline",
+	EspTab:Toggle({
+		Title = "Cham outline",
 		Default = true,
 		Callback = function(on) V.chamOutline = on end
 	})
-	VisTab:Slider({
-		Title = "Fill",
+	EspTab:Slider({
+		Title = "Cham fill",
 		Step = 0.05,
 		Value = { Min = 0, Max = 1, Default = 0.55 },
 		Callback = function(v) V.chamFill = v end
 	})
-	VisTab:Toggle({
-		Title = "Grey out the dead",
+	EspTab:Toggle({
+		Title = "Hide the dead",
 		Default = true,
-		Callback = function(on) V.teamCheck = on end
+		Callback = function(on) V.chamDead = on end
 	})
-
-	--== boxes ==================================================================
-	VisTab:Section({ Title = "Boxes" })
-	VisTab:Toggle({
-		Title = "Boxes",
-		Default = false,
-		Callback = function(on) V.box = on sync() end
-	})
-	VisTab:Toggle({
-		Title = "Corner style",
-		Desc = "off = a full rectangle",
-		Default = true,
-		Callback = function(on) V.boxCorners = on end
-	})
-	VisTab:Toggle({
-		Title = "Health bar",
-		Default = true,
-		Callback = function(on) V.boxHealth = on end
-	})
-	VisTab:Toggle({
-		Title = "Names",
-		Default = true,
-		Callback = function(on) V.boxName = on end
-	})
-	VisTab:Toggle({
-		Title = "Role and distance",
-		Default = true,
-		Callback = function(on) V.boxDist = on end
-	})
-
-	--== colours ================================================================
-	VisTab:Section({ Title = "Colours" })
-	VisTab:Colorpicker({
-		Title = "Murderer",
+	EspTab:Colorpicker({
+		Title = "Murderer colour",
 		Default = COL.Murderer,
 		Callback = function(c) COL.Murderer = c end
 	})
-	VisTab:Colorpicker({
-		Title = "Sheriff",
+	EspTab:Colorpicker({
+		Title = "Sheriff colour",
 		Default = COL.Sheriff,
 		Callback = function(c) COL.Sheriff = c end
 	})
-	VisTab:Colorpicker({
-		Title = "Innocent",
+	EspTab:Colorpicker({
+		Title = "Innocent colour",
 		Default = COL.Innocent,
 		Callback = function(c) COL.Innocent = c end
 	})
 
-	--== crosshair ==============================================================
-	VisTab:Section({ Title = "Crosshair" })
+	--== boxes ==================================================================
+	if not HAVE_DRAWING then
+		VisTab:Paragraph({
+			Title = "No Drawing library",
+			Desc = "Your executor has no Drawing API, so boxes, tracers, arrows, the "
+				.. "crosshair and the watermark cannot be drawn. Chams and the world "
+				.. "settings work regardless.",
+			Color = "Red"
+		})
+	end
+
+	VisTab:Section({ Title = "Boxes" })
+	VisTab:Toggle({ Title = "Boxes", Default = false,
+		Callback = function(on) V.box = on sync() end })
+	VisTab:Toggle({ Title = "Corner style", Desc = "off = a full rectangle", Default = true,
+		Callback = function(on) V.boxCorners = on end })
+	VisTab:Toggle({ Title = "Health bar", Default = true,
+		Callback = function(on) V.boxHealth = on end })
+	VisTab:Toggle({ Title = "Names", Default = true,
+		Callback = function(on) V.boxName = on end })
+	VisTab:Toggle({ Title = "Role and distance", Default = true,
+		Callback = function(on) V.boxDist = on end })
+
+	--== lines ==================================================================
+	VisTab:Section({ Title = "Lines" })
 	VisTab:Toggle({
-		Title = "Crosshair",
+		Title = "Tracers",
+		Desc = "a line to every player, in their colour",
 		Default = false,
-		Callback = function(on) V.cross = on sync() end
+		Callback = function(on) V.tracer = on sync() end
 	})
-	VisTab:Slider({
-		Title = "Length",
-		Step = 1,
-		Value = { Min = 2, Max = 30, Default = 9 },
-		Callback = function(v) V.crossSize = v end
-	})
-	VisTab:Slider({
-		Title = "Gap",
-		Step = 1,
-		Value = { Min = 0, Max = 20, Default = 4 },
-		Callback = function(v) V.crossGap = v end
-	})
-	VisTab:Slider({
-		Title = "Thickness",
-		Step = 1,
-		Value = { Min = 1, Max = 5, Default = 1 },
-		Callback = function(v) V.crossThick = v end
+	VisTab:Dropdown({
+		Title = "Tracers start at",
+		Values = { "Bottom", "Centre", "Top" },
+		Value = "Bottom",
+		Callback = function(v) V.tracerFrom = tostring(v) end
 	})
 	VisTab:Toggle({
-		Title = "Centre dot",
+		Title = "Off-screen arrows",
+		Desc = "points at whoever is behind you",
 		Default = false,
-		Callback = function(on) V.crossDot = on end
-	})
-	VisTab:Colorpicker({
-		Title = "Crosshair colour",
-		Default = V.crossColor,
-		Callback = function(c) V.crossColor = c end
+		Callback = function(on) V.arrows = on sync() end
 	})
 
-	--== aim circle =============================================================
-	VisTab:Section({ Title = "Aim circle" })
+	--== crosshair ==============================================================
+	VisTab:Section({ Title = "Crosshair" })
+	VisTab:Toggle({ Title = "Crosshair", Default = false,
+		Callback = function(on) V.cross = on sync() end })
 	VisTab:Toggle({
-		Title = "Show the aim circle",
-		Desc = "the reach of camlock and auto shoot",
+		Title = "Spin",
+		Desc = "the arms turn",
 		Default = false,
-		Callback = function(on) V.fov = on sync() end
+		Callback = function(on) V.crossSpin = on end
 	})
 	VisTab:Slider({
-		Title = "Radius",
-		Step = 5,
-		Value = { Min = 30, Max = 600, Default = 120 },
-		Callback = function(v) V.fovRadius = v end
+		Title = "Spin speed",
+		Desc = "degrees a second",
+		Step = 10,
+		Value = { Min = 10, Max = 720, Default = 90 },
+		Callback = function(v) V.crossSpeed = v end
 	})
-	VisTab:Colorpicker({
-		Title = "Circle colour",
-		Default = V.fovColor,
-		Callback = function(c) V.fovColor = c end
+	VisTab:Slider({ Title = "Length", Step = 1, Value = { Min = 2, Max = 30, Default = 9 },
+		Callback = function(v) V.crossSize = v end })
+	VisTab:Slider({ Title = "Gap", Step = 1, Value = { Min = 0, Max = 20, Default = 4 },
+		Callback = function(v) V.crossGap = v end })
+	VisTab:Slider({ Title = "Thickness", Step = 1, Value = { Min = 1, Max = 5, Default = 1 },
+		Callback = function(v) V.crossThick = v end })
+	VisTab:Toggle({ Title = "Centre dot", Default = false,
+		Callback = function(on) V.crossDot = on end })
+	VisTab:Toggle({
+		Title = "Hide the shift lock cross",
+		Desc = "Roblox's own crosshair, so there is only one",
+		Default = true,
+		Callback = function(on) V.hideCursor = on end
+	})
+	VisTab:Colorpicker({ Title = "Crosshair colour", Default = V.crossColor,
+		Callback = function(c) V.crossColor = c end })
+	VisTab:Toggle({
+		Title = "Rainbow",
+		Desc = "cycles the crosshair and the watermark",
+		Default = false,
+		Callback = function(on) V.rainbow = on end
 	})
 
 	--== watermark ==============================================================
 	VisTab:Section({ Title = "Watermark" })
-	VisTab:Toggle({
-		Title = "Watermark",
-		Desc = "name, frames and ping, top left",
-		Default = false,
-		Callback = function(on) V.mark = on sync() end
-	})
+	VisTab:Toggle({ Title = "Watermark", Desc = "name, frames and ping, top left",
+		Default = false, Callback = function(on) V.mark = on sync() end })
 
 	--== world ==================================================================
 	VisTab:Section({ Title = "World" })
@@ -732,13 +767,11 @@ do
 				set(Lighting, "OutdoorAmbient", Color3.fromRGB(178, 178, 178))
 				set(Lighting, "Brightness", 2)
 				set(Lighting, "GlobalShadows", false)
-				set(Lighting, "FogEnd", 100000)
 			else
 				restore(Lighting, "Ambient")
 				restore(Lighting, "OutdoorAmbient")
 				restore(Lighting, "Brightness")
 				restore(Lighting, "GlobalShadows")
-				restore(Lighting, "FogEnd")
 			end
 		end
 	})
@@ -760,6 +793,45 @@ do
 			end
 		end
 	})
+
+	--== fog ====================================================================
+	local fog = { on = false, colour = Color3.fromRGB(120, 130, 160), near = 0, far = 400 }
+	local function applyFog()
+		if not fog.on then
+			restore(Lighting, "FogColor")
+			restore(Lighting, "FogStart")
+			restore(Lighting, "FogEnd")
+			return
+		end
+		set(Lighting, "FogColor", fog.colour)
+		set(Lighting, "FogStart", fog.near)
+		set(Lighting, "FogEnd", fog.far)
+	end
+	VisTab:Toggle({
+		Title = "Fog",
+		Desc = "your own, in whatever colour you like",
+		Default = false,
+		Callback = function(on) fog.on = on applyFog() end
+	})
+	VisTab:Colorpicker({
+		Title = "Fog colour",
+		Default = fog.colour,
+		Callback = function(c) fog.colour = c applyFog() end
+	})
+	VisTab:Slider({
+		Title = "Fog starts at",
+		Step = 5,
+		Value = { Min = 0, Max = 500, Default = 0 },
+		Callback = function(v) fog.near = v applyFog() end
+	})
+	VisTab:Slider({
+		Title = "Fog is solid by",
+		Step = 10,
+		Value = { Min = 50, Max = 2000, Default = 400 },
+		Callback = function(v) fog.far = v applyFog() end
+	})
+
+	--== grade and clutter ======================================================
 	VisTab:Slider({
 		Title = "Saturation",
 		Step = 0.05,
@@ -778,6 +850,31 @@ do
 			if g then pcall(function() g.Contrast = v end) end
 		end
 	})
+	VisTab:Toggle({
+		Title = "Hide clutter",
+		Desc = "particles, smoke and decals off",
+		Default = false,
+		Callback = function(on)
+			for _, d in ipairs(workspace:GetDescendants()) do
+				if d:IsA("ParticleEmitter") or d:IsA("Smoke") or d:IsA("Fire")
+					or d:IsA("Sparkles") or d:IsA("Decal") then
+					if on then set(d, "Enabled", false) else restore(d, "Enabled") end
+				end
+			end
+		end
+	})
+	VisTab:Toggle({
+		Title = "No blur",
+		Desc = "drops the map's own blur effects",
+		Default = false,
+		Callback = function(on)
+			for _, d in ipairs(Lighting:GetDescendants()) do
+				if d:IsA("BlurEffect") and d.Name ~= "MH_Grade" then
+					if on then set(d, "Enabled", false) else restore(d, "Enabled") end
+				end
+			end
+		end
+	})
 
 	--== undo ===================================================================
 	VisTab:Section({ Title = "Undo" })
@@ -785,7 +882,9 @@ do
 		Title = "Turn everything off",
 		Desc = "clears the overlay and puts the world back",
 		Callback = function()
-			V.chams, V.box, V.cross, V.fov, V.mark = false, false, false, false, false
+			V.chams, V.box, V.cross, V.mark, V.tracer, V.arrows =
+				false, false, false, false, false, false
+			fog.on = false
 			stopLoop()
 			for pl in pairs(pool) do dropPool(pl) end
 			local g = Lighting:FindFirstChild("MH_Grade")
