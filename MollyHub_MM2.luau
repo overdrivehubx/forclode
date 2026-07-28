@@ -2428,6 +2428,302 @@ do
 			return
 		end
 	end)
+
+	--==========================================================================
+	-- AIMLOCK
+	--==========================================================================
+	-- Holds the camera on the murderer's head, and shoots at that same head.
+	-- The lock, the shot and the auto-shot all read ONE target function, so
+	-- they cannot disagree about who they are on — which is the whole point of
+	-- having them work together.
+	--
+	-- The shot is silent by construction: MM2's gun takes the point to hit as
+	-- an argument, so it goes where the lock is pointing whether or not the
+	-- camera has caught up yet.
+	--==========================================================================
+	do
+		local A = {
+			on = false, hold = false, key = Enum.KeyCode.Q,
+			part = "Head", smooth = 0.25, predict = 0.1,
+			visOnly = false, auto = false, rate = 0.2, maxDist = 5000,
+		}
+		local held, lastShot = false, 0
+
+		-- Who the murderer is. The server will say so outright, so ask it on a
+		-- timer; between answers, whoever is holding a knife is the murderer.
+		local mRoles, mAt, mAsking = {}, 0, false
+		local mRemote = ReplicatedStorage:FindFirstChild("GetCurrentPlayerData", true)
+		local function pollRoles()
+			if mAsking or (os.clock() - mAt) < 0.75 then return end
+			mAsking = true
+			mAt = os.clock()
+			task.spawn(function()
+				local ok, res = pcall(function()
+					return mRemote and mRemote:InvokeServer()
+				end)
+				if ok and type(res) == "table" then mRoles = res end
+				mAsking = false
+			end)
+		end
+		local function alive(player)
+			local char = player.Character
+			local hum = char and char:FindFirstChildOfClass("Humanoid")
+			return (hum and hum.Health > 0) and char or nil
+		end
+		local function hasKnife(player)
+			local char = player.Character
+			if char and char:FindFirstChild("Knife") then return true end
+			local bp = player:FindFirstChild("Backpack")
+			return (bp and bp:FindFirstChild("Knife")) and true or false
+		end
+		local function target()
+			pollRoles()
+			local byRole
+			for _, player in ipairs(Players:GetPlayers()) do
+				if player ~= LocalPlayer and alive(player) then
+					local e = mRoles[player.Name]
+					if type(e) == "table" and tostring(e.Role) == "Murderer"
+						and not (e.Dead or e.Killed) then
+						byRole = player
+						break
+					end
+				end
+			end
+			if byRole then return byRole end
+			for _, player in ipairs(Players:GetPlayers()) do
+				if player ~= LocalPlayer and alive(player) and hasKnife(player) then
+					return player
+				end
+			end
+			return nil
+		end
+
+		-- Where to aim: the chosen part, led by its own velocity. This runs every
+		-- frame, so it must not be able to throw — a bad read here would take the
+		-- whole loop down with it.
+		local function aimPoint(player)
+			local char = player and alive(player)
+			local part = char and (char:FindFirstChild(A.part) or char:FindFirstChild("HumanoidRootPart"))
+			if not part then return nil, nil end
+			local point
+			pcall(function()
+				point = part.Position
+				if A.predict > 0 then
+					point = point + part.AssemblyLinearVelocity * A.predict
+				end
+			end)
+			if typeof(point) ~= "Vector3" then return nil, nil end
+			return point, part
+		end
+
+		local function inSight(point)
+			if not A.visOnly then return true end
+			local ok, clear = pcall(function()
+				local cam = workspace.CurrentCamera
+				local params = RaycastParams.new()
+				params.FilterType = Enum.RaycastFilterType.Exclude
+				local skip = {}
+				if LocalPlayer.Character then skip[#skip + 1] = LocalPlayer.Character end
+				params.FilterDescendantsInstances = skip
+				local dir = point - cam.CFrame.Position
+				local hit = workspace:Raycast(cam.CFrame.Position, dir, params)
+				-- anything solid before the target means no shot
+				return (not hit) or (hit.Position - point).Magnitude < 4
+			end)
+			return ok and clear
+		end
+
+		local function tooFar(point)
+			local far = false
+			pcall(function()
+				local me = LocalPlayer.Character
+					and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+				if me then far = (me.Position - point).Magnitude > A.maxDist end
+			end)
+			return far
+		end
+
+		local function active()
+			if not A.on then return false end
+			if A.hold then return held end
+			return true
+		end
+
+		-- MM2's gun: a Tool carrying a Shoot remote, in hand or in the pack
+		local function gun()
+			local char = LocalPlayer.Character
+			for _, src in ipairs({ char, LocalPlayer:FindFirstChild("Backpack") }) do
+				if src then
+					for _, tool in ipairs(src:GetChildren()) do
+						if tool:IsA("Tool") and tool:FindFirstChild("Shoot") then
+							return tool, tool.Shoot
+						end
+					end
+				end
+			end
+			return nil, nil
+		end
+
+		local function fire()
+			local player = target()
+			if not player then return false, "nobody is holding the knife" end
+			local point = aimPoint(player)
+			if not point then return false, "no line on them" end
+			local _, remote = gun()
+			if not remote then return false, "you have no gun" end
+			local me = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+			if not me then return false, "you have no character" end
+			if tooFar(point) then return false, "out of range" end
+			if not inSight(point) then return false, "no clear shot" end
+			local ok = pcall(function()
+				remote:FireServer(me.CFrame, CFrame.new(point))
+			end)
+			return ok, ok and player.Name or "the gun refused"
+		end
+
+		-- The Sheriff page's own Shoot and Auto-shoot pick their target with
+		-- u67. Point that at this finder and all of it agrees on one murderer.
+		u67 = function() return target() end
+
+		local conn
+		local function stop()
+			if conn then pcall(function() conn:Disconnect() end) conn = nil end
+		end
+		local function start()
+			if conn then return end
+			conn = RunService.RenderStepped:Connect(function(dt)
+				if not active() then return end
+				local player = target()
+				if not player then return end
+				local point = aimPoint(player)
+				if not point or tooFar(point) then return end
+				pcall(function()
+					local cam = workspace.CurrentCamera
+					local goal = CFrame.new(cam.CFrame.Position, point)
+					if A.smooth <= 0.01 then
+						cam.CFrame = goal
+					else
+						cam.CFrame = cam.CFrame:Lerp(goal, math.clamp(dt / A.smooth, 0, 1))
+					end
+				end)
+				if A.auto and (os.clock() - lastShot) >= A.rate then
+					lastShot = os.clock()
+					fire()
+				end
+			end)
+		end
+		local function sync()
+			if A.on then start() else stop() end
+		end
+
+		pcall(function()
+			UserInputService.InputBegan:Connect(function(input, typing)
+				if typing then return end
+				if input.KeyCode == A.key then held = true end
+			end)
+			UserInputService.InputEnded:Connect(function(input)
+				if input.KeyCode == A.key then held = false end
+			end)
+		end)
+
+		--== the controls =======================================================
+		t1.SheriffTab:Section({ Title = "Aimlock" })
+		local status = t1.SheriffTab:Paragraph({
+			Title = "Aimlock",
+			Desc = "Off. The camera goes to the murderer's head, and the shot goes "
+				.. "where the camera is pointing — including Shoot murderer and Auto "
+				.. "shoot on this page.",
+			Image = "crosshair",
+			ImageSize = 20
+		})
+		task.spawn(function()
+			while true do
+				task.wait(0.5)
+				pcall(function()
+					if not A.on then
+						status:SetDesc("Off.")
+						return
+					end
+					local player = target()
+					status:SetDesc(player
+						and string.format("Locked on <b>%s</b>'s %s%s.", player.Name,
+							string.lower(A.part), A.hold and "  (hold the key)" or "")
+						or "On, waiting for a murderer.")
+				end)
+			end
+		end)
+
+		t1.SheriffTab:Toggle({
+			Title = "Aimlock",
+			Desc = "hold the camera on the murderer",
+			Default = false,
+			Callback = function(on) A.on = on sync() end
+		})
+		t1.SheriffTab:Toggle({
+			Title = "Only while a key is held",
+			Desc = "off = locked the whole time",
+			Default = false,
+			Callback = function(on) A.hold = on end
+		})
+		t1.SheriffTab:Keybind({
+			Title = "Aimlock key",
+			Value = "Q",
+			Callback = function(k)
+				local ok, code = pcall(function() return Enum.KeyCode[k] end)
+				if ok and code then A.key = code end
+			end
+		})
+		t1.SheriffTab:Dropdown({
+			Title = "Lock onto",
+			Values = { "Head", "UpperTorso", "HumanoidRootPart" },
+			Value = "Head",
+			Callback = function(v) A.part = tostring(v) end
+		})
+		t1.SheriffTab:Slider({
+			Title = "Smoothness",
+			Desc = "0 snaps straight onto them",
+			Step = 0.01,
+			Value = { Min = 0, Max = 1, Default = 0.25 },
+			Callback = function(v) A.smooth = v end
+		})
+		t1.SheriffTab:Slider({
+			Title = "Prediction",
+			Desc = "leads a moving target, in seconds",
+			Step = 0.01,
+			Value = { Min = 0, Max = 0.5, Default = 0.1 },
+			Callback = function(v) A.predict = v end
+		})
+		t1.SheriffTab:Toggle({
+			Title = "Only when you can see them",
+			Desc = "no shot through walls",
+			Default = false,
+			Callback = function(on) A.visOnly = on end
+		})
+		t1.SheriffTab:Button({
+			Title = "Shoot the murderer",
+			Desc = "silent: it goes to the head, wherever you are looking",
+			Callback = function()
+				local ok, why = fire()
+				_Raw:Notify({
+					Title = ok and "Shot" or "No shot",
+					Content = ok and ("at " .. tostring(why)) or tostring(why),
+					Duration = 4
+				})
+			end
+		})
+		t1.SheriffTab:Toggle({
+			Title = "Auto shoot while locked",
+			Default = false,
+			Callback = function(on) A.auto = on end
+		})
+		t1.SheriffTab:Slider({
+			Title = "Seconds between shots",
+			Step = 0.05,
+			Value = { Min = 0.05, Max = 2, Default = 0.2 },
+			Callback = function(v) A.rate = v end
+		})
+	end
+
 		t14 = {
 		ReplicatedStorage = game:GetService("ReplicatedStorage"),
 		Players = game:GetService("Players"),
