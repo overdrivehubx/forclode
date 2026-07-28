@@ -137,6 +137,11 @@ do
 		ShowTabTitle = true,
 		u8:Divider()
 	})
+	t1.VisualsTab = v10:Tab({
+		Title = "Visuals",
+		Icon = "sparkles",
+		ShowTabTitle = true
+	})
 	t1.TeleportTab = v11:Tab({
 		Title = "Teleport",
 		Icon = "map-pin",
@@ -161,6 +166,431 @@ do
 		Title = "Spawners",
 		Icon = "package-plus",
 		ShowTabTitle = true
+	})
+end
+
+--==============================================================================
+-- VISUALS
+--==============================================================================
+-- Everything here is local to your client: Lighting properties, post-processing
+-- effects we parent to Lighting ourselves, and LocalTransparencyModifier, which
+-- by definition never replicates. Nothing is sent to the server, and every
+-- switch remembers what it changed so turning it off puts the world back.
+--
+-- Wrapped in a do-block so its locals go out of scope at the end and do not eat
+-- into the file's top-level local budget.
+--==============================================================================
+do
+	local Lighting = game:GetService("Lighting")
+	local VisTab = t1.VisualsTab
+
+	-- what we changed, so "off" is a real undo rather than a guess
+	local saved = {}
+	local function remember(inst, prop)
+		local key = tostring(inst) .. "." .. prop
+		if saved[key] == nil then
+			local ok, v = pcall(function() return inst[prop] end)
+			if ok then saved[key] = { inst = inst, prop = prop, value = v } end
+		end
+	end
+	local function set(inst, prop, value)
+		pcall(function()
+			remember(inst, prop)
+			inst[prop] = value
+		end)
+	end
+	local function restore(inst, prop)
+		local key = tostring(inst) .. "." .. prop
+		local e = saved[key]
+		if e then
+			pcall(function() e.inst[e.prop] = e.value end)
+			saved[key] = nil
+		end
+	end
+
+	-- our own effects, named so they can be found again and removed
+	local function effect(class, name)
+		local found = Lighting:FindFirstChild(name)
+		if found then return found end
+		local ok, made = pcall(function()
+			local e = Instance.new(class)
+			e.Name = name
+			e.Parent = Lighting
+			return e
+		end)
+		return ok and made or nil
+	end
+	local function dropEffect(name)
+		local found = Lighting:FindFirstChild(name)
+		if found then pcall(function() found:Destroy() end) end
+	end
+
+	--== light ==================================================================
+	VisTab:Section({ Title = "Light" })
+
+	local fullbright = false
+	VisTab:Toggle({
+		Title = "Fullbright",
+		Desc = "no dark corners, no shadows",
+		Default = false,
+		Callback = function(on)
+			fullbright = on
+			if on then
+				set(Lighting, "Ambient", Color3.fromRGB(178, 178, 178))
+				set(Lighting, "OutdoorAmbient", Color3.fromRGB(178, 178, 178))
+				set(Lighting, "Brightness", 2)
+				set(Lighting, "GlobalShadows", false)
+				set(Lighting, "FogEnd", 100000)
+			else
+				restore(Lighting, "Ambient")
+				restore(Lighting, "OutdoorAmbient")
+				restore(Lighting, "Brightness")
+				restore(Lighting, "GlobalShadows")
+				restore(Lighting, "FogEnd")
+			end
+		end
+	})
+	VisTab:Toggle({
+		Title = "No fog",
+		Default = false,
+		Callback = function(on)
+			if on then
+				set(Lighting, "FogEnd", 100000)
+				set(Lighting, "FogStart", 100000)
+			else
+				restore(Lighting, "FogEnd")
+				restore(Lighting, "FogStart")
+			end
+		end
+	})
+	VisTab:Slider({
+		Title = "Time of day",
+		Step = 0.5,
+		Value = { Min = 0, Max = 24, Default = 14 },
+		Callback = function(v)
+			set(Lighting, "ClockTime", v)
+		end
+	})
+	VisTab:Slider({
+		Title = "Brightness",
+		Step = 0.1,
+		Value = { Min = 0, Max = 5, Default = 2 },
+		Callback = function(v)
+			if not fullbright then remember(Lighting, "Brightness") end
+			pcall(function() Lighting.Brightness = v end)
+		end
+	})
+
+	--== mood ===================================================================
+	VisTab:Section({ Title = "Mood" })
+
+	-- Presets are pure Lighting values, so they need no assets and cannot fail
+	-- to load. Each one is a whole look rather than a single knob.
+	local MOODS = {
+		Default   = false,
+		Midnight  = { ClockTime = 0,    Ambient = Color3.fromRGB(28, 32, 60),   Outdoor = Color3.fromRGB(30, 36, 70),
+			Brightness = 1,   Fog = Color3.fromRGB(12, 14, 30),  Density = 0.42, Haze = 1.4, Glare = 0.1 },
+		Sunset    = { ClockTime = 17.4, Ambient = Color3.fromRGB(92, 60, 48),   Outdoor = Color3.fromRGB(120, 74, 52),
+			Brightness = 2.2, Fog = Color3.fromRGB(196, 118, 78), Density = 0.34, Haze = 2.6, Glare = 0.35 },
+		Overcast  = { ClockTime = 11,   Ambient = Color3.fromRGB(120, 124, 132), Outdoor = Color3.fromRGB(128, 132, 140),
+			Brightness = 1.4, Fog = Color3.fromRGB(150, 154, 162), Density = 0.5,  Haze = 3.2, Glare = 0 },
+		Void      = { ClockTime = 2,    Ambient = Color3.fromRGB(0, 0, 0),      Outdoor = Color3.fromRGB(0, 0, 0),
+			Brightness = 0.4, Fog = Color3.fromRGB(0, 0, 0),     Density = 0.6,  Haze = 0,   Glare = 0 },
+		Aurora    = { ClockTime = 1.2,  Ambient = Color3.fromRGB(36, 74, 84),   Outdoor = Color3.fromRGB(44, 96, 108),
+			Brightness = 1.6, Fog = Color3.fromRGB(28, 78, 92),   Density = 0.38, Haze = 2.0, Glare = 0.25 },
+	}
+	local MOOD_NAMES = { "Default", "Midnight", "Sunset", "Overcast", "Void", "Aurora" }
+
+	VisTab:Dropdown({
+		Title = "Mood",
+		Desc = "a whole look, not one setting",
+		Values = MOOD_NAMES,
+		Value = "Default",
+		Callback = function(name)
+			local m = MOODS[tostring(name)]
+			if not m then
+				restore(Lighting, "ClockTime")
+				restore(Lighting, "Ambient")
+				restore(Lighting, "OutdoorAmbient")
+				restore(Lighting, "Brightness")
+				restore(Lighting, "FogColor")
+				dropEffect("MH_Atmosphere")
+				return
+			end
+			set(Lighting, "ClockTime", m.ClockTime)
+			set(Lighting, "Ambient", m.Ambient)
+			set(Lighting, "OutdoorAmbient", m.Outdoor)
+			set(Lighting, "Brightness", m.Brightness)
+			set(Lighting, "FogColor", m.Fog)
+			local atm = effect("Atmosphere", "MH_Atmosphere")
+			if atm then
+				pcall(function()
+					atm.Density = m.Density
+					atm.Haze = m.Haze
+					atm.Glare = m.Glare
+					atm.Color = m.Fog
+				end)
+			end
+		end
+	})
+
+	--== grade ==================================================================
+	VisTab:Section({ Title = "Grade" })
+
+	local grade
+	local function grading()
+		grade = grade or effect("ColorCorrectionEffect", "MH_Grade")
+		return grade
+	end
+	VisTab:Slider({
+		Title = "Saturation",
+		Step = 0.05,
+		Value = { Min = -1, Max = 2, Default = 0 },
+		Callback = function(v)
+			local g = grading()
+			if g then pcall(function() g.Saturation = v end) end
+		end
+	})
+	VisTab:Slider({
+		Title = "Contrast",
+		Step = 0.05,
+		Value = { Min = -1, Max = 2, Default = 0 },
+		Callback = function(v)
+			local g = grading()
+			if g then pcall(function() g.Contrast = v end) end
+		end
+	})
+	VisTab:Colorpicker({
+		Title = "Tint",
+		Default = Color3.fromRGB(255, 255, 255),
+		Callback = function(c)
+			local g = grading()
+			if g then pcall(function() g.TintColor = c end) end
+		end
+	})
+	VisTab:Button({
+		Title = "Reset grade",
+		Callback = function()
+			dropEffect("MH_Grade")
+			grade = nil
+		end
+	})
+
+	--== effects ================================================================
+	VisTab:Section({ Title = "Effects" })
+
+	VisTab:Toggle({
+		Title = "Bloom",
+		Desc = "bright things glow",
+		Default = false,
+		Callback = function(on)
+			if not on then return dropEffect("MH_Bloom") end
+			local b = effect("BloomEffect", "MH_Bloom")
+			if b then
+				pcall(function()
+					b.Intensity = 0.9
+					b.Size = 24
+					b.Threshold = 0.9
+				end)
+			end
+		end
+	})
+	VisTab:Slider({
+		Title = "Bloom strength",
+		Step = 0.05,
+		Value = { Min = 0, Max = 4, Default = 0.9 },
+		Callback = function(v)
+			local b = Lighting:FindFirstChild("MH_Bloom")
+			if b then pcall(function() b.Intensity = v end) end
+		end
+	})
+	VisTab:Toggle({
+		Title = "Sun rays",
+		Default = false,
+		Callback = function(on)
+			if not on then return dropEffect("MH_Rays") end
+			local r = effect("SunRaysEffect", "MH_Rays")
+			if r then
+				pcall(function()
+					r.Intensity = 0.2
+					r.Spread = 0.9
+				end)
+			end
+		end
+	})
+	VisTab:Toggle({
+		Title = "Depth of field",
+		Desc = "the distance goes soft",
+		Default = false,
+		Callback = function(on)
+			if not on then return dropEffect("MH_DOF") end
+			local d = effect("DepthOfFieldEffect", "MH_DOF")
+			if d then
+				pcall(function()
+					d.FarIntensity = 0.6
+					d.NearIntensity = 0
+					d.FocusDistance = 40
+					d.InFocusRadius = 60
+				end)
+			end
+		end
+	})
+
+	--== world ==================================================================
+	VisTab:Section({ Title = "World" })
+
+	-- LocalTransparencyModifier is a client-only property: the server never
+	-- hears about it, and it is exactly what the game itself uses to hide your
+	-- own head in first person.
+	local seeThrough = {}
+	VisTab:Toggle({
+		Title = "See through walls",
+		Desc = "the map only — players are left alone",
+		Default = false,
+		Callback = function(on)
+			if not on then
+				for part in pairs(seeThrough) do
+					pcall(function() part.LocalTransparencyModifier = 0 end)
+				end
+				seeThrough = {}
+				return
+			end
+			local chars = {}
+			for _, pl in ipairs(game:GetService("Players"):GetPlayers()) do
+				if pl.Character then chars[pl.Character] = true end
+			end
+			for _, d in ipairs(workspace:GetDescendants()) do
+				if d:IsA("BasePart") and d.Transparency < 1 then
+					local mine = false
+					for c in pairs(chars) do
+						if d:IsDescendantOf(c) then mine = true break end
+					end
+					if not mine then
+						pcall(function() d.LocalTransparencyModifier = 0.65 end)
+						seeThrough[d] = true
+					end
+				end
+			end
+		end
+	})
+	VisTab:Toggle({
+		Title = "Hide clutter",
+		Desc = "particles, smoke and decals off",
+		Default = false,
+		Callback = function(on)
+			for _, d in ipairs(workspace:GetDescendants()) do
+				if d:IsA("ParticleEmitter") or d:IsA("Smoke") or d:IsA("Fire")
+					or d:IsA("Sparkles") or d:IsA("Decal") then
+					if on then set(d, "Enabled", false) else restore(d, "Enabled") end
+				end
+			end
+		end
+	})
+
+	--== you ====================================================================
+	VisTab:Section({ Title = "You" })
+
+	local neon, trail = false, nil
+	local function paintMe()
+		local char = LocalPlayer.Character
+		if not char then return end
+		for _, d in ipairs(char:GetDescendants()) do
+			if d:IsA("BasePart") and d.Name ~= "HumanoidRootPart" then
+				if neon then set(d, "Material", Enum.Material.Neon) else restore(d, "Material") end
+			end
+		end
+	end
+	VisTab:Toggle({
+		Title = "Neon body",
+		Desc = "your character glows — only you see it",
+		Default = false,
+		Callback = function(on)
+			neon = on
+			paintMe()
+		end
+	})
+
+	local trailColour = Color3.fromRGB(139, 124, 255)
+	local function makeTrail()
+		local char = LocalPlayer.Character
+		local root = char and char:FindFirstChild("HumanoidRootPart")
+		if not root then return end
+		if trail then pcall(function() trail:Destroy() end) end
+		pcall(function()
+			local a0 = Instance.new("Attachment")
+			a0.Name = "MH_TrailA"
+			a0.Position = Vector3.new(0, 1.4, 0)
+			a0.Parent = root
+			local a1 = Instance.new("Attachment")
+			a1.Name = "MH_TrailB"
+			a1.Position = Vector3.new(0, -1.4, 0)
+			a1.Parent = root
+			trail = Instance.new("Trail")
+			trail.Name = "MH_Trail"
+			trail.Attachment0 = a0
+			trail.Attachment1 = a1
+			trail.Lifetime = 0.6
+			trail.LightEmission = 1
+			trail.Color = ColorSequence.new(trailColour)
+			trail.Parent = root
+		end)
+	end
+	VisTab:Toggle({
+		Title = "Trail",
+		Default = false,
+		Callback = function(on)
+			if on then
+				makeTrail()
+			elseif trail then
+				pcall(function() trail:Destroy() end)
+				trail = nil
+			end
+		end
+	})
+	VisTab:Colorpicker({
+		Title = "Trail colour",
+		Default = trailColour,
+		Callback = function(c)
+			trailColour = c
+			if trail then pcall(function() trail.Color = ColorSequence.new(c) end) end
+		end
+	})
+
+	-- a fresh character loses everything that was hung on the old one
+	pcall(function()
+		LocalPlayer.CharacterAdded:Connect(function()
+			task.wait(0.6)
+			if neon then paintMe() end
+			if trail then makeTrail() end
+		end)
+	end)
+
+	--== undo ===================================================================
+	VisTab:Section({ Title = "Undo" })
+	VisTab:Button({
+		Title = "Put everything back",
+		Desc = "restores the world and drops every effect",
+		Callback = function()
+			for _, name in ipairs({ "MH_Grade", "MH_Bloom", "MH_Rays", "MH_DOF", "MH_Atmosphere" }) do
+				dropEffect(name)
+			end
+			grade = nil
+			for part in pairs(seeThrough) do
+				pcall(function() part.LocalTransparencyModifier = 0 end)
+			end
+			seeThrough = {}
+			if trail then pcall(function() trail:Destroy() end) trail = nil end
+			neon = false
+			for _, e in pairs(saved) do
+				pcall(function() e.inst[e.prop] = e.value end)
+			end
+			saved = {}
+			_Raw:Notify({
+				Title = "Visuals",
+				Content = "everything back the way it was",
+				Duration = 4
+			})
+		end
 	})
 end
 
