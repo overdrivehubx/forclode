@@ -33,22 +33,16 @@ local MOLLY_UI = "https://raw.githubusercontent.com/overdrivehubx/forclode/"
 	.. "claude/trading-ui-offline-harness-vxuc86/MollyUI.luau"
 
 -- Molly Hybrid
--- A graphite control-center base with the violet glow and stronger active
--- states from the first concept, plus the tighter hierarchy of the second.
+-- Near-black greys carry the structure and ONE colour carries the meaning:
+-- the page you are on, a switch that is on, a slider's fill. Tinting the
+-- surfaces and the hairlines too is what turned this into a purple grid.
 local MollyPalette = {
-	Background = Color3.fromHex("#09080F"),
-	Surface = Color3.fromHex("#12101C"),
-	SurfaceRaised = Color3.fromHex("#191529"),
-	SurfaceSoft = Color3.fromHex("#211A36"),
 	Primary = Color3.fromHex("#7C3AED"),
 	PrimaryBright = Color3.fromHex("#A855F7"),
 	PrimaryDeep = Color3.fromHex("#5B21B6"),
 	Indigo = Color3.fromHex("#4F46E5"),
-	Outline = Color3.fromHex("#6D5BD0"),
-	Text = Color3.fromHex("#F7F5FF"),
-	Muted = Color3.fromHex("#9A93AC"),
-	Icon = Color3.fromHex("#C4B5FD"),
-	Success = Color3.fromHex("#31D67B")
+	Success = Color3.fromHex("#31D67B"),
+	Danger = Color3.fromHex("#F05A74"),
 }
 
 -- Kept as a named color because a few of the original tab declarations use it.
@@ -108,7 +102,6 @@ local u8 = _Raw:CreateWindow({
 	Resizable = true,
 	Wide = true,
 	SideBarWidth = 190,
-	Background = MollyPalette.Background,
 	BackgroundImageTransparency = 0.16,
 	Acrylic = false,
 	HidePanelBackground = false,

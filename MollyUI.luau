@@ -35,18 +35,18 @@ local Players = game:GetService("Players")
 -- TOKENS
 --==============================================================================
 local C = {
-	Bg      = Color3.fromRGB(11, 12, 16),   -- the card
-	Surface = Color3.fromRGB(19, 21, 27),   -- rows, fields
-	Raised  = Color3.fromRGB(26, 29, 37),   -- hover, tracks
-	Edge    = Color3.fromRGB(33, 36, 46),   -- hairlines
-	Ink     = Color3.fromRGB(240, 242, 248),
-	Ink2    = Color3.fromRGB(150, 157, 175),
-	Ink3    = Color3.fromRGB(96, 103, 122),
+	Bg      = Color3.fromRGB(10, 10, 12),   -- the card
+	Surface = Color3.fromRGB(19, 19, 22),   -- rows, fields
+	Raised  = Color3.fromRGB(28, 28, 32),   -- hover, tracks
+	Edge    = Color3.fromRGB(35, 35, 40),   -- hairlines
+	Ink     = Color3.fromRGB(237, 237, 240),
+	Ink2    = Color3.fromRGB(158, 158, 166),
+	Ink3    = Color3.fromRGB(108, 108, 116),
 	Accent  = Color3.fromRGB(124, 106, 255),
 	Accent2 = Color3.fromRGB(168, 120, 255),  -- the far end of the brand gradient
 	Danger  = Color3.fromRGB(238, 84, 96),
 	Good    = Color3.fromRGB(58, 196, 134),  -- accepted, done, green in the game too
-	Panel   = Color3.fromRGB(16, 18, 24),    -- a group's card, between Bg and a row
+	Panel   = Color3.fromRGB(20, 20, 23),    -- a group's card, a step up from Bg
 	On      = Color3.fromRGB(255, 255, 255),
 }
 local F  = Enum.Font.GothamMedium
@@ -197,7 +197,7 @@ local ALIAS = {
 	Surface = "Surface", Card = "Surface",
 	Raised = "Raised", SurfaceRaised = "Raised",
 	Panel = "Panel", SurfaceSoft = "Panel", Group = "Panel",
-	Edge = "Edge", Outline = "Edge", Border = "Edge", Stroke = "Edge",
+	Edge = "Edge", Border = "Edge", Stroke = "Edge",
 	Ink = "Ink", Text = "Ink",
 	Ink2 = "Ink2", Icon = "Ink2", Subtle = "Ink2",
 	Ink3 = "Ink3", Muted = "Ink3", Dim = "Ink3",
@@ -209,6 +209,20 @@ local ALIAS = {
 }
 function UI:SetPalette(t)
 	if type(t) ~= "table" then return C end
+	-- "Outline" is where themed scripts put a vivid colour meant for a glow.
+	-- Hairlines are structure, not decoration: every rule, card border and row
+	-- divider uses Edge, so a saturated one turns the window into a grid of
+	-- neon. Take it only as far as a quiet line can carry.
+	if t.Outline ~= nil and t.Edge == nil then
+		local colr = t.Outline
+		if type(colr) == "string" then
+			local ok, got = pcall(function() return Color3.fromHex(colr) end)
+			colr = ok and got or nil
+		end
+		if typeof(colr) == "Color3" then
+			C.Edge = C.Bg:Lerp(colr, 0.35)
+		end
+	end
 	for k, v in pairs(t) do
 		local key = ALIAS[tostring(k)]
 		local colr = v
@@ -553,9 +567,9 @@ local function shell(tab, h)
 		BackgroundTransparency = flat and 1 or 0,
 		Size = UDim2.new(1, 0, 0, h), LayoutOrder = tab:_order() }, tab:_host())
 	if flat then
-		new("Frame", { BackgroundColor3 = C.Edge, BorderSizePixel = 0, BackgroundTransparency = 0.5,
+		new("Frame", { BackgroundColor3 = C.Edge, BorderSizePixel = 0, BackgroundTransparency = 0.72,
 			AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, 0),
-			Size = UDim2.new(1, -24, 0, 1), ZIndex = 2 }, row)
+			Size = UDim2.new(1, -28, 0, 1), ZIndex = 2 }, row)
 	else
 		round(row, R_ROW)
 	end
@@ -646,23 +660,42 @@ function Tab:Section(o)
 
 	local card = new("Frame", { BackgroundColor3 = C.Panel, Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = self:_order() }, self._cols[shorter])
-	round(card, 14); edge(card, C.Edge, 0.55)
-	new("UIPadding", { PaddingBottom = UDim.new(0, 10) }, card)
+	round(card, 16); edge(card, C.Edge, 0.72)
+	new("UIPadding", { PaddingBottom = UDim.new(0, 12),
+		PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4) }, card)
 	col(card, 0)
 
 	local head = new("Frame", { BackgroundTransparency = 1, LayoutOrder = 0,
-		Size = UDim2.new(1, 0, 0, desc and 58 or 44) }, card)
-	local t = label(head, tostring(o.Title or ""),
-		14, (typeof(o.Color) == "Color3") and o.Color or C.Ink, true)
-	t.Position = UDim2.fromOffset(16, desc and 12 or 14)
-	t.Size = UDim2.new(1, -32, 0, 18)
+		Size = UDim2.new(1, 0, 0, desc and 68 or 52) }, card)
+	local t = label(head, string.lower(tostring(o.Title or "")),
+		15.5, (typeof(o.Color) == "Color3") and o.Color or C.Ink, true)
+	t.Position = UDim2.fromOffset(14, desc and 16 or 17)
+	t.Size = UDim2.new(1, -100, 0, 20)
 	if desc then
-		local d = label(head, desc, 10.5, C.Ink3)
-		d.Position = UDim2.fromOffset(16, 33); d.Size = UDim2.new(1, -32, 0, 14)
+		local d = label(head, desc, 11, C.Ink3)
+		d.Position = UDim2.fromOffset(14, 39); d.Size = UDim2.new(1, -100, 0, 15)
 	end
-	new("Frame", { BackgroundColor3 = C.Edge, BorderSizePixel = 0, BackgroundTransparency = 0.5,
+	-- a card may carry its own master switch, the way the reference does
+	if o.Toggle ~= nil then
+		local on = o.Toggle and true or false
+		local track = new("Frame", { BackgroundColor3 = on and C.Accent or C.Raised,
+			AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -18, 0.5, 0),
+			Size = UDim2.fromOffset(38, 22) }, head)
+		round(track, 11)
+		local knob = new("Frame", { BackgroundColor3 = C.On, Size = UDim2.fromOffset(16, 16),
+			Position = on and UDim2.fromOffset(19, 3) or UDim2.fromOffset(3, 3) }, track)
+		round(knob, 8)
+		new("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.fromScale(1, 1),
+			AutoButtonColor = false }, head).MouseButton1Click:Connect(function()
+			on = not on
+			tw(track, 0.14, { BackgroundColor3 = on and C.Accent or C.Raised })
+			tw(knob, 0.14, { Position = on and UDim2.fromOffset(19, 3) or UDim2.fromOffset(3, 3) })
+			if o.Callback then task.spawn(function() pcall(o.Callback, on) end) end
+		end)
+	end
+	new("Frame", { BackgroundColor3 = C.Edge, BorderSizePixel = 0, BackgroundTransparency = 0.6,
 		AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, 0),
-		Size = UDim2.new(1, -24, 0, 1) }, head)
+		Size = UDim2.new(1, -28, 0, 1) }, head)
 
 	self._card = card
 	self._flat = true
@@ -1591,7 +1624,7 @@ function Window:Tab(o)
 		end
 		self._sideOrder = self._sideOrder + 1
 		btn = new("TextButton", { BackgroundColor3 = C.Raised, BackgroundTransparency = 1,
-			Size = UDim2.new(1, 0, 0, 36), Font = F, TextSize = 13, TextColor3 = C.Ink3,
+			Size = UDim2.new(1, 0, 0, 38), Font = F, TextSize = 13.5, TextColor3 = C.Ink3,
 			Text = "      " .. string.lower(title), TextXAlignment = Enum.TextXAlignment.Left,
 			AutoButtonColor = false, LayoutOrder = self._sideOrder }, self._tabbar)
 		-- the active page is marked by an accent bar at the edge, not a filled box
@@ -1892,7 +1925,7 @@ function UI:CreateWindow(o)
 		-- headless: build everything, show nothing. Lets a front-end drive the
 		-- engine's menu without a second window sitting on screen.
 		Visible = not (_G.MH_Headless and not o.Front) }, gui)
-	round(card, R_CARD); edge(card, C.Edge, 0.1)
+	round(card, sidebar and 20 or R_CARD); edge(card, C.Edge, sidebar and 0.35 or 0.1)
 	local uiscale = new("UIScale", { Scale = scale }, card)
 
 	local readout, win_pageTitle, win_hint, win_setDrawer, win_tagHost
@@ -1905,13 +1938,15 @@ function UI:CreateWindow(o)
 			local desk = wide and v.Y >= 600
 			local w, h
 			if sidebar then
-				-- the hub takes a big bite of a monitor, most of a phone
+				-- A window is a window: it should sit ON the game, not replace it.
+				-- Covering the whole phone screen is what made it read as "either
+				-- broken or a different menu entirely".
 				if desk then
-					w, h = math.min(deskW, math.floor(v.X * 0.60)), math.min(deskH, math.floor(v.Y * 0.82))
+					w, h = math.min(deskW, math.floor(v.X * 0.58)), math.min(deskH, math.floor(v.Y * 0.78))
 				elseif wide then
-					w, h = math.floor(v.X * 0.94), math.floor(v.Y * 0.94)
+					w, h = math.floor(v.X * 0.86), math.floor(v.Y * 0.84)
 				else
-					w, h = math.floor(v.X * 0.96), math.floor(v.Y * 0.80)
+					w, h = math.floor(v.X * 0.92), math.floor(v.Y * 0.66)
 				end
 			elseif desk then
 				w, h = math.min(deskW, math.floor(v.X * 0.40)), math.min(deskH, math.floor(v.Y * 0.80))
@@ -1972,14 +2007,10 @@ function UI:CreateWindow(o)
 
 		local brandCell = new("Frame", { BackgroundTransparency = 1, ZIndex = 20,
 			Size = UDim2.new(1, 0, 0, HEAD_H) }, side)
-		local mark = new("Frame", { BackgroundColor3 = C.Accent, Position = UDim2.fromOffset(18, 15),
-			Size = UDim2.fromOffset(26, 26), ZIndex = 21 }, brandCell)
-		round(mark, 9)
-		local ml = label(mark, o.Badge or "MH", 11, C.On, true)
-		ml.Size = UDim2.fromScale(1, 1); ml.TextXAlignment = Enum.TextXAlignment.Center
-		ml.ZIndex = 22
-		local bt = label(brandCell, tostring(o.Title or "MollyHub"):lower(), 13.5, C.Ink, true)
-		bt.Position = UDim2.fromOffset(54, 19); bt.Size = UDim2.new(1, -62, 0, 18); bt.ZIndex = 21
+		local ml = label(brandCell, tostring(o.Badge or "MH"):sub(1, 2):upper(), 13, C.Accent2, true)
+		ml.Position = UDim2.fromOffset(20, 19); ml.Size = UDim2.fromOffset(26, 18); ml.ZIndex = 21
+		local bt = label(brandCell, tostring(o.Title or "MollyHub"):lower(), 13, C.Ink2, true)
+		bt.Position = UDim2.fromOffset(48, 19); bt.Size = UDim2.new(1, -56, 0, 18); bt.ZIndex = 21
 
 		-- rules: under the brand, and down the edge of the sidebar
 		new("Frame", { BackgroundColor3 = C.Edge, BorderSizePixel = 0, BackgroundTransparency = 0.45,
@@ -2165,7 +2196,7 @@ function UI:CreateWindow(o)
 		pcall(function() cw = card.Size.X.Offset end)
 		-- a narrow window keeps the nav in a drawer, so the page gets the width
 		local pw = (cw < 620) and (cw - 28) or (cw - (SIDE + 34))
-		if pw >= 520 then win._colCount = 2 end
+		if pw >= 480 then win._colCount = 2 end
 	end
 	if sidebar and win._hint then
 		local exe = "MollyHub"
