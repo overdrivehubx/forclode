@@ -98,10 +98,10 @@ end
 
 local function rows()
 	local out, total = {}, 0
-	for _, it in ipairs(API.rank(query) or {}) do
+	for _, it in ipairs(API.rank(query, 0) or {}) do
 		if passes(it) then
 			total = total + 1
-			if #out < 60 then
+			if #out < 120 then
 				local d = API.item(it.key) or {}
 				local badges = {}
 				if d.ItemType then badges[#badges + 1] = d.ItemType end

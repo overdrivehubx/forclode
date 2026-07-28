@@ -6472,7 +6472,7 @@ function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
 	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v43")   -- freshness marker so a stale-cache test is obvious
+	add("v44")   -- freshness marker so a stale-cache test is obvious
 	MH_loadMeshMap()
 	local lrn, tot = MH_learnMeshes()
 	add("learn=+" .. tostring(lrn) .. "/" .. tostring(tot))
@@ -6652,13 +6652,18 @@ end
 
 -- Rank catalog matches for a typed name: exact key/name > prefix > contains.
 -- This is the "scanner" — you type what you want, it figures out the item.
-local function rankMatches(query)
+-- `limit` caps the answer; 0 means everything. It used to be a hard 50 either
+-- way, which is why a picker fed from here was missing most of the catalog and
+-- searching could not find what it had never been given.
+local function rankMatches(query, limit)
 	query = tostring(query or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+	limit = tonumber(limit) or 50
+	if limit <= 0 then limit = math.huge end
 	local out = {}
 	if query == "" then
 		for _, it in ipairs(spawnIndex) do
 			out[#out + 1] = it
-			if #out >= 50 then break end
+			if #out >= limit then break end
 		end
 		return out
 	end
@@ -6675,7 +6680,7 @@ local function rankMatches(query)
 		if a.s ~= b.s then return a.s < b.s end
 		return a.it.name:lower() < b.it.name:lower()
 	end)
-	for i = 1, math.min(50, #scored) do out[i] = scored[i].it end
+	for i = 1, math.min(limit, #scored) do out[i] = scored[i].it end
 	return out
 end
 -- When the real catalog/inventory finishes loading in the background, rebuild.
@@ -6831,7 +6836,7 @@ if true then
 			local function publishAPI()
 				_G.MH_API = _G.MH_API or {}
 				local A = _G.MH_API
-				A.rank    = function(q) return rankMatches(q) end
+				A.rank    = function(q, n) return rankMatches(q, n) end
 				A.catalog = function() return spawnIndex end
 				A.item    = function(k) return ItemDB[k] end
 				A.equip   = function(k, n) return MH_equipItem(k, n) end
