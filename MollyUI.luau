@@ -218,10 +218,21 @@ local function showPicker(win, title, values, current, onPick, opts)
 		pcall(function()
 			local a, s = card.AbsolutePosition, card.AbsoluteSize
 			local v = viewport()
-			if a.X + s.X + PICK_W + 10 < v.X then p.Position = UDim2.fromOffset(a.X + s.X + 10, a.Y)
-			elseif a.X - PICK_W - 10 > 0 then p.Position = UDim2.fromOffset(a.X - PICK_W - 10, a.Y)
-			else p.Position = UDim2.fromOffset(a.X, a.Y + s.Y + 8) end
-			p.Size = UDim2.fromOffset(PICK_W, math.max(240, math.min(s.Y, 400)))
+			local h = math.max(240, math.min(s.Y, 400))
+			if a.X + s.X + PICK_W + 10 < v.X then
+				p.Position = UDim2.fromOffset(a.X + s.X + 10, a.Y)
+			elseif a.X - PICK_W - 10 > 0 then
+				p.Position = UDim2.fromOffset(a.X - PICK_W - 10, a.Y)
+			else
+				-- No room either side. Putting it under the window pushed it off a
+				-- phone screen entirely, so sit it over the middle of the window
+				-- instead and keep it inside the viewport.
+				h = math.max(200, math.min(s.Y - 40, 380))
+				local x = math.clamp(a.X + (s.X - PICK_W) / 2, 8, math.max(8, v.X - PICK_W - 8))
+				local y = math.clamp(a.Y + (s.Y - h) / 2, 8, math.max(8, v.Y - h - 8))
+				p.Position = UDim2.fromOffset(x, y)
+			end
+			p.Size = UDim2.fromOffset(PICK_W, h)
 		end)
 	end
 	place()
@@ -1517,6 +1528,7 @@ function Window:Tab(o)
 		self._active = tab
 		activate()
 		if self._pageTitle then self._pageTitle.Text = string.lower(title) end
+		if self._setDrawer then self._setDrawer(false) end
 		self:_syncTabs()
 	end
 	if btn and self._sidebar then
@@ -1735,7 +1747,8 @@ function UI:CreateWindow(o)
 	round(card, R_CARD); edge(card, C.Edge, 0.1)
 	local uiscale = new("UIScale", { Scale = scale }, card)
 
-	local readout, win_pageTitle, win_hint
+	local readout, win_pageTitle, win_hint, win_setDrawer
+	local shellFor          -- the wide layout sets this; fit() reports the width to it
 	local function fit()
 		pcall(function()
 			local v = viewport()
@@ -1766,9 +1779,11 @@ function UI:CreateWindow(o)
 			-- footer still works on top of this.
 			local dens = 1
 			if v.Y < 500 then dens = 0.8 elseif v.Y < 700 then dens = 0.88 end
-			card.Size = UDim2.fromOffset(math.floor(w / dens), math.floor(h / dens))
+			local cw, ch = math.floor(w / dens), math.floor(h / dens)
+			card.Size = UDim2.fromOffset(cw, ch)
 			uiscale.Scale = scale * dens
 			if readout then readout.Text = tostring(math.floor(scale * 100 + 0.5)) .. "%" end
+			if shellFor then shellFor(cw) end
 		end)
 	end
 
@@ -1801,57 +1816,119 @@ function UI:CreateWindow(o)
 		-- is boxed that does not need to be — the divider rules do the work.
 		local HEAD_H, FOOT_H = 56, 34
 
-		-- brand cell, top of the sidebar
-		local brandCell = new("Frame", { BackgroundTransparency = 1,
-			Size = UDim2.fromOffset(SIDE, HEAD_H) }, card)
+		-- The sidebar is one piece, so it can either sit in its column or slide in
+		-- over the page. A phone-sized window has no room to spend 170px on a
+		-- permanent nav — that is what put the interface on top of the interface.
+		local side = new("Frame", { BackgroundColor3 = C.Bg, BorderSizePixel = 0, ZIndex = 20,
+			Size = UDim2.new(0, SIDE, 1, -FOOT_H) }, card)
+
+		local brandCell = new("Frame", { BackgroundTransparency = 1, ZIndex = 20,
+			Size = UDim2.new(1, 0, 0, HEAD_H) }, side)
 		local mark = new("Frame", { BackgroundColor3 = C.Accent, Position = UDim2.fromOffset(18, 15),
-			Size = UDim2.fromOffset(26, 26) }, brandCell)
+			Size = UDim2.fromOffset(26, 26), ZIndex = 21 }, brandCell)
 		round(mark, 9)
 		local ml = label(mark, o.Badge or "MH", 11, C.On, true)
 		ml.Size = UDim2.fromScale(1, 1); ml.TextXAlignment = Enum.TextXAlignment.Center
+		ml.ZIndex = 22
 		local bt = label(brandCell, tostring(o.Title or "MollyHub"):lower(), 13.5, C.Ink, true)
-		bt.Position = UDim2.fromOffset(54, 19); bt.Size = UDim2.new(1, -62, 0, 18)
+		bt.Position = UDim2.fromOffset(54, 19); bt.Size = UDim2.new(1, -62, 0, 18); bt.ZIndex = 21
 
-		-- rules: under the brand, and down the side of the whole sidebar
+		-- rules: under the brand, and down the edge of the sidebar
 		new("Frame", { BackgroundColor3 = C.Edge, BorderSizePixel = 0, BackgroundTransparency = 0.45,
-			Position = UDim2.fromOffset(0, HEAD_H), Size = UDim2.new(0, SIDE, 0, 1) }, card)
+			Position = UDim2.fromOffset(0, HEAD_H), Size = UDim2.new(1, 0, 0, 1), ZIndex = 21 }, side)
 		new("Frame", { BackgroundColor3 = C.Edge, BorderSizePixel = 0, BackgroundTransparency = 0.45,
-			Position = UDim2.fromOffset(SIDE, 0), Size = UDim2.new(0, 1, 1, -FOOT_H) }, card)
+			AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0),
+			Size = UDim2.new(0, 1, 1, 0), ZIndex = 21 }, side)
 
 		tabbar = new("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0,
-			ClipsDescendants = true, Position = UDim2.fromOffset(0, HEAD_H + 14),
-			Size = UDim2.new(0, SIDE, 1, -(HEAD_H + FOOT_H + 20)), CanvasSize = UDim2.new(),
+			ClipsDescendants = true, Position = UDim2.fromOffset(0, HEAD_H + 14), ZIndex = 21,
+			Size = UDim2.new(1, 0, 1, -(HEAD_H + 20)), CanvasSize = UDim2.new(),
 			AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 2,
-			ScrollBarImageColor3 = C.Edge, ScrollingDirection = Enum.ScrollingDirection.Y }, card)
+			ScrollBarImageColor3 = C.Edge, ScrollingDirection = Enum.ScrollingDirection.Y }, side)
 		new("UIListLayout", { Padding = UDim.new(0, 2), FillDirection = Enum.FillDirection.Vertical,
 			SortOrder = Enum.SortOrder.LayoutOrder }, tabbar)
+
+		-- the sheet behind the drawer: tap it to put the nav away again
+		local scrim = new("TextButton", { BackgroundColor3 = Color3.new(0, 0, 0), Text = "",
+			BackgroundTransparency = 0.45, BorderSizePixel = 0, Visible = false, ZIndex = 19,
+			Size = UDim2.fromScale(1, 1), AutoButtonColor = false }, card)
 
 		-- title bar over the page: what you are looking at, and whether we are live
 		local topbar = new("Frame", { BackgroundTransparency = 1,
 			Position = UDim2.fromOffset(SIDE + 1, 0), Size = UDim2.new(1, -(SIDE + 1), 0, HEAD_H) }, card)
+		local burger = new("TextButton", { BackgroundTransparency = 1, Visible = false, Font = FB,
+			Position = UDim2.fromOffset(12, 14), Size = UDim2.fromOffset(30, 28), TextSize = 15,
+			TextColor3 = C.Ink2, Text = "=", AutoButtonColor = false }, topbar)
 		local pageTtl = label(topbar, "", 17, C.Ink, true)
-		pageTtl.Position = UDim2.fromOffset(24, 18); pageTtl.Size = UDim2.new(0, 200, 0, 22)
+		pageTtl.Position = UDim2.fromOffset(24, 18); pageTtl.Size = UDim2.new(0, 190, 0, 22)
 		local crumb = label(topbar, tostring(o.SubTitle or o.Author or ""):lower(), 11, C.Ink3)
-		crumb.Position = UDim2.fromOffset(24, 20); crumb.Size = UDim2.new(1, -260, 0, 18)
+		crumb.Position = UDim2.fromOffset(24, 20); crumb.Size = UDim2.fromOffset(190, 18)
 		-- the crumb sits after the title, so measure the title and shove it along
-		pcall(function()
-			pageTtl:GetPropertyChangedSignal("Text"):Connect(function()
-				local w = math.min(200, math.max(40, #tostring(pageTtl.Text) * 9))
-				crumb.Position = UDim2.fromOffset(24 + w + 10, 20)
-			end)
-		end)
+		local function placeCrumb()
+			local x = (burger.Visible and 46 or 24)
+			pageTtl.Position = UDim2.fromOffset(x, 18)
+			local w = math.min(190, math.max(40, #tostring(pageTtl.Text) * 9))
+			crumb.Position = UDim2.fromOffset(x + w + 10, 20)
+		end
+		pcall(function() pageTtl:GetPropertyChangedSignal("Text"):Connect(placeCrumb) end)
 		local dot = new("Frame", { BackgroundColor3 = C.Good, AnchorPoint = Vector2.new(1, 0.5),
 			Position = UDim2.new(1, -116, 0.5, 0), Size = UDim2.fromOffset(7, 7) }, topbar)
 		round(dot, 4)
 		local live = label(topbar, "connected", 11, C.Ink2)
 		live.AnchorPoint = Vector2.new(1, 0.5); live.Position = UDim2.new(1, -46, 0.5, 0)
 		live.Size = UDim2.fromOffset(64, 14)
-		new("Frame", { BackgroundColor3 = C.Edge, BorderSizePixel = 0, BackgroundTransparency = 0.45,
-			Position = UDim2.fromOffset(SIDE + 1, HEAD_H), Size = UDim2.new(1, -(SIDE + 1), 0, 1) }, card)
+		local topRule = new("Frame", { BackgroundColor3 = C.Edge, BorderSizePixel = 0,
+			BackgroundTransparency = 0.45, Position = UDim2.fromOffset(SIDE + 1, HEAD_H),
+			Size = UDim2.new(1, -(SIDE + 1), 0, 1) }, card)
 
 		pages = new("Frame", { BackgroundTransparency = 1, ClipsDescendants = true,
 			Position = UDim2.fromOffset(SIDE + 18, HEAD_H + 14),
 			Size = UDim2.new(1, -(SIDE + 34), 1, -(HEAD_H + FOOT_H + 16)) }, card)
+
+		-- open and close the drawer
+		local drawerOpen = false
+		local function setDrawer(open)
+			drawerOpen = open and true or false
+			scrim.Visible = drawerOpen
+			side.Visible = drawerOpen
+		end
+		burger.MouseButton1Click:Connect(function() setDrawer(not drawerOpen) end)
+		scrim.MouseButton1Click:Connect(function() setDrawer(false) end)
+
+		-- Lay the shell out for the width we actually got. Wide: the sidebar keeps
+		-- its own column. Narrow: it becomes a drawer and the page takes the lot.
+		local wasNarrow
+		shellFor = function(w)
+			local narrow = w < 620
+			if narrow == wasNarrow then return end
+			wasNarrow = narrow
+			burger.Visible = narrow
+			live.Visible = not narrow
+			dot.Visible = not narrow
+			crumb.Visible = not narrow
+			if narrow then
+				side.Visible = false
+				scrim.Visible = false
+				drawerOpen = false
+				topbar.Position = UDim2.fromOffset(0, 0)
+				topbar.Size = UDim2.new(1, -40, 0, HEAD_H)
+				topRule.Position = UDim2.fromOffset(0, HEAD_H)
+				topRule.Size = UDim2.new(1, 0, 0, 1)
+				pages.Position = UDim2.fromOffset(14, HEAD_H + 12)
+				pages.Size = UDim2.new(1, -28, 1, -(HEAD_H + FOOT_H + 14))
+			else
+				side.Visible = true
+				scrim.Visible = false
+				topbar.Position = UDim2.fromOffset(SIDE + 1, 0)
+				topbar.Size = UDim2.new(1, -(SIDE + 1), 0, HEAD_H)
+				topRule.Position = UDim2.fromOffset(SIDE + 1, HEAD_H)
+				topRule.Size = UDim2.new(1, -(SIDE + 1), 0, 1)
+				pages.Position = UDim2.fromOffset(SIDE + 18, HEAD_H + 14)
+				pages.Size = UDim2.new(1, -(SIDE + 34), 1, -(HEAD_H + FOOT_H + 16))
+			end
+			placeCrumb()
+		end
+		win_setDrawer = setDrawer
 
 		-- status strip along the very bottom, across the whole window
 		new("Frame", { BackgroundColor3 = C.Edge, BorderSizePixel = 0, BackgroundTransparency = 0.45,
@@ -1930,12 +2007,14 @@ function UI:CreateWindow(o)
 
 	local win = setmetatable({ _gui = gui, _card = card, _tabbar = tabbar, _pages = pages,
 		_scale = uiscale, _sidebar = sidebar, _pageTitle = win_pageTitle, _hint = win_hint,
-		_tabs = {}, _byTitle = {} }, Window)
+		_setDrawer = win_setDrawer, _tabs = {}, _byTitle = {} }, Window)
 	-- two columns of cards, but only when there is honestly room for them
 	win._colCount = 1
 	if sidebar then
-		local pw = 0
-		pcall(function() pw = card.Size.X.Offset - (SIDE + 34) end)
+		local cw = 0
+		pcall(function() cw = card.Size.X.Offset end)
+		-- a narrow window keeps the nav in a drawer, so the page gets the width
+		local pw = (cw < 620) and (cw - 28) or (cw - (SIDE + 34))
 		if pw >= 520 then win._colCount = 2 end
 	end
 	if sidebar and win._hint then
