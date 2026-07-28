@@ -6207,13 +6207,26 @@ function MH_paintMesh(root, mesh, tex, rec)
 	local okd, ds = pcall(function() return root:GetDescendants() end)
 	if not okd then ds = {} end
 	MH_normRec(rec)
+	-- A weapon shipped inside the script knows its mesh and nothing else. That
+	-- must NOT fall through to a fresh SpecialMesh, because a SpecialMesh at the
+	-- default scale of 1 draws a file mesh at the size it was MODELLED at — for
+	-- a MM2 weapon that is the size of the map, which is exactly what you get
+	-- when a skin with no size is worn. A real MeshPart comes back at the mesh's
+	-- own size instead, so build one and remember the size it reports.
+	local rsx, rsy, rsz
+	if type(rec) == "table" then
+		rsx, rsy, rsz = tonumber(rec.sx), tonumber(rec.sy), tonumber(rec.sz)
+	end
+	local haveSize = (rsx and rsy and rsz) and true or false
+	-- no size at all counts too: a bare mesh id is the commonest case now
+	local asPart = (not haveSize) or rec.k == "size"
 	-- Clear a MeshPart overlay left by the PREVIOUS item. It hides the display it
 	-- sits on, so repainting the mesh underneath changed nothing visible and the
 	-- old weapon stayed on screen however many times you clicked.
-	MH_dropOverlay(root, (type(rec) == "table" and rec.k == "size") and mnum or nil)
+	MH_dropOverlay(root, asPart and mnum or nil)
 	-- A skin recorded off a MeshPart has an ABSOLUTE size, which no SpecialMesh
 	-- can match. Rebuild it as a real MeshPart at that size and wear that instead.
-	if type(rec) == "table" and rec.k == "size" and _G.MH_MeshPartSkins ~= false then
+	if asPart and _G.MH_MeshPartSkins ~= false then
 		local host = (root:IsA("BasePart") and root) or root:FindFirstChildWhichIsA("BasePart", true)
 		if host then
 			local ex = host:FindFirstChild("__MHskin")
@@ -6221,9 +6234,37 @@ function MH_paintMesh(root, mesh, tex, rec)
 				pcall(function() host.LocalTransparencyModifier = 1 end)  -- already on
 				return 1
 			end
-			local mp, why = MH_makeMeshPart(mesh, tex, rec.sx, rec.sy, rec.sz)
+			local mp, why, nx, ny, nz = MH_makeMeshPart(mesh, tex, rsx, rsy, rsz)
 			_G.MH_SkinNote = tostring(why)     -- surfaced in the equip diagnostic
-			if mp then return MH_overlayWith(host, mp) end
+			if mp then
+				if not haveSize then
+					-- Belt and braces: a mesh modelled far bigger than a weapon
+					-- gets cut down to the display it replaces, so one bad id in
+					-- a thousand can never put a building on your back.
+					local big = math.max(nx or 0, ny or 0, nz or 0)
+					if big > 12 then
+						local want
+						pcall(function()
+							local sz = host.Size
+							local a, b, c = tonumber(sz.X), tonumber(sz.Y), tonumber(sz.Z)
+							if a and b and c then want = math.max(a, b, c) end
+						end)
+						if type(want) ~= "number" or want <= 0 then want = 4 end
+						local f = want / big
+						nx, ny, nz = (nx or 0) * f, (ny or 0) * f, (nz or 0) * f
+						pcall(function()
+							local k = tonumber(_G.MH_SkinScale) or 1
+							mp.Size = Vector3.new(nx * k, ny * k, nz * k)
+						end)
+					end
+					MH_rememberSize(rec, nx, ny, nz)
+				end
+				return MH_overlayWith(host, mp)
+			end
+			-- No MeshPart? Fall through. Repointing a SpecialMesh the display
+			-- already has keeps whatever scale the game set on it, which is
+			-- roughly weapon-sized; only a mesh we hang on ourselves at scale 1
+			-- comes out the size of the map, and those are refused below.
 		end
 	end
 	-- (a) a SpecialMesh can simply be repointed
@@ -6285,7 +6326,7 @@ function MH_paintMesh(root, mesh, tex, rec)
 	if #mps == 0 then
 		local h = root:FindFirstChild("Handle")
 		if not (h and h:IsA("BasePart")) then h = root:FindFirstChildWhichIsA("BasePart", true) end
-		if h and not h:IsA("MeshPart") then
+		if h and not h:IsA("MeshPart") and scale then
 			pcall(function()
 				local sm = h:FindFirstChild("__MHmesh")
 				if not sm then
@@ -6373,14 +6414,38 @@ function MH_makeMeshPart(mesh, tex, sx, sy, sz)
 	end)
 	if not mp then pcall(function() mp = AS:CreateMeshPartAsync(url) end) end
 	if not mp then return nil, "CreateMeshPartAsync failed" end
+	-- The part comes back at the mesh's OWN size in studs. That is the number a
+	-- mesh-only record is missing, so read it before we touch anything.
+	local nx, ny, nz
+	pcall(function() nx, ny, nz = mp.Size.X, mp.Size.Y, mp.Size.Z end)
 	pcall(function()
 		mp.CanCollide = false; mp.Massless = true; mp.Anchored = false
 		local t = MH_shortId(tex)
 		if t ~= "" then mp.TextureID = "rbxassetid://" .. t end
 		local k = tonumber(_G.MH_SkinScale) or 1
-		if sx and sy and sz then mp.Size = Vector3.new(sx * k, sy * k, sz * k) end
+		if sx and sy and sz then
+			mp.Size = Vector3.new(sx * k, sy * k, sz * k)
+		elseif nx and k ~= 1 then
+			mp.Size = Vector3.new(nx * k, ny * k, nz * k)
+		end
 	end)
-	return mp, "meshpart:" .. mnum
+	return mp, "meshpart:" .. mnum, nx, ny, nz
+end
+
+-- Write a size we just measured back into the skin, and into the saved map, so
+-- the next equip of this weapon does not have to build the part to find out.
+-- GLOBAL.
+function MH_rememberSize(rec, x, y, z)
+	if type(rec) ~= "table" then return false end
+	x, y, z = tonumber(x), tonumber(y), tonumber(z)
+	if not (x and y and z) or x <= 0 or y <= 0 or z <= 0 then return false end
+	rec.sx, rec.sy, rec.sz, rec.k = x, y, z, "size"
+	local m = rec.key and (_G.MH_MeshMap or {})[rec.key]
+	if type(m) == "table" and MH_shortId(m.mesh) == MH_shortId(rec.mesh) then
+		m.sx, m.sy, m.sz, m.k = x, y, z, "size"
+		pcall(MH_saveMeshMap)
+	end
+	return true
 end
 
 -- Remove an overlay we welded on earlier and unhide what it was covering, so a
@@ -6429,6 +6494,9 @@ end
 -- our own Part+SpecialMesh onto it, so it moves exactly where the weapon does.
 -- Returns 1 if the overlay is in place. GLOBAL.
 function MH_overlayPart(part, mnum, tnum, scale)
+	-- A mesh we have no scale for renders at the size it was modelled at, which
+	-- is the whole map. Leave the game's own weapon showing instead.
+	if not scale then return 0 end
 	local made = 0
 	pcall(function()
 		local p = part:FindFirstChild("__MHskin")
@@ -6548,6 +6616,9 @@ function MH_applySkin(itemType, mesh, tex, sx, sy, sz, kind, rec)
 	if MH_shortId(mesh) == "" then return 0, "no mesh id" end
 	_G.MH_SkinOverride = _G.MH_SkinOverride or {}
 	local use = MH_skinRecord(mesh, tex, sx, sy, sz, kind)
+	-- which item this is, so a size measured while wearing it can be written
+	-- back to the map entry it came from
+	if use then use.key = (type(rec) == "table" and rec.key) or (_G.MH_SkinKey or {})[itemType] end
 	-- carry the placement fields through: a mesh alone is not the whole look
 	if type(rec) == "table" and use then
 		for _, f in ipairs({ "ox", "oy", "oz", "vx", "vy", "vz", "an", "slot" }) do
@@ -6965,7 +7036,7 @@ function MH_hookInventory()
 							MH_equipItem(key, (d0 and d0.ItemName) or key)
 						elseif slot then
 							-- a real item we have no skin for: get out of its way
-							_G.MH_LastEquip = "v45 | " .. tostring(key) .. " (" .. tostring(slot)
+							_G.MH_LastEquip = "v46 | " .. tostring(key) .. " (" .. tostring(slot)
 								.. ") has no mesh in the map | " .. MH_skinCounts()
 							MH_clearSkin(slot)
 						end
@@ -7539,7 +7610,7 @@ function MH_equipItem(key, dispName)
 		parts[#parts + 1] = tostring(s)
 		_G.MH_LastEquip = table.concat(parts, " | ")
 	end
-	add("v45")   -- freshness marker so a stale-cache test is obvious
+	add("v46")   -- freshness marker so a stale-cache test is obvious
 	MH_loadMeshMap()
 	add(MH_skinCounts())
 	local lrn, tot = MH_learnMeshes()
