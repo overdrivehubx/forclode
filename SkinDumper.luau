@@ -131,6 +131,73 @@ local function scan()
 	return found
 end
 
+--== anchored scan ============================================================
+-- Ranking tables by shape can pick the wrong one. It already did: the first
+-- dump off this tool ranked the item CATALOG highest, and every id in it was
+-- the item's ICON, so the weapons came out wrong. The cure is to look for a
+-- table that holds an id we KNOW is a mesh — the one on your own weapon right
+-- now, or Gingerscope's 15374602183, which was checked by hand against the
+-- game — and take the table that contains it.
+
+-- Every mesh id currently worn by your character, newest first. GLOBAL-ish.
+local function meshOnMe()
+	local out = {}
+	pcall(function()
+		local char = game:GetService("Players").LocalPlayer.Character
+		if not char then return end
+		for _, d in ipairs(char:GetDescendants()) do
+			local id
+			if d:IsA("SpecialMesh") or d:IsA("MeshPart") then id = tostring(d.MeshId) end
+			local n = id and id:match("(%d%d%d%d%d+)")
+			if n then out[#out + 1] = n end
+		end
+	end)
+	return out
+end
+
+local function anchoredScan(want)
+	found = {}
+	if not GETGC then return nil, "this executor has no getgc, so memory cannot be read" end
+	local id = tostring(want or ""):match("(%d+)")
+	if not id then return nil, "type an asset id to look for" end
+	local objects
+	local ok = pcall(function() objects = GETGC(true) end)
+	if not ok or type(objects) ~= "table" then return nil, "getgc refused" end
+	local function holds(v)
+		if type(v) == "number" then return string.format("%d", math.floor(v)) == id end
+		if type(v) == "string" then return v == id or v:match("(%d%d%d%d%d+)") == id end
+		return false
+	end
+	local seen = {}
+	for _, o in pairs(objects) do
+		if type(o) == "table" and not seen[o] then
+			seen[o] = true
+			local at, field
+			local okw = pcall(function()
+				for k, v in pairs(o) do
+					if holds(v) then at, field = k, nil return end
+					if type(v) == "table" then
+						for k2, v2 in pairs(v) do
+							if holds(v2) then at, field = k, k2 return end
+						end
+					end
+				end
+			end)
+			if okw and at ~= nil then
+				local sc, entries, withId, named, sample = score(o)
+				found[#found + 1] = {
+					table = o, score = math.max(sc, 1), entries = entries,
+					withId = withId, named = named, sample = sample,
+					note = "holds " .. id .. " at [" .. tostring(at) .. "]"
+						.. (field and ("." .. tostring(field)) or ""),
+				}
+			end
+		end
+	end
+	table.sort(found, function(a, b) return a.score > b.score end)
+	return found
+end
+
 --== turning what we found into MollyHub's shape ==============================
 -- Their field names are their own, so map by meaning: the first id that looks
 -- like a mesh, the second like a texture, and any three numbers together like
@@ -281,7 +348,7 @@ local function rows()
 		out[#out + 1] = {
 			key = tostring(i),
 			name = c.entries .. " entries  ·  " .. c.withId .. " with ids",
-			sub = "first: " .. key:sub(1, 40),
+			sub = c.note or ("first: " .. key:sub(1, 40)),
 			badges = { "score " .. c.score },
 		}
 		if i >= 25 then break end
@@ -305,6 +372,50 @@ T:Button({
 				.. found[1].entries .. " entries") or "nothing that looks like a weapon list",
 			Duration = 6,
 		})
+	end,
+})
+
+T:Section({ Title = "Or look for an id you know is a mesh" })
+T:Paragraph({
+	Title = "Why this is the better scan",
+	Desc = "Ranking by shape picked the item catalog last time, and every id in it "
+		.. "was an icon, not a mesh. Put in an id you know IS a mesh and only "
+		.. "tables holding it come back. Leave the box alone to use the mesh on "
+		.. "your own weapon right now, or Gingerscope's, which was checked by hand.",
+})
+
+local anchorId = ""
+T:Search({
+	Prefix = "id",
+	Placeholder = "asset id, or blank for the one you are wearing",
+	Callback = function(v) anchorId = v end,
+})
+T:Button({
+	Title = "Find the table holding it",
+	Style = "primary",
+	Callback = function()
+		local tries = {}
+		if tostring(anchorId):match("%d+") then
+			tries[#tries + 1] = anchorId
+		else
+			for _, id in ipairs(meshOnMe()) do tries[#tries + 1] = id end
+			tries[#tries + 1] = "15374602183"          -- Gingerscope, verified by hand
+		end
+		local why
+		for _, id in ipairs(tries) do
+			local list, w = anchoredScan(id)
+			why = w
+			if list and #list > 0 then
+				listView:Set(rows(), #found .. " table(s) hold " .. id)
+				return UI:Notify({ Title = "Found it", Duration = 8,
+					Content = #found .. " table(s) hold " .. id .. "  -  best has "
+						.. found[1].entries .. " entries" })
+			end
+		end
+		listView:Set(rows(), "nothing holds any of those ids")
+		UI:Notify({ Title = "Nothing holds it", Duration = 10,
+			Content = why or ("tried " .. #tries .. " id(s). If no table in memory "
+				.. "holds a real mesh id, the other script has no mesh list to take.") })
 	end,
 })
 
