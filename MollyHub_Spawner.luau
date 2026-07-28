@@ -21,6 +21,14 @@ local BRANCH = "https://raw.githubusercontent.com/overdrivehubx/forclode/"
 	.. "claude/trading-ui-offline-harness-vxuc86/"
 local RUBIS = "https://api.rubis.app/v2/scrap/D9CpDTMz8Hh4v1wA/raw"
 
+-- GitHub keeps a raw file in a cache for minutes at a time, so a script updated
+-- just now can arrive as an older build with nothing on screen to say so. A
+-- query string GitHub ignores misses that cache, and the executor's too.
+local function raw(file)
+	return BRANCH .. file .. "?nc=" .. tostring(os.time()) .. "-" .. tostring(math.random(1, 1000000000))
+end
+
+
 _G.MH_Headless = true          -- the engine's own window stays hidden
 _G.MH_SpawnerOnly = true
 
@@ -41,12 +49,12 @@ local function fail(msg)
 end
 
 --== engine ====================================================================
-local okSrc, src = pcall(function() return game:HttpGet(BRANCH .. "TradeDebugHarness.luau") end)
+local okSrc, src = pcall(function() return game:HttpGet(raw("TradeDebugHarness.luau")) end)
 if not okSrc or type(src) ~= "string" or #src < 1024 then
 	return fail("could not download the engine — check your connection")
 end
 local literal = RUBIS:gsub("(%W)", "%%%1")
-local swapped = src:gsub(literal, (BRANCH .. "MollyUI.luau"):gsub("%%", "%%%%"), 1)
+local swapped = src:gsub(literal, raw("MollyUI.luau"):gsub("%%", "%%%%"), 1)
 -- the grey photo over everything is the engine's theme code painting BG_IMAGE
 swapped = swapped:gsub('local BG_IMAGE = "rbxassetid://%d+"', 'local BG_IMAGE = ""', 1)
 local engine, err = loadstring(swapped)
@@ -70,7 +78,7 @@ if not API then
 end
 
 --== interface =================================================================
-local okUI, UI = pcall(function() return loadstring(game:HttpGet(BRANCH .. "MollyUI.luau"))() end)
+local okUI, UI = pcall(function() return loadstring(game:HttpGet(raw("MollyUI.luau")))() end)
 if not okUI or type(UI) ~= "table" then return fail("the interface could not be downloaded") end
 
 local Win = UI:CreateWindow({
@@ -184,6 +192,26 @@ K:Toggle({ Title = "Keep the game's placement",
 		local n = MH_setPlacement(not on)
 		UI:Notify({ Title = "Skins", Content = (on and "the game's own placement" or "the skin's placement")
 			.. "  -  " .. tostring(n) .. " repainted" })
+	end })
+
+K:Section({ Title = "What do I know?" })
+K:Button({ Title = "Count the skins I have",
+	Desc = "built in = shipped with the script, on disk = what you learned",
+	Callback = function()
+		UI:Notify({ Title = "Skins", Duration = 10, Content = MH_skinCounts() })
+	end })
+K:Button({ Title = "Check the selected item",
+	Desc = "says whether this weapon has a mesh to wear",
+	Callback = function()
+		if not picked then return UI:Notify({ Title = "Skins", Content = "pick an item first" }) end
+		UI:Notify({ Title = "Skins", Duration = 10, Content = MH_skinLookup(picked.key) })
+	end })
+
+K:Button({ Title = "Why did nothing change?",
+	Desc = "the report from the last weapon you clicked in the inventory",
+	Callback = function()
+		UI:Notify({ Title = "Skins", Duration = 14,
+			Content = tostring(_G.MH_LastEquip or "click a weapon in the game's inventory first") })
 	end })
 
 K:Section({ Title = "Undo" })

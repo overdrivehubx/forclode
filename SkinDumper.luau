@@ -252,7 +252,8 @@ end
 
 --== interface ================================================================
 local okUI, UI = pcall(function()
-	return loadstring(game:HttpGet(BRANCH .. "MollyUI.luau"))()
+	return loadstring(game:HttpGet(BRANCH .. "MollyUI.luau?nc="
+		.. tostring(os.time()) .. "-" .. tostring(math.random(1, 1000000000))))()
 end)
 if not okUI or type(UI) ~= "table" then
 	warn("[MollyHub] the interface could not be downloaded")
