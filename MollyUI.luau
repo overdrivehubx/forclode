@@ -1343,7 +1343,30 @@ function Window:Tab(o)
 	col(page, GAP)
 
 	local btn, mark
-	if shown then
+	if shown and self._sidebar then
+		self._sideOrder = (self._sideOrder or 0)
+		-- a section header, once per run of tabs that share a group
+		if o.Group and tostring(o.Group) ~= "" and o.Group ~= self._lastGroup then
+			self._lastGroup = o.Group
+			self._sideOrder = self._sideOrder + 1
+			local hdr = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 22),
+				LayoutOrder = self._sideOrder }, self._tabbar)
+			local hl = label(hdr, string.upper(tostring(o.Group)), 9.5, C.Ink3, true)
+			hl.Position = UDim2.fromOffset(10, 8); hl.Size = UDim2.new(1, -14, 0, 12)
+		elseif not (o.Group and tostring(o.Group) ~= "") then
+			self._lastGroup = nil
+		end
+		self._sideOrder = self._sideOrder + 1
+		btn = new("TextButton", { BackgroundColor3 = C.Surface, BackgroundTransparency = 1,
+			Size = UDim2.new(1, 0, 0, 32), Font = FB, TextSize = 12, TextColor3 = C.Ink3,
+			Text = "   " .. title, TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false,
+			LayoutOrder = self._sideOrder }, self._tabbar)
+		round(btn, R_CHIP)
+		mark = new("Frame", { BackgroundColor3 = C.Accent, BorderSizePixel = 0,
+			AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 0, 0.5, 0),
+			Size = UDim2.fromOffset(3, 16), Visible = false }, btn)
+		round(mark, 1)
+	elseif shown then
 		btn = new("TextButton", { BackgroundTransparency = 1, Size = UDim2.fromOffset(0, 34),
 			AutomaticSize = Enum.AutomaticSize.X, Font = FB, TextSize = 12.5, TextColor3 = C.Ink3,
 			Text = title, AutoButtonColor = false,
@@ -1366,7 +1389,11 @@ function Window:Tab(o)
 			t._body.Visible = on
 			if t._btn then
 				t._btn.TextColor3 = on and C.Ink or C.Ink3
-				if t._mark then
+				if self._sidebar then
+					-- a sidebar row lights up as a filled pill with an accent edge
+					tw(t._btn, 0.12, { BackgroundTransparency = on and 0 or 1 })
+					if t._mark then t._mark.Visible = on end
+				elseif t._mark then
 					t._mark.Visible = on
 					if on then
 						t._mark.Size = UDim2.new(0, 0, 0, 2)
@@ -1381,6 +1408,14 @@ function Window:Tab(o)
 		activate()
 		self:_syncTabs()
 	end
+	if btn and self._sidebar then
+		btn.MouseEnter:Connect(function()
+			if self._active ~= tab then tw(btn, 0.1, { BackgroundTransparency = 0.55 }) end
+		end)
+		btn.MouseLeave:Connect(function()
+			if self._active ~= tab then tw(btn, 0.1, { BackgroundTransparency = 1 }) end
+		end)
+	end
 	if btn then btn.MouseButton1Click:Connect(tab._activate) end
 	if not self._active and shown then self._active = tab activate() end
 	self:_syncTabs()
@@ -1392,6 +1427,9 @@ end
 -- collapses into one button that opens the list — grouped by section, since a
 -- script that bothers to group its tabs means it.
 function Window:_syncTabs()
+	-- the sidebar shows every tab at once; the popup collapse is only for the
+	-- narrow top-bar layout, which never has enough tabs to need it any more
+	if self._sidebar then return end
 	local shown = {}
 	for _, t in ipairs(self._tabs) do if t._btn then shown[#shown + 1] = t end end
 	local many = #shown > 5
@@ -1551,6 +1589,13 @@ function UI:CreateWindow(o)
 	local gui = hostGui()
 	local scale = tonumber(_G.MH_MenuScale) or 1
 
+	-- Two shapes. A trade or spawner is a single column of controls, so it wants
+	-- to be tall and narrow. A whole-game hub is dozens of controls under a dozen
+	-- tabs, so it wants to be WIDE with the tabs down the side — and a script says
+	-- which it is by asking for a sidebar (Rubis's SideBarWidth) or Wide.
+	local sidebar = (o.SideBarWidth ~= nil) or (o.Wide == true)
+	local SIDE = 170                              -- sidebar column, design px
+
 	-- tall and narrow: a launcher is short, a working menu is long.
 	-- A phone and a monitor are both "landscape", but only one of them is big,
 	-- and one set of numbers cannot serve both: sized for the phone, the card
@@ -1561,6 +1606,10 @@ function UI:CreateWindow(o)
 	local wantH = o.Compact and 230 or 820
 	local deskW = o.Compact and 380 or 470        -- desktop
 	local deskH = o.Compact and 250 or 640
+	if sidebar then
+		wantW, wantH = 600, 440                   -- landscape phone fallback
+		deskW, deskH = 800, 560                   -- desktop: room for a sidebar + a page
+	end
 
 	local card = new("Frame", { BackgroundColor3 = C.Bg, AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(wantW, wantH),
@@ -1579,7 +1628,16 @@ function UI:CreateWindow(o)
 			-- a monitor is wide AND tall; a phone on its side is wide and short
 			local desk = wide and v.Y >= 600
 			local w, h
-			if desk then
+			if sidebar then
+				-- the hub takes a big bite of a monitor, most of a phone
+				if desk then
+					w, h = math.min(deskW, math.floor(v.X * 0.60)), math.min(deskH, math.floor(v.Y * 0.82))
+				elseif wide then
+					w, h = math.floor(v.X * 0.94), math.floor(v.Y * 0.94)
+				else
+					w, h = math.floor(v.X * 0.96), math.floor(v.Y * 0.80)
+				end
+			elseif desk then
 				w, h = math.min(deskW, math.floor(v.X * 0.40)), math.min(deskH, math.floor(v.Y * 0.80))
 			elseif wide then
 				w, h = math.min(wantW, math.floor(v.X * 0.42)), math.min(wantH, math.floor(v.Y * 0.94))
@@ -1616,45 +1674,84 @@ function UI:CreateWindow(o)
 	close.MouseEnter:Connect(function() close.TextColor3 = C.Danger end)
 	close.MouseLeave:Connect(function() close.TextColor3 = C.Ink3 end)
 
-	-- tabs: text with an underline, not filled pills — legible in a narrow card
-	local tabbar = new("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0,
-		ClipsDescendants = true,
-		Position = UDim2.fromOffset(10, 54), Size = UDim2.new(1, -20, 0, 32), CanvasSize = UDim2.new(),
-		AutomaticCanvasSize = Enum.AutomaticSize.X, ScrollBarThickness = 0,
-		ScrollingDirection = Enum.ScrollingDirection.X }, card)
-	new("UIListLayout", { Padding = UDim.new(0, 2), FillDirection = Enum.FillDirection.Horizontal,
-		SortOrder = Enum.SortOrder.LayoutOrder,
-		VerticalAlignment = Enum.VerticalAlignment.Center }, tabbar)
-	new("Frame", { BackgroundColor3 = C.Edge, BorderSizePixel = 0, BackgroundTransparency = 0.4,
-		Position = UDim2.fromOffset(10, 86), Size = UDim2.new(1, -20, 0, 1) }, card)
+	local tabbar, pages, foot
+	if sidebar then
+		-- a proper sidebar: the tabs are a vertical list down the left, grouped
+		-- under their section headers, and the page fills the rest. No popup, no
+		-- horizontal scroll — the tabs are simply always there.
+		tabbar = new("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0,
+			ClipsDescendants = true, Position = UDim2.fromOffset(12, 60),
+			Size = UDim2.new(0, SIDE, 1, -96), CanvasSize = UDim2.new(),
+			AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 2,
+			ScrollBarImageColor3 = C.Edge, ScrollingDirection = Enum.ScrollingDirection.Y }, card)
+		new("UIListLayout", { Padding = UDim.new(0, 3), FillDirection = Enum.FillDirection.Vertical,
+			SortOrder = Enum.SortOrder.LayoutOrder }, tabbar)
+		-- the rule between the sidebar and the page
+		new("Frame", { BackgroundColor3 = C.Edge, BorderSizePixel = 0, BackgroundTransparency = 0.3,
+			Position = UDim2.fromOffset(SIDE + 20, 60), Size = UDim2.new(0, 1, 1, -70) }, card)
+		pages = new("Frame", { BackgroundTransparency = 1, ClipsDescendants = true,
+			Position = UDim2.fromOffset(SIDE + 30, 58),
+			Size = UDim2.new(1, -(SIDE + 40), 1, -66) }, card)
 
-	-- Clip, or scrolled rows draw straight over the header, the tabs and the
-	-- footer — which reads as the rest of the interface vanishing.
-	local pages = new("Frame", { BackgroundTransparency = 1, ClipsDescendants = true,
-		Position = UDim2.fromOffset(PAGE_PAD, 94),
-		Size = UDim2.new(1, -PAGE_PAD * 2, 1, -122) }, card)
+		-- footer sits under the sidebar
+		foot = new("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0, 1),
+			Position = UDim2.new(0, 12, 1, -6), Size = UDim2.fromOffset(SIDE, 26) }, card)
+		readout = label(foot, "100%", 10.5, C.Ink2, true)
+		readout.Position = UDim2.fromOffset(4, 0); readout.Size = UDim2.new(1, -56, 1, 0)
+		local function stepper(x, glyph, delta)
+			local b = new("TextButton", { BackgroundColor3 = C.Surface, AnchorPoint = Vector2.new(1, 0.5),
+				Position = UDim2.new(1, x, 0.5, 0), Size = UDim2.fromOffset(22, 22), Font = FB,
+				TextSize = 13, TextColor3 = C.Ink2, Text = glyph, AutoButtonColor = false }, foot)
+			round(b, 7)
+			b.MouseButton1Click:Connect(function()
+				scale = math.clamp(scale + delta, 0.6, 1.5)
+				_G.MH_MenuScale = scale
+				fit()
+			end)
+		end
+		stepper(-30, "-", -0.05)
+		stepper(-2, "+", 0.05)
+	else
+		-- tabs: text with an underline, not filled pills — legible in a narrow card
+		tabbar = new("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0,
+			ClipsDescendants = true,
+			Position = UDim2.fromOffset(10, 54), Size = UDim2.new(1, -20, 0, 32), CanvasSize = UDim2.new(),
+			AutomaticCanvasSize = Enum.AutomaticSize.X, ScrollBarThickness = 0,
+			ScrollingDirection = Enum.ScrollingDirection.X }, card)
+		new("UIListLayout", { Padding = UDim.new(0, 2), FillDirection = Enum.FillDirection.Horizontal,
+			SortOrder = Enum.SortOrder.LayoutOrder,
+			VerticalAlignment = Enum.VerticalAlignment.Center }, tabbar)
+		new("Frame", { BackgroundColor3 = C.Edge, BorderSizePixel = 0, BackgroundTransparency = 0.4,
+			Position = UDim2.fromOffset(10, 86), Size = UDim2.new(1, -20, 0, 1) }, card)
 
-	-- footer: the scale control, kept out of the header's way
-	local foot = new("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0, 1),
-		Position = UDim2.new(0, 0, 1, 0), Size = UDim2.new(1, 0, 0, 28) }, card)
-	local brand = label(foot, "MollyHub", 10.5, C.Ink3)
-	brand.Position = UDim2.fromOffset(16, 0); brand.Size = UDim2.new(0, 120, 1, 0)
-	readout = label(foot, "100%", 10.5, C.Ink2, true)
-	readout.AnchorPoint = Vector2.new(1, 0.5); readout.Position = UDim2.new(1, -46, 0.5, 0)
-	readout.Size = UDim2.fromOffset(38, 14); readout.TextXAlignment = Enum.TextXAlignment.Center
-	local function stepper(x, glyph, delta)
-		local b = new("TextButton", { BackgroundColor3 = C.Surface, AnchorPoint = Vector2.new(1, 0.5),
-			Position = UDim2.new(1, x, 0.5, 0), Size = UDim2.fromOffset(22, 22), Font = FB,
-			TextSize = 13, TextColor3 = C.Ink2, Text = glyph, AutoButtonColor = false }, foot)
-		round(b, 7)
-		b.MouseButton1Click:Connect(function()
-			scale = math.clamp(scale + delta, 0.6, 1.5)
-			_G.MH_MenuScale = scale
-			fit()
-		end)
+		-- Clip, or scrolled rows draw straight over the header, the tabs and the
+		-- footer — which reads as the rest of the interface vanishing.
+		pages = new("Frame", { BackgroundTransparency = 1, ClipsDescendants = true,
+			Position = UDim2.fromOffset(PAGE_PAD, 94),
+			Size = UDim2.new(1, -PAGE_PAD * 2, 1, -122) }, card)
+
+		-- footer: the scale control, kept out of the header's way
+		foot = new("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0, 1),
+			Position = UDim2.new(0, 0, 1, 0), Size = UDim2.new(1, 0, 0, 28) }, card)
+		local brand = label(foot, "MollyHub", 10.5, C.Ink3)
+		brand.Position = UDim2.fromOffset(16, 0); brand.Size = UDim2.new(0, 120, 1, 0)
+		readout = label(foot, "100%", 10.5, C.Ink2, true)
+		readout.AnchorPoint = Vector2.new(1, 0.5); readout.Position = UDim2.new(1, -46, 0.5, 0)
+		readout.Size = UDim2.fromOffset(38, 14); readout.TextXAlignment = Enum.TextXAlignment.Center
+		local function stepper(x, glyph, delta)
+			local b = new("TextButton", { BackgroundColor3 = C.Surface, AnchorPoint = Vector2.new(1, 0.5),
+				Position = UDim2.new(1, x, 0.5, 0), Size = UDim2.fromOffset(22, 22), Font = FB,
+				TextSize = 13, TextColor3 = C.Ink2, Text = glyph, AutoButtonColor = false }, foot)
+			round(b, 7)
+			b.MouseButton1Click:Connect(function()
+				scale = math.clamp(scale + delta, 0.6, 1.5)
+				_G.MH_MenuScale = scale
+				fit()
+			end)
+		end
+		stepper(-84, "-", -0.05)
+		stepper(-14, "+", 0.05)
 	end
-	stepper(-84, "-", -0.05)
-	stepper(-14, "+", 0.05)
 
 	fit()
 	pcall(function()
@@ -1663,7 +1760,7 @@ function UI:CreateWindow(o)
 	draggable(card, head)
 
 	local win = setmetatable({ _gui = gui, _card = card, _tabbar = tabbar, _pages = pages,
-		_scale = uiscale, _tabs = {}, _byTitle = {} }, Window)
+		_scale = uiscale, _sidebar = sidebar, _tabs = {}, _byTitle = {} }, Window)
 	win.ConfigManager = ConfigManager.new(o.Folder)
 	win.CurrentConfig = win.ConfigManager:Config("default")
 
