@@ -6965,6 +6965,8 @@ function MH_hookInventory()
 							MH_equipItem(key, (d0 and d0.ItemName) or key)
 						elseif slot then
 							-- a real item we have no skin for: get out of its way
+							_G.MH_LastEquip = "v45 | " .. tostring(key) .. " (" .. tostring(slot)
+								.. ") has no mesh in the map | " .. MH_skinCounts()
 							MH_clearSkin(slot)
 						end
 					end)
@@ -7027,6 +7029,43 @@ function MH_watchInventory()
 			pcall(MH_hookInventory)
 		end
 	end)
+end
+
+-- How many skins we know, and where they came from. Built in = the weapons
+-- shipped inside this script; on disk = MollyHub_skins.json, what you learned.
+-- If "built in" reads 0 the script that is running is an older download, which
+-- is the one thing you cannot tell by looking at the menu. GLOBAL.
+function MH_skinCounts()
+	MH_loadMeshMap()
+	local total, withMesh = 0, 0
+	for _, v in pairs(_G.MH_MeshMap or {}) do
+		total = total + 1
+		if type(v) == "table" and MH_shortId(v.mesh) ~= "" then withMesh = withMesh + 1 end
+	end
+	local onDisk = 0
+	pcall(function()
+		if not (isfile and isfile("MollyHub_skins.json") and readfile) then return end
+		local saved = game:GetService("HttpService"):JSONDecode(readfile("MollyHub_skins.json"))
+		if type(saved) == "table" then for _ in pairs(saved) do onDisk = onDisk + 1 end end
+	end)
+	return "skins=" .. total .. " (built in " .. tostring(_G.MH_MeshSeeded or 0)
+		.. ", on disk " .. onDisk .. ", with a mesh " .. withMesh .. ")"
+end
+
+-- The same answer for ONE item, so a weapon that refuses to change can be told
+-- apart from a map that never loaded. GLOBAL.
+function MH_skinLookup(nameOrKey)
+	MH_loadMeshMap()
+	local txt = tostring(nameOrKey or "")
+	local key = MH_keyForName(txt) or txt
+	local rec = (_G.MH_MeshMap or {})[key]
+	local where = "not in the map"
+	if type(rec) == "table" and MH_shortId(rec.mesh) ~= "" then
+		where = "mesh " .. MH_shortId(rec.mesh) .. (rec.slot and (" (" .. rec.slot .. ")") or "")
+	elseif rec ~= nil then
+		where = "in the map but with no mesh"
+	end
+	return txt .. " -> " .. key .. ": " .. where .. "  |  " .. MH_skinCounts()
 end
 
 -- Throw away every learned skin (on disk too). Use it if the map picked up a
@@ -7494,9 +7533,15 @@ end
 function MH_equipItem(key, dispName)
 	if not key or key == "" then return false, "no key" end
 	local parts = {}
-	local function add(s) parts[#parts + 1] = tostring(s) end
-	add("v44")   -- freshness marker so a stale-cache test is obvious
+	-- keep the running report in a global as it is written, so the Skins page
+	-- can show it afterwards and an early return still leaves a trail
+	local function add(s)
+		parts[#parts + 1] = tostring(s)
+		_G.MH_LastEquip = table.concat(parts, " | ")
+	end
+	add("v45")   -- freshness marker so a stale-cache test is obvious
 	MH_loadMeshMap()
+	add(MH_skinCounts())
 	local lrn, tot = MH_learnMeshes()
 	add("learn=+" .. tostring(lrn) .. "/" .. tostring(tot))
 	local d0 = ItemDB[key]

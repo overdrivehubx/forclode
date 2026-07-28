@@ -16,6 +16,15 @@
 local BRANCH = "https://raw.githubusercontent.com/overdrivehubx/forclode/"
 	.. "claude/trading-ui-offline-harness-vxuc86/"
 
+-- GitHub serves a raw file from a cache for several minutes, and some executors
+-- keep their own copy on top of that — so a script updated a minute ago can be
+-- downloaded as yesterday's build, with nothing on screen to say so. A query
+-- string GitHub ignores is enough to miss both caches, so every fetch below is
+-- genuinely the file that is on the branch right now.
+local function raw(file)
+	return BRANCH .. file .. "?nc=" .. tostring(os.time()) .. "-" .. tostring(math.random(1, 1000000000))
+end
+
 local SCRIPTS = {
 	{
 		name = "Trade + Equip Spawner",
@@ -51,7 +60,7 @@ local function fetch(url)
 end
 
 local okUI, UI = pcall(function()
-	return loadstring(game:HttpGet(BRANCH .. "MollyUI.luau"))()
+	return loadstring(game:HttpGet(raw("MollyUI.luau")))()
 end)
 if not okUI or type(UI) ~= "table" then
 	warn("[MollyHub] the interface could not be downloaded — check your connection")
@@ -75,7 +84,7 @@ for _, s in ipairs(SCRIPTS) do
 			if busy then return end
 			busy = true
 			UI:Notify({ Title = "MollyHub", Content = "loading " .. s.name .. "..." })
-			local fn, err = fetch(BRANCH .. s.file)
+			local fn, err = fetch(raw(s.file))
 			if not fn then
 				busy = false
 				UI:Notify({ Title = "Failed", Content = tostring(err), Duration = 8 })
