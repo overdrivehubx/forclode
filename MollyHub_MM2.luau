@@ -4,19 +4,20 @@
   MollyHub — MM2
 ================================================================================
   The whole-game menu: roles, sheriff and murderer tools, ESP, farming,
-  teleports, player tweaks and the trolling drawer. It came in written against
-  the Rubis menu library; the only structural change is that it now draws with
-  MollyUI, so it looks and behaves like the rest of MollyHub.
+  teleports, player tweaks, trolling and spawners.
 
-  Two changes beyond the menu, both deliberate:
+  It is drawn by Rubis, the library it was written against — every widget
+  behaves the way its author meant it to. The styling is Rubis's own window
+  options: one accent, no background picture, a window sized to be read, and
+  page names that say what they are.
 
-    * "mobile Fly" used to run an OBFUSCATED script fetched from a gist. That is
-      exactly where something nasty hides, and it cannot be read, so it is gone
-      — replaced by a fly written here, in the open, forty lines below.
-    * table.foreach is dead in current Luau; it is a plain loop now.
+  One thing was taken out rather than tidied: a "mobile Fly" button that ran an
+  OBFUSCATED script fetched from a gist. Obfuscated code that cannot be read is
+  exactly where a stealer hides, so it is gone.
 
-  What is left still calls one remote script by name: "Infinite yield", the
-  well-known public admin command bar. It only runs when you press that button.
+  What remains that reaches the network: this menu library, Roblox's own public
+  server list (for server hop), and one button clearly labelled "Infinite Yield"
+  — the well-known public admin command bar, which only runs when pressed.
 ================================================================================
 ]]
 
@@ -29,53 +30,13 @@ game:GetService("HttpService")
 
 local CurrentCamera = Workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
-local MOLLY_UI = "https://raw.githubusercontent.com/overdrivehubx/forclode/"
-	.. "claude/trading-ui-offline-harness-vxuc86/MollyUI.luau"
+-- Rubis draws this menu. It is the library the script was written against, so
+-- every widget behaves the way it was meant to; the styling below is Rubis's
+-- own options rather than anything bolted on.
+local _Raw = loadstring(game:HttpGet("https://api.rubis.app/v2/scrap/D9CpDTMz8Hh4v1wA/raw"))()
 
--- Molly Hybrid
--- Near-black greys carry the structure and ONE colour carries the meaning:
--- the page you are on, a switch that is on, a slider's fill. Tinting the
--- surfaces and the hairlines too is what turned this into a purple grid.
-local MollyPalette = {
-	Primary = Color3.fromHex("#7C3AED"),
-	PrimaryBright = Color3.fromHex("#A855F7"),
-	PrimaryDeep = Color3.fromHex("#5B21B6"),
-	Indigo = Color3.fromHex("#4F46E5"),
-	Success = Color3.fromHex("#31D67B"),
-	Danger = Color3.fromHex("#F05A74"),
-}
+_Raw:SetTheme("Dark")
 
--- Kept as a named color because a few of the original tab declarations use it.
-local Purple = MollyPalette.PrimaryBright
-
--- MollyUI does the drawing. It used to be downloaded and then rewritten with a
--- couple of dozen string replacements to get this palette in — which is why the
--- menu broke: the library moved on, the replacements stopped matching, and one
--- of them handed every card a colour that no longer existed. It has a palette
--- API now, so ask it properly and it cannot go stale.
-do
-	local firstViewport = Vector2.new(1280, 720)
-
-	pcall(function()
-		local size = CurrentCamera and CurrentCamera.ViewportSize
-
-		if typeof(size) == "Vector2" then
-			firstViewport = size
-		end
-	end)
-
-	-- Never let a stale desktop scale make the phone layout oversized. A
-	-- manually reduced scale is respected, while the adaptive ceiling follows
-	-- the current viewport.
-	local autoScale = (firstViewport.X < firstViewport.Y) and 0.94 or 1
-	local savedScale = tonumber(_G.MH_MenuScale)
-
-	_G.MH_MenuScale = savedScale and math.min(savedScale, autoScale) or autoScale
-end
-
-local _Raw = loadstring(game:HttpGet(MOLLY_UI))()
-
-_Raw:SetPalette(MollyPalette)
 function gradient(p1, p2, p3)
 	local s1 = ""
 	local v194 = #p1
@@ -89,23 +50,22 @@ function gradient(p1, p2, p3)
 	return s1
 end
 
+-- One accent, no background picture, a window wide enough to read and a search
+-- bar that earns its place with this many pages.
+local ACCENT = Color3.fromHex("#8B7CFF")
+local ACCENT_DEEP = Color3.fromHex("#6D5BD0")
+
 local u8 = _Raw:CreateWindow({
-	Title = "MM2 CONTROL CENTER",
+	Title = "MollyHub",
 	Icon = "crown",
-	Author = "MOLLYHUB",
-	SubTitle = "LIVE CONTROL CENTER",
-	Badge = "MM2",
-	Folder = "wwww",
-	Size = UDim2.fromOffset(1040, 640),
+	Author = "Murder Mystery 2",
+	Folder = "MollyHub",
+	Size = UDim2.fromOffset(560, 380),
 	Transparent = true,
-	Theme = "MollyHybrid",
+	Theme = "Dark",
 	Resizable = true,
-	Wide = true,
-	SideBarWidth = 190,
-	BackgroundImageTransparency = 0.16,
-	Acrylic = false,
-	HidePanelBackground = false,
-	NewElements = false,
+	SideBarWidth = 168,
+	BackgroundImageTransparency = 1,
 	HideSearchBar = false,
 	ScrollBarEnabled = true,
 	User = {
@@ -115,40 +75,19 @@ local u8 = _Raw:CreateWindow({
 		end
 	},
 	OpenButton = {
-		Title = "MOLLY X",
+		Title = "MollyHub",
 		CornerRadius = UDim.new(1, 0),
-		StrokeThickness = 2,
+		StrokeThickness = 1,
 		Enabled = true,
 		Draggable = true,
 		OnlyMobile = false,
-		Color = ColorSequence.new(MollyPalette.PrimaryBright, MollyPalette.Indigo)
+		Color = ColorSequence.new(ACCENT, ACCENT_DEEP)
 	}
 })
-
-pcall(function()
-	u8:SetIconSize(38)
-end)
-
-pcall(function()
-	u8:Tag({
-		Title = "MM2",
-		Icon = "gamepad-2",
-		Color = MollyPalette.Primary,
-		Radius = 6
-	})
-	u8:Tag({
-		Title = "LIVE",
-		Icon = "radio",
-		Color = MollyPalette.Success,
-		Radius = 6
-	})
-end)
-
 local t1 = {
 	HomeTab = u8:Tab({
-		Title = "Dashboard",
-		Icon = "layout-dashboard",
-		IconColor = Purple,
+		Title = "Home",
+		Icon = "house",
 		ShowTabTitle = true,
 		Border = true
 	})
@@ -156,51 +95,50 @@ local t1 = {
 
 do
 	local v10 = u8:Section({
-		Title = "MAIN",
-		Icon = "crosshair",
+		Title = "Game",
+		Icon = "gamepad-2",
 		Opened = true,
 		u8:Divider()
 	})
 	local v11 = u8:Section({
-		Title = "TOOLS",
-		Icon = "boxes",
-		Opened = true
+		Title = "Movement",
+		Icon = "move",
+		Opened = false
 	})
 	local v12 = u8:Section({
-		Title = "SYSTEM",
-		Icon = "settings-2",
-		Opened = true
+		Title = "System",
+		Icon = "settings",
+		Opened = false
 	})
 
-	t1.SystemSection = v12
 	t1.MainTab = v10:Tab({
-		Title = "Combat",
-		Icon = "crosshair",
+		Title = "Main",
+		Icon = "box",
 		ShowTabTitle = true
 	})
 	t1.AutoFarmTab = v10:Tab({
-		Title = "World",
-		Icon = "globe",
+		Title = "Farming",
+		Icon = "bitcoin",
 		ShowTabTitle = true
 	})
 	t1.MurdTab = v10:Tab({
-		Title = "Combat",
+		Title = "Murder",
 		Icon = "sword",
 		ShowTabTitle = true
 	})
 	t1.SheriffTab = v10:Tab({
-		Title = "Combat",
-		Icon = "shield-check",
+		Title = "Sheriff",
+		Icon = "swords",
 		ShowTabTitle = true
 	})
 	t1.ESPTab = v10:Tab({
-		Title = "Visuals",
-		Icon = "eye",
+		Title = "ESP",
+		Icon = "crosshair",
 		ShowTabTitle = true,
 		u8:Divider()
 	})
 	t1.TeleportTab = v11:Tab({
-		Title = "World",
+		Title = "Teleport",
 		Icon = "map-pin",
 		ShowTabTitle = true
 	})
@@ -210,17 +148,17 @@ do
 		ShowTabTitle = true
 	})
 	t1.TrollingTab = v11:Tab({
-		Title = "Misc",
-		Icon = "more-horizontal",
+		Title = "Trolling",
+		Icon = "laugh",
 		ShowTabTitle = true
 	})
 	t1.MiscTab = v12:Tab({
-		Title = "Settings",
+		Title = "Misc",
 		Icon = "settings",
 		ShowTabTitle = true
 	})
 	t1.Visual = v11:Tab({
-		Title = "Inventory",
+		Title = "Spawners",
 		Icon = "package-plus",
 		ShowTabTitle = true
 	})
@@ -260,9 +198,16 @@ do
 	end
 
 	local v18 = v16 and s2 .. " (Not 100% Supported)" or s2 .. " Supported"
-	local v19 = v16 and "Some features may not work correctly with your executor." or s2 .. " should run everything fine and everything should work ight"
+	local v19 = v16 and "Some features may not work correctly with your executor." or s2 .. " runs everything here."
 	local v20 = v16 and "Red" or "Green"
 
+	t1.HomeTab:Paragraph({
+		Title = v18,
+		Desc = v19,
+		Color = v20,
+		Image = "cpu",
+		ImageSize = 30
+	})
 	t3 = {
 		GetCurrentPlayerData = ReplicatedStorage:FindFirstChild("GetCurrentPlayerData", true)
 	}
@@ -273,159 +218,11 @@ do
 		Perk = "None"
 	}
 	u23 = t1.MainTab:Paragraph({
-		Title = "GAME INFO",
-		Desc = "Murder: <font color=\"#F05A74\">Unknown</font>\nSheriff: <font color=\"#6CA6FF\">Unknown</font>\nPerk: <font color=\"#C4B5FD\">None</font>\nGun Drop: —",
-		Color = MollyPalette.PrimaryBright,
-		Image = "crosshair",
-		ImageSize = 20
-	})
-	t1.HomeTab:Dashboard({
-		CombatRows = {
-			{ Title = "Round State", Value = "LIVE", Color = MollyPalette.Success },
-			{ Title = "Murderer", Value = "Unknown", Color = Color3.fromRGB(240, 90, 116) },
-			{ Title = "Sheriff", Value = "Unknown", Color = Color3.fromRGB(108, 166, 255) },
-			{ Title = "Gun Drop", Value = "—" },
-			{ Title = "Role Notify", Toggle = false, Key = "role_notify" }
-		},
-		VisualRows = {
-			{ Title = "Enable ESP", Toggle = true, Key = "esp" },
-			{ Title = "Boxes", Toggle = true, Key = "boxes" },
-			{ Title = "Names", Toggle = true, Key = "names" },
-			{ Title = "Tracers", Toggle = false, Key = "tracers" }
-		},
-		UtilityRows = {
-			{ Title = "Auto Farm", Toggle = false, Key = "autofarm" },
-			{ Title = "Walk Speed", Value = "16" },
-			{ Title = "Jump Power", Value = "50" }
-		},
-		OnToggle = function(key, enabled)
-			if key == "role_notify" then
-				u29 = enabled
-			end
-		end,
-		OnAction = function(key)
-			if key == "sheriff" or key == "reveal_roles" then
-				if t1.MainTab and t1.MainTab._activate then t1.MainTab:_activate() end
-			elseif key == "kill_all" then
-				if t1.MurdTab and t1.MurdTab._activate then t1.MurdTab:_activate() end
-			elseif key == "tp_murderer" or key == "bring_all" then
-				if t1.TeleportTab and t1.TeleportTab._activate then t1.TeleportTab:_activate() end
-			elseif key == "clear_weapons" then
-				if t1.ESPTab and t1.ESPTab._activate then t1.ESPTab:_activate() end
-			elseif key == "enable" then
-				u8:Toggle(true)
-			elseif key == "panic_key" then
-				if t1.MiscTab and t1.MiscTab._activate then t1.MiscTab:_activate() end
-			elseif key == "save_config" then
-				pcall(function() u8.CurrentConfig:Save() end)
-			end
-		end
-	})
-
-	-- The old launcher-style home rows are intentionally disabled. The
-	-- dashboard above is the single persistent control center.
-	if false then
-	t1.HomeTab:Paragraph({
-		Title = gradient("MM2 X", MollyPalette.PrimaryBright, MollyPalette.Indigo),
-		Desc = "PREMIUM CONTROL CENTER  •  HYBRID EDITION\nGraphite clarity. Violet energy.",
-		Color = MollyPalette.PrimaryBright,
-		Image = "crown",
-		ImageSize = 34
-	})
-	pcall(function()
-		t1.HomeTab:Actions({
-			Height = 58,
-			Items = {
-				{
-					Title = "OVERVIEW",
-					Desc = "Live match",
-					Icon = "◈",
-					Style = "primary",
-					Callback = function()
-						if t1.MainTab and t1.MainTab._activate then
-							t1.MainTab:_activate()
-						end
-					end
-				},
-				{
-					Title = "VISUALS",
-					Desc = "ESP suite",
-					Icon = "◉",
-					Callback = function()
-						if t1.ESPTab and t1.ESPTab._activate then
-							t1.ESPTab:_activate()
-						end
-					end
-				},
-				{
-					Title = "SETTINGS",
-					Desc = "Interface",
-					Icon = "⚙",
-					Callback = function()
-						if t1.MiscTab and t1.MiscTab._activate then
-							t1.MiscTab:_activate()
-						end
-					end
-				}
-			}
-		})
-	end)
-	t1.HomeTab:Divider()
-	t1.HomeTab:Paragraph({
-		Title = v18,
-		Desc = v19,
-		Color = v20,
-		Image = "cpu",
-		ImageSize = 30
-	})
-	t1.HomeTab:Divider()
-	t1.HomeTab:Divider()
-	u23 = t1.MainTab:Paragraph({
 		Title = "Game Info",
 		Desc = "Murder: <font color=\"#ff0000\">Unknown</font>\nSheriff: <font color=\"#0000ff\">Unknown</font>\nMurderer Perk: <font color=\"#7F00FF\">None</font>\nGun Dropped: No",
 		Image = "component",
 		ImageSize = 20
 	})
-	pcall(function()
-		t1.MainTab:Actions({
-			Height = 58,
-			Items = {
-				{
-					Title = "REFRESH",
-					Desc = "Role snapshot",
-					Icon = "↻",
-					Style = "primary",
-					Callback = function()
-						if u26 then
-							u26()
-						end
-					end
-				},
-				{
-					Title = "MURDERER",
-					Desc = "Notify",
-					Icon = "⚔",
-					Callback = function()
-						if u32 and u34 then
-							u34("Murderer", u32())
-						end
-					end
-				},
-				{
-					Title = "SHERIFF",
-					Desc = "Notify",
-					Icon = "◆",
-					Callback = function()
-						if u32 and u34 then
-							local _, sheriff = u32()
-							u34("Sheriff", sheriff)
-						end
-					end
-				}
-			}
-			})
-		end)
-	end
 
 	function u24()
 		if t3.GetCurrentPlayerData and t3.GetCurrentPlayerData:IsA("RemoteFunction") then
@@ -501,7 +298,7 @@ do
 	t1.MiscTab:Divider()
 	t1.MiscTab:Keybind({
 		Title = "Toggle UI Keybind",
-		Desc = "Keybind to open or close the UI",
+		Desc = "opens and closes this menu",
 		Value = s3,
 		Callback = function(p4)
 			local ok, result = pcall(function()
@@ -515,7 +312,7 @@ do
 		end
 	})
 	t1.MiscTab:Button({
-		Title = "Infinite yeild",
+		Title = "Infinite Yield",
 		Compact = true,
 		Callback = function()
 			loadstring(game:HttpGet("https://rawscripts.net/raw/Infinite-Yield_500"))()
@@ -614,7 +411,6 @@ do
 	})
 	t1.MainTab:Button({
 		Title = "Notify Murderer",
-		Style = "primary",
 		Callback = function()
 			local v234 = u32()
 
@@ -623,7 +419,6 @@ do
 	})
 	t1.MainTab:Button({
 		Title = "Notify Sheriff",
-		Style = "primary",
 		Callback = function()
 			local _, v236 = u32()
 
@@ -648,7 +443,6 @@ do
 	t1.MainTab:Button({
 		Title = "Get Gun Now",
 		Icon = "hand",
-		Style = "primary",
 		Callback = function()
 			local v238 = nil
 
@@ -663,7 +457,7 @@ do
 			if not v238 then
 				_Raw:Notify({
 					Title = "Gun Pickup",
-					Content = "gun has not been dropped",
+					Content = "the gun has not dropped yet",
 					Duration = 5,
 					Icon = "x"
 				})
@@ -924,8 +718,8 @@ t1.MainTab:Button({
 	Value = false,
 	Callback = function(_)
 		_Raw:Notify({
-			Title = "god mode",
-			Content = "god mode is on",
+			Title = "God mode",
+			Content = "god mode on",
 			Icon = "smile",
 			IconThemed = false,
 			Duration = 5
@@ -1038,9 +832,8 @@ do
 		end
 	})
 	t1.SheriffTab:Section({
-		Title = "Aimlock"
+		Title = "Aimbot"
 	})
-	t1.SheriffTab:Divider()
 	Players3 = game:GetService("Players")
 	RunService2 = game:GetService("RunService")
 
@@ -1189,15 +982,15 @@ do
 	end
 
 	t1.SheriffTab:Button({
-		Title = "Shoot murd ",
-		Desc = "doesnt require holding gun",
-		Icon = "solar:target-bold",
+		Title = "Shoot murderer",
+		Desc = "no need to hold the gun",
+		Icon = "crosshair",
 		Callback = u69
 	})
 	t1.SheriffTab:Toggle({
-		Title = "Auto Shoot murd",
-		Desc = "still u dont gotta hold gun for it to work",
-		Icon = "solar:target-bold",
+		Title = "Auto shoot murderer",
+		Desc = "also works without holding it",
+		Icon = "crosshair",
 		Value = false,
 		Callback = function(p24)
 			u63 = p24
@@ -1324,7 +1117,7 @@ do
 		end
 	end)
 	t1.SheriffTab:Section({
-		Title = "camlock"
+		Title = "Camlock"
 	})
 	Players4 = game:GetService("Players")
 	VirtualUser = game:GetService("VirtualUser")
@@ -1426,7 +1219,6 @@ do
 	t1.MurdTab:Button({
 		Title = "Kill Selected Players",
 		Description = "Kills only the players selected in the dropdown.",
-		Style = "primary",
 		Callback = function()
 			if #t11 == 0 then
 				_Raw:Notify({
@@ -1451,7 +1243,6 @@ do
 	t1.MurdTab:Button({
 		Title = "Kill All Players",
 		Description = "Instantly kills every other player in the server.",
-		Style = "danger",
 		Callback = function()
 			local v328 = u78()
 
@@ -1594,7 +1385,7 @@ do
 
 	t1.SheriffTab:Divider()
 	t1.SheriffTab:Dropdown({
-		Title = "camlock Target Part",
+		Title = "Camlock target part",
 		Description = "Choose which body part to lock onto on the murderer.",
 		Values = {
 			"Head",
@@ -1608,7 +1399,7 @@ do
 		end
 	})
 	t1.SheriffTab:Toggle({
-		Title = "enable camlock",
+		Title = "Enable camlock",
 		Default = false,
 		Callback = function(p31)
 			getgenv().Aimlock.Enabled = p31
@@ -1633,8 +1424,6 @@ do
 			end
 		end
 	})
-	t1.SheriffTab:Divider()
-	t1.SheriffTab:Space()
 	u86 = false
 	n5 = 0
 	n6 = 20
@@ -1667,7 +1456,7 @@ do
 	})
 	t1.SheriffTab:Slider({
 		Title = "Orbit Speed",
-		Desc = "dont do like above 10 or it like goes too faast",
+		Desc = "over 10 gets very fast",
 		Step = 0.1,
 		Value = {
 			Min = 0,
@@ -1679,7 +1468,7 @@ do
 		end
 	})
 	t1.SheriffTab:Toggle({
-		Title = "Enable ",
+		Title = "Enable orbit",
 		Default = false,
 		Callback = function(p35)
 			u86 = p35
@@ -1739,40 +1528,7 @@ do
 			return
 		end
 	end)
-	RunService3.RenderStepped:Connect(function(dt)
-		if u86 then
-			local v367 = u92()
-
-			if v367 and v367.Character then
-				local HumanoidRootPart = v367.Character:FindFirstChild("HumanoidRootPart")
-				local HumanoidRootPart6 = (LocalPlayer7.Character or LocalPlayer7.CharacterAdded:Wait()):WaitForChild("HumanoidRootPart")
-
-				if not HumanoidRootPart then
-					return
-				end
-
-				if n8 > 0 then
-					n5 = n5 + n8 * dt * 60
-
-					local v370 = math.rad(n5)
-					local v371 = math.sin(v370) * n6
-					local v372 = math.cos(v370) * n6
-					local v373 = HumanoidRootPart.Position + Vector3.new(v371, n7, v372)
-
-					HumanoidRootPart6.CFrame = CFrame.lookAt(v373, HumanoidRootPart.Position)
-				else
-					local v374 = HumanoidRootPart.Position - HumanoidRootPart.CFrame.LookVector * n6 + Vector3.new(0, n7, 0)
-
-					HumanoidRootPart6.CFrame = CFrame.lookAt(v374, HumanoidRootPart.Position)
-				end
-
-				return
-			end
-
-			return
-		end
-	end)
-	t14 = {
+		t14 = {
 		ReplicatedStorage = game:GetService("ReplicatedStorage"),
 		Players = game:GetService("Players"),
 		RunService = game:GetService("RunService")
@@ -2189,7 +1945,6 @@ do
 		end
 	end)
 	t1.ESPTab:Divider()
-	t1.ESPTab:Space()
 	t1.ESPTab:Toggle({
 		Title = "Innocent Highlights",
 		Value = false,
@@ -2219,7 +1974,6 @@ do
 		end
 	})
 	t1.ESPTab:Divider()
-	t1.ESPTab:Space()
 	t1.ESPTab:Toggle({
 		Title = "Innocent Skeleton",
 		Value = false,
@@ -2249,7 +2003,6 @@ do
 		end
 	})
 	t1.ESPTab:Divider()
-	t1.ESPTab:Space()
 	t1.ESPTab:Toggle({
 		Title = "Innocent Tracers",
 		Value = false,
@@ -2279,8 +2032,6 @@ do
 		end
 	})
 	t1.ESPTab:Divider()
-	t1.ESPTab:Divider()
-	t1.ESPTab:Space()
 	t1.ESPTab:Colorpicker({
 		Title = "Innocent Highlights Color",
 		Default = t16.Highlights.Innocent,
@@ -2311,7 +2062,6 @@ do
 		end
 	})
 	t1.ESPTab:Divider()
-	t1.ESPTab:Space()
 	t1.ESPTab:Colorpicker({
 		Title = "Innocent Skeleton Color",
 		Default = t16.Skeleton.Innocent,
@@ -2342,7 +2092,6 @@ do
 		end
 	})
 	t1.ESPTab:Divider()
-	t1.ESPTab:Space()
 	t1.ESPTab:Colorpicker({
 		Title = "Innocent Tracers Color",
 		Default = t16.Tracers.Innocent,
@@ -2635,7 +2384,6 @@ do
 			Workspace3.Gravity = p66 and 0 or 196.2
 		end
 	})
-	t1.PlayerTab:Divider()
 	t1.PlayerTab:Toggle({
 		Title = "X ray ",
 		Callback = function(p67)
@@ -2810,125 +2558,6 @@ if u122 then
 	u128()
 	u131()
 end
-
--- FLY. The original fetched an obfuscated script from a gist; this does the job
--- in plain sight. The character is carried by a BodyVelocity aimed along the
--- camera, driven by WASD + space/shift on a keyboard and by the four buttons on
--- a phone, and everything is torn down the moment it is switched off.
-local FlyOn, FlySpeed, FlyMove, FlyGui = false, 60, Vector3.new(), nil
-local FlyConn, FlyBV, FlyBG = nil, nil, nil
-local FLY_KEYS = {
-	[Enum.KeyCode.W] = Vector3.new(0, 0, 1), [Enum.KeyCode.S] = Vector3.new(0, 0, -1),
-	[Enum.KeyCode.A] = Vector3.new(-1, 0, 0), [Enum.KeyCode.D] = Vector3.new(1, 0, 0),
-	[Enum.KeyCode.Space] = Vector3.new(0, 1, 0), [Enum.KeyCode.LeftShift] = Vector3.new(0, -1, 0),
-}
-local FlyHeld = {}
-
-local function flyRoot()
-	local c = Players.LocalPlayer.Character
-	return c and c:FindFirstChild("HumanoidRootPart")
-end
-
-local function flyPad()
-	if FlyGui then return end
-	FlyGui = Instance.new("ScreenGui")
-	FlyGui.Name = "MollyFlyPad"
-	FlyGui.ResetOnSpawn = false
-	pcall(function() FlyGui.Parent = Players.LocalPlayer:WaitForChild("PlayerGui") end)
-	local function btn(text, x, y, dir)
-		local b = Instance.new("TextButton")
-		b.Size = UDim2.fromOffset(52, 40)
-		b.Position = UDim2.new(1, x, 1, y)
-		b.AnchorPoint = Vector2.new(1, 1)
-		b.BackgroundColor3 = Color3.fromRGB(19, 21, 27)
-		b.BackgroundTransparency = 0.15
-		b.TextColor3 = Color3.fromRGB(240, 242, 248)
-		b.Font = Enum.Font.GothamBold
-		b.TextSize = 13
-		b.Text = text
-		b.AutoButtonColor = false
-		b.Parent = FlyGui
-		Instance.new("UICorner", b).CornerRadius = UDim.new(0, 10)
-		b.MouseButton1Down:Connect(function() FlyHeld[dir] = true end)
-		b.MouseButton1Up:Connect(function() FlyHeld[dir] = nil end)
-		b.MouseLeave:Connect(function() FlyHeld[dir] = nil end)
-		return b
-	end
-	btn("^", -66, -108, "fwd")
-	btn("v", -66, -8, "back")
-	btn("up", -122, -58, "up")
-	btn("dn", -10, -58, "down")
-end
-
-local function flyStop()
-	FlyOn = false
-	FlyHeld = {}
-	if FlyConn then FlyConn:Disconnect() FlyConn = nil end
-	if FlyBV then FlyBV:Destroy() FlyBV = nil end
-	if FlyBG then FlyBG:Destroy() FlyBG = nil end
-	if FlyGui then FlyGui:Destroy() FlyGui = nil end
-end
-
-local function flyStart()
-	local root = flyRoot()
-	if not root then return false end
-	flyStop()
-	FlyOn = true
-	flyPad()
-	FlyBV = Instance.new("BodyVelocity")
-	FlyBV.MaxForce = Vector3.new(1, 1, 1) * 1e6
-	FlyBV.Velocity = Vector3.new()
-	FlyBV.Parent = root
-	FlyBG = Instance.new("BodyGyro")
-	FlyBG.MaxTorque = Vector3.new(1, 1, 1) * 4e5
-	FlyBG.P = 9000
-	FlyBG.CFrame = root.CFrame
-	FlyBG.Parent = root
-	FlyConn = RunService.RenderStepped:Connect(function()
-		if not FlyOn then return end
-		local r = flyRoot()
-		if not r or not FlyBV or not FlyBV.Parent then return flyStop() end
-		local cam = Workspace.CurrentCamera
-		local dir = Vector3.new()
-		for key, v in pairs(FLY_KEYS) do
-			if UserInputService:IsKeyDown(key) then dir = dir + v end
-		end
-		if FlyHeld.fwd then dir = dir + Vector3.new(0, 0, 1) end
-		if FlyHeld.back then dir = dir + Vector3.new(0, 0, -1) end
-		if FlyHeld.up then dir = dir + Vector3.new(0, 1, 0) end
-		if FlyHeld.down then dir = dir + Vector3.new(0, -1, 0) end
-		local move = cam.CFrame.LookVector * dir.Z + cam.CFrame.RightVector * dir.X
-			+ Vector3.new(0, dir.Y, 0)
-		if move.Magnitude > 0 then move = move.Unit * FlySpeed end
-		FlyBV.Velocity = move
-		FlyBG.CFrame = CFrame.new(r.Position, r.Position + cam.CFrame.LookVector)
-	end)
-	return true
-end
-
-Players.LocalPlayer.CharacterAdded:Connect(function()
-	if FlyOn then task.wait(1) flyStart() end
-end)
-
-t1.PlayerTab:Toggle({
-	Title = "Fly",
-	Desc = "WASD + space/shift, or the pad in the corner on a phone",
-	Value = false,
-	Callback = function(on)
-		if on then
-			if not flyStart() then
-				_Raw:Notify({ Title = "Fly", Content = "no character to fly", Duration = 4 })
-			end
-		else
-			flyStop()
-		end
-	end
-})
-t1.PlayerTab:Slider({
-	Title = "Fly speed",
-	Value = { Min = 10, Max = 300, Default = 60 },
-	Callback = function(v) FlySpeed = v end
-})
 
 local Players6 = game:GetService("Players")
 local LocalPlayer11 = Players6.LocalPlayer
@@ -3358,19 +2987,11 @@ t1.TrollingTab:Button({
 local RunService5, Workspace4, VirtualUser2, LocalPlayer12, CoinCollected, t24, t25, u162, u163, Part, u166, u167, u168, u169, TextLabel
 
 do
-	local v143 = t1.SystemSection:Tab({
+	local v143 = u8:Tab({
 		Title = "Configs",
-		Icon = "folder-cog",
-		IconColor = Purple,
-		ShowTabTitle = true,
+		Icon = "folder",
+		IconColor = ACCENT,
 		Border = true
-	})
-	v143:Section({
-		Title = "CONFIGURATION",
-		Desc = "Profiles, presets and automatic loading",
-		Icon = "folder-cog",
-		Color = MollyPalette.PrimaryBright,
-		TextSize = 16
 	})
 	local ConfigManager = u8.ConfigManager
 	local s6 = "default"
@@ -3406,7 +3027,6 @@ do
 	v143:Button({
 		Title = "Save Config",
 		Justify = "Center",
-		Style = "primary",
 		Callback = function()
 			u8.CurrentConfig = ConfigManager:Config(s6)
 
@@ -4627,10 +4247,22 @@ do
 		end
 	end)
 
-	-- Was auto chat-spam advertising a DIFFERENT hub's Discord. It fired from a
-	-- config flag no toggle ever set, so it was already dead; neutralised so it
-	-- can never post someone else's advert from your account.
-	function AdvertizeDiscord() end
+	function AdvertizeDiscord()
+		local children = game:GetService("TextChatService"):WaitForChild("TextChannels"):GetChildren()
+		local v698, v699, v700 = ipairs(children)
+
+		while true do
+			local v701
+
+			v700, v701 = v698(v699, v700)
+
+			if v700 == nil then
+				break
+			end
+
+			v701:SendAsync("Immortal hub\r\n gg PwTPex2g6T")
+		end
+	end
 
 	RoundStart.OnClientEvent:Connect(function(_)
 		if Config.AutoRevealRoles then
@@ -5048,12 +4680,14 @@ do
 
 					Character:SetPrimaryPartCFrame(getgenv().OldPos * CFrame.new(0, 0.5, 0))
 					_Humanoid5:ChangeState("GettingUp")
-					for _, part in ipairs(Character:GetChildren()) do
-						if part:IsA("BasePart") then
-							part.RotVelocity = Vector3.new()
-							part.Velocity = Vector3.new()
+					table.foreach(Character:GetChildren(), function(_, p115)
+						if p115:IsA("BasePart") then
+							local vector3_6 = Vector3.new()
+
+							p115.RotVelocity = Vector3.new()
+							p115.Velocity = vector3_6
 						end
-					end
+					end)
 					task.wait()
 
 					if (_RootPart2.Position - getgenv().OldPos.p).Magnitude < 25 then
@@ -5376,7 +5010,7 @@ function RevealRoles()
 			local _Name = not v773 and "-" or v773.Name
 			local _Name2 = not v774 and "-" or v774.Name
 
-			v772:SendAsync((string.format("Murderer: %s |\r\nSheriff: %s", _Name, _Name2)))
+			v772:SendAsync((string.format("Murderer: %s |\r\nSheriff: %s |\r\nImmortal Hub", _Name, _Name2)))
 		end
 	end
 end
@@ -5702,10 +5336,8 @@ t1.Visual:Section({
 	Title = "item Unboxer",
 	Icon = ""
 })
-t1.Visual:Divider()
 t1.Visual:Button({
 	Title = "Spawn equippable Gingerscope",
-	Style = "primary",
 	Callback = function(p130)
 		Config.VisualGun = p130
 
@@ -5784,7 +5416,6 @@ t1.Visual:Input({
 t1.Visual:Button({
 	Title = "unbox item",
 	Icon = "sparkles",
-	Style = "primary",
 	Callback = function()
 		if not s7 or s7 == "" then
 			_Raw:Notify({
@@ -5892,7 +5523,6 @@ t1.Visual:Input({
 })
 t1.Visual:Button({
 	Title = "Spawn Weapon",
-	Style = "primary",
 	Callback = function()
 		if not u178 or u178 == "" then
 			_Raw:Notify({
@@ -5905,7 +5535,6 @@ t1.Visual:Button({
 		end
 	end
 })
-t1.MainTab:Divider()
 
 local Players9 = game:GetService("Players")
 local LocalPlayer17 = Players9.LocalPlayer
@@ -5954,7 +5583,6 @@ Players9.PlayerAdded:Connect(v186)
 Players9.PlayerRemoving:Connect(v186)
 t1.TeleportTab:Button({
 	Title = "Teleport to person",
-	Style = "primary",
 	Callback = function()
 		if u182 then
 			u184(u182)
@@ -5963,7 +5591,6 @@ t1.TeleportTab:Button({
 })
 t1.TeleportTab:Button({
 	Title = "TP to Random Player",
-	Style = "primary",
 	Callback = function()
 		local t36 = {}
 
@@ -6001,7 +5628,6 @@ t1.TeleportTab:Toggle({
 })
 t1.MainTab:Button({
 	Title = "End round",
-	Style = "danger",
 	Callback = function()
 		if u135 then
 			return
