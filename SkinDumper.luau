@@ -184,6 +184,10 @@ local function toRecord(value)
 		if not rec.mesh then rec.mesh = id
 		elseif not rec.tex then rec.tex = id end
 	end
+	-- A texture that is its own mesh id is not a texture. It happens when the
+	-- source keeps one id under two names, and shipping it makes the weapon
+	-- render untextured — which looks exactly like the skin failing.
+	if rec.tex == rec.mesh then rec.tex = nil end
 	return rec.mesh and rec or nil
 end
 
