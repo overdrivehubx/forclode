@@ -31,10 +31,57 @@ local CurrentCamera = Workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
 local MOLLY_UI = "https://raw.githubusercontent.com/overdrivehubx/forclode/"
 	.. "claude/trading-ui-offline-harness-vxuc86/MollyUI.luau"
+
+-- Molly Hybrid
+-- A graphite control-center base with the violet glow and stronger active
+-- states from the first concept, plus the tighter hierarchy of the second.
+local MollyPalette = {
+	Background = Color3.fromHex("#09080F"),
+	Surface = Color3.fromHex("#12101C"),
+	SurfaceRaised = Color3.fromHex("#191529"),
+	SurfaceSoft = Color3.fromHex("#211A36"),
+	Primary = Color3.fromHex("#7C3AED"),
+	PrimaryBright = Color3.fromHex("#A855F7"),
+	PrimaryDeep = Color3.fromHex("#5B21B6"),
+	Indigo = Color3.fromHex("#4F46E5"),
+	Outline = Color3.fromHex("#6D5BD0"),
+	Text = Color3.fromHex("#F7F5FF"),
+	Muted = Color3.fromHex("#9A93AC"),
+	Icon = Color3.fromHex("#C4B5FD"),
+	Success = Color3.fromHex("#31D67B")
+}
+
+-- Kept as a named color because a few of the original tab declarations use it.
+local Purple = MollyPalette.PrimaryBright
+
+-- MollyUI does the drawing. It used to be downloaded and then rewritten with a
+-- couple of dozen string replacements to get this palette in — which is why the
+-- menu broke: the library moved on, the replacements stopped matching, and one
+-- of them handed every card a colour that no longer existed. It has a palette
+-- API now, so ask it properly and it cannot go stale.
+do
+	local firstViewport = Vector2.new(1280, 720)
+
+	pcall(function()
+		local size = CurrentCamera and CurrentCamera.ViewportSize
+
+		if typeof(size) == "Vector2" then
+			firstViewport = size
+		end
+	end)
+
+	-- Never let a stale desktop scale make the phone layout oversized. A
+	-- manually reduced scale is respected, while the adaptive ceiling follows
+	-- the current viewport.
+	local autoScale = (firstViewport.X < firstViewport.Y) and 0.94 or 1
+	local savedScale = tonumber(_G.MH_MenuScale)
+
+	_G.MH_MenuScale = savedScale and math.min(savedScale, autoScale) or autoScale
+end
+
 local _Raw = loadstring(game:HttpGet(MOLLY_UI))()
 
-_Raw:SetTheme("Dark")
-
+_Raw:SetPalette(MollyPalette)
 function gradient(p1, p2, p3)
 	local s1 = ""
 	local v194 = #p1
@@ -49,16 +96,23 @@ function gradient(p1, p2, p3)
 end
 
 local u8 = _Raw:CreateWindow({
-	Title = "Murder Mystery 2 ",
-	Icon = "door-open",
-	Author = "rayz",
+	Title = "MM2 CONTROL CENTER",
+	Icon = "crown",
+	Author = "MOLLYHUB",
+	SubTitle = "LIVE CONTROL CENTER",
+	Badge = "MM2",
 	Folder = "wwww",
-	Size = UDim2.fromOffset(460, 340),
+	Size = UDim2.fromOffset(1040, 640),
 	Transparent = true,
-	Theme = "Dark",
+	Theme = "MollyHybrid",
 	Resizable = true,
-	SideBarWidth = 200,
-	BackgroundImageTransparency = 0.42,
+	Wide = true,
+	SideBarWidth = 190,
+	Background = MollyPalette.Background,
+	BackgroundImageTransparency = 0.16,
+	Acrylic = false,
+	HidePanelBackground = false,
+	NewElements = false,
 	HideSearchBar = false,
 	ScrollBarEnabled = true,
 	User = {
@@ -68,19 +122,39 @@ local u8 = _Raw:CreateWindow({
 		end
 	},
 	OpenButton = {
-		Title = "Open ",
+		Title = "MOLLY X",
 		CornerRadius = UDim.new(1, 0),
-		StrokeThickness = 3,
+		StrokeThickness = 2,
 		Enabled = true,
 		Draggable = true,
 		OnlyMobile = false,
-		Color = ColorSequence.new(Color3.fromHex("#00eaff"), Color3.fromHex("#00c6ff"))
+		Color = ColorSequence.new(MollyPalette.PrimaryBright, MollyPalette.Indigo)
 	}
 })
+
+pcall(function()
+	u8:SetIconSize(38)
+end)
+
+pcall(function()
+	u8:Tag({
+		Title = "MM2",
+		Icon = "gamepad-2",
+		Color = MollyPalette.Primary,
+		Radius = 6
+	})
+	u8:Tag({
+		Title = "LIVE",
+		Icon = "radio",
+		Color = MollyPalette.Success,
+		Radius = 6
+	})
+end)
+
 local t1 = {
 	HomeTab = u8:Tab({
-		Title = "Info",
-		Icon = "solar:info-square-bold",
+		Title = "Dashboard",
+		Icon = "layout-dashboard",
 		IconColor = Purple,
 		ShowTabTitle = true,
 		Border = true
@@ -89,50 +163,51 @@ local t1 = {
 
 do
 	local v10 = u8:Section({
-		Title = "Main functions",
-		Icon = "house",
+		Title = "MAIN",
+		Icon = "crosshair",
 		Opened = true,
 		u8:Divider()
 	})
 	local v11 = u8:Section({
-		Title = "More Functions",
-		Icon = "bird",
-		Opened = false
+		Title = "TOOLS",
+		Icon = "boxes",
+		Opened = true
 	})
 	local v12 = u8:Section({
-		Title = "Misc",
-		Icon = "trash",
-		Opened = false
+		Title = "SYSTEM",
+		Icon = "settings-2",
+		Opened = true
 	})
 
+	t1.SystemSection = v12
 	t1.MainTab = v10:Tab({
-		Title = "Main",
-		Icon = "box",
+		Title = "Combat",
+		Icon = "crosshair",
 		ShowTabTitle = true
 	})
 	t1.AutoFarmTab = v10:Tab({
-		Title = "Farming",
-		Icon = "bitcoin",
+		Title = "World",
+		Icon = "globe",
 		ShowTabTitle = true
 	})
 	t1.MurdTab = v10:Tab({
-		Title = "Murder",
+		Title = "Combat",
 		Icon = "sword",
 		ShowTabTitle = true
 	})
 	t1.SheriffTab = v10:Tab({
-		Title = "Sheriff",
-		Icon = "swords",
+		Title = "Combat",
+		Icon = "shield-check",
 		ShowTabTitle = true
 	})
 	t1.ESPTab = v10:Tab({
-		Title = "Esp",
-		Icon = "crosshair",
+		Title = "Visuals",
+		Icon = "eye",
 		ShowTabTitle = true,
 		u8:Divider()
 	})
 	t1.TeleportTab = v11:Tab({
-		Title = "Teleport",
+		Title = "World",
 		Icon = "map-pin",
 		ShowTabTitle = true
 	})
@@ -142,18 +217,18 @@ do
 		ShowTabTitle = true
 	})
 	t1.TrollingTab = v11:Tab({
-		Title = "Trolling",
-		Icon = "laugh",
+		Title = "Misc",
+		Icon = "more-horizontal",
 		ShowTabTitle = true
 	})
 	t1.MiscTab = v12:Tab({
-		Title = "Extra",
+		Title = "Settings",
 		Icon = "settings",
 		ShowTabTitle = true
 	})
 	t1.Visual = v11:Tab({
-		Title = "spawners",
-		Icon = "eye",
+		Title = "Inventory",
+		Icon = "package-plus",
 		ShowTabTitle = true
 	})
 end
@@ -195,15 +270,6 @@ do
 	local v19 = v16 and "Some features may not work correctly with your executor." or s2 .. " should run everything fine and everything should work ight"
 	local v20 = v16 and "Red" or "Green"
 
-	t1.HomeTab:Paragraph({
-		Title = v18,
-		Desc = v19,
-		Color = v20,
-		Image = "cpu",
-		ImageSize = 30
-	})
-	t1.HomeTab:Divider()
-	t1.HomeTab:Divider()
 	t3 = {
 		GetCurrentPlayerData = ReplicatedStorage:FindFirstChild("GetCurrentPlayerData", true)
 	}
@@ -214,11 +280,159 @@ do
 		Perk = "None"
 	}
 	u23 = t1.MainTab:Paragraph({
+		Title = "GAME INFO",
+		Desc = "Murder: <font color=\"#F05A74\">Unknown</font>\nSheriff: <font color=\"#6CA6FF\">Unknown</font>\nPerk: <font color=\"#C4B5FD\">None</font>\nGun Drop: —",
+		Color = MollyPalette.PrimaryBright,
+		Image = "crosshair",
+		ImageSize = 20
+	})
+	t1.HomeTab:Dashboard({
+		CombatRows = {
+			{ Title = "Round State", Value = "LIVE", Color = MollyPalette.Success },
+			{ Title = "Murderer", Value = "Unknown", Color = Color3.fromRGB(240, 90, 116) },
+			{ Title = "Sheriff", Value = "Unknown", Color = Color3.fromRGB(108, 166, 255) },
+			{ Title = "Gun Drop", Value = "—" },
+			{ Title = "Role Notify", Toggle = false, Key = "role_notify" }
+		},
+		VisualRows = {
+			{ Title = "Enable ESP", Toggle = true, Key = "esp" },
+			{ Title = "Boxes", Toggle = true, Key = "boxes" },
+			{ Title = "Names", Toggle = true, Key = "names" },
+			{ Title = "Tracers", Toggle = false, Key = "tracers" }
+		},
+		UtilityRows = {
+			{ Title = "Auto Farm", Toggle = false, Key = "autofarm" },
+			{ Title = "Walk Speed", Value = "16" },
+			{ Title = "Jump Power", Value = "50" }
+		},
+		OnToggle = function(key, enabled)
+			if key == "role_notify" then
+				u29 = enabled
+			end
+		end,
+		OnAction = function(key)
+			if key == "sheriff" or key == "reveal_roles" then
+				if t1.MainTab and t1.MainTab._activate then t1.MainTab:_activate() end
+			elseif key == "kill_all" then
+				if t1.MurdTab and t1.MurdTab._activate then t1.MurdTab:_activate() end
+			elseif key == "tp_murderer" or key == "bring_all" then
+				if t1.TeleportTab and t1.TeleportTab._activate then t1.TeleportTab:_activate() end
+			elseif key == "clear_weapons" then
+				if t1.ESPTab and t1.ESPTab._activate then t1.ESPTab:_activate() end
+			elseif key == "enable" then
+				u8:Toggle(true)
+			elseif key == "panic_key" then
+				if t1.MiscTab and t1.MiscTab._activate then t1.MiscTab:_activate() end
+			elseif key == "save_config" then
+				pcall(function() u8.CurrentConfig:Save() end)
+			end
+		end
+	})
+
+	-- The old launcher-style home rows are intentionally disabled. The
+	-- dashboard above is the single persistent control center.
+	if false then
+	t1.HomeTab:Paragraph({
+		Title = gradient("MM2 X", MollyPalette.PrimaryBright, MollyPalette.Indigo),
+		Desc = "PREMIUM CONTROL CENTER  •  HYBRID EDITION\nGraphite clarity. Violet energy.",
+		Color = MollyPalette.PrimaryBright,
+		Image = "crown",
+		ImageSize = 34
+	})
+	pcall(function()
+		t1.HomeTab:Actions({
+			Height = 58,
+			Items = {
+				{
+					Title = "OVERVIEW",
+					Desc = "Live match",
+					Icon = "◈",
+					Style = "primary",
+					Callback = function()
+						if t1.MainTab and t1.MainTab._activate then
+							t1.MainTab:_activate()
+						end
+					end
+				},
+				{
+					Title = "VISUALS",
+					Desc = "ESP suite",
+					Icon = "◉",
+					Callback = function()
+						if t1.ESPTab and t1.ESPTab._activate then
+							t1.ESPTab:_activate()
+						end
+					end
+				},
+				{
+					Title = "SETTINGS",
+					Desc = "Interface",
+					Icon = "⚙",
+					Callback = function()
+						if t1.MiscTab and t1.MiscTab._activate then
+							t1.MiscTab:_activate()
+						end
+					end
+				}
+			}
+		})
+	end)
+	t1.HomeTab:Divider()
+	t1.HomeTab:Paragraph({
+		Title = v18,
+		Desc = v19,
+		Color = v20,
+		Image = "cpu",
+		ImageSize = 30
+	})
+	t1.HomeTab:Divider()
+	t1.HomeTab:Divider()
+	u23 = t1.MainTab:Paragraph({
 		Title = "Game Info",
 		Desc = "Murder: <font color=\"#ff0000\">Unknown</font>\nSheriff: <font color=\"#0000ff\">Unknown</font>\nMurderer Perk: <font color=\"#7F00FF\">None</font>\nGun Dropped: No",
 		Image = "component",
 		ImageSize = 20
 	})
+	pcall(function()
+		t1.MainTab:Actions({
+			Height = 58,
+			Items = {
+				{
+					Title = "REFRESH",
+					Desc = "Role snapshot",
+					Icon = "↻",
+					Style = "primary",
+					Callback = function()
+						if u26 then
+							u26()
+						end
+					end
+				},
+				{
+					Title = "MURDERER",
+					Desc = "Notify",
+					Icon = "⚔",
+					Callback = function()
+						if u32 and u34 then
+							u34("Murderer", u32())
+						end
+					end
+				},
+				{
+					Title = "SHERIFF",
+					Desc = "Notify",
+					Icon = "◆",
+					Callback = function()
+						if u32 and u34 then
+							local _, sheriff = u32()
+							u34("Sheriff", sheriff)
+						end
+					end
+				}
+			}
+			})
+		end)
+	end
 
 	function u24()
 		if t3.GetCurrentPlayerData and t3.GetCurrentPlayerData:IsA("RemoteFunction") then
@@ -407,6 +621,7 @@ do
 	})
 	t1.MainTab:Button({
 		Title = "Notify Murderer",
+		Style = "primary",
 		Callback = function()
 			local v234 = u32()
 
@@ -415,6 +630,7 @@ do
 	})
 	t1.MainTab:Button({
 		Title = "Notify Sheriff",
+		Style = "primary",
 		Callback = function()
 			local _, v236 = u32()
 
@@ -439,6 +655,7 @@ do
 	t1.MainTab:Button({
 		Title = "Get Gun Now",
 		Icon = "hand",
+		Style = "primary",
 		Callback = function()
 			local v238 = nil
 
@@ -1216,6 +1433,7 @@ do
 	t1.MurdTab:Button({
 		Title = "Kill Selected Players",
 		Description = "Kills only the players selected in the dropdown.",
+		Style = "primary",
 		Callback = function()
 			if #t11 == 0 then
 				_Raw:Notify({
@@ -1240,6 +1458,7 @@ do
 	t1.MurdTab:Button({
 		Title = "Kill All Players",
 		Description = "Instantly kills every other player in the server.",
+		Style = "danger",
 		Callback = function()
 			local v328 = u78()
 
@@ -3146,11 +3365,19 @@ t1.TrollingTab:Button({
 local RunService5, Workspace4, VirtualUser2, LocalPlayer12, CoinCollected, t24, t25, u162, u163, Part, u166, u167, u168, u169, TextLabel
 
 do
-	local v143 = u8:Tab({
+	local v143 = t1.SystemSection:Tab({
 		Title = "Configs",
-		Icon = "solar:folder-with-files-bold",
+		Icon = "folder-cog",
 		IconColor = Purple,
+		ShowTabTitle = true,
 		Border = true
+	})
+	v143:Section({
+		Title = "CONFIGURATION",
+		Desc = "Profiles, presets and automatic loading",
+		Icon = "folder-cog",
+		Color = MollyPalette.PrimaryBright,
+		TextSize = 16
 	})
 	local ConfigManager = u8.ConfigManager
 	local s6 = "default"
@@ -3186,6 +3413,7 @@ do
 	v143:Button({
 		Title = "Save Config",
 		Justify = "Center",
+		Style = "primary",
 		Callback = function()
 			u8.CurrentConfig = ConfigManager:Config(s6)
 
@@ -5484,6 +5712,7 @@ t1.Visual:Section({
 t1.Visual:Divider()
 t1.Visual:Button({
 	Title = "Spawn equippable Gingerscope",
+	Style = "primary",
 	Callback = function(p130)
 		Config.VisualGun = p130
 
@@ -5562,6 +5791,7 @@ t1.Visual:Input({
 t1.Visual:Button({
 	Title = "unbox item",
 	Icon = "sparkles",
+	Style = "primary",
 	Callback = function()
 		if not s7 or s7 == "" then
 			_Raw:Notify({
@@ -5669,6 +5899,7 @@ t1.Visual:Input({
 })
 t1.Visual:Button({
 	Title = "Spawn Weapon",
+	Style = "primary",
 	Callback = function()
 		if not u178 or u178 == "" then
 			_Raw:Notify({
@@ -5730,6 +5961,7 @@ Players9.PlayerAdded:Connect(v186)
 Players9.PlayerRemoving:Connect(v186)
 t1.TeleportTab:Button({
 	Title = "Teleport to person",
+	Style = "primary",
 	Callback = function()
 		if u182 then
 			u184(u182)
@@ -5738,6 +5970,7 @@ t1.TeleportTab:Button({
 })
 t1.TeleportTab:Button({
 	Title = "TP to Random Player",
+	Style = "primary",
 	Callback = function()
 		local t36 = {}
 
@@ -5775,6 +6008,7 @@ t1.TeleportTab:Toggle({
 })
 t1.MainTab:Button({
 	Title = "End round",
+	Style = "danger",
 	Callback = function()
 		if u135 then
 			return
