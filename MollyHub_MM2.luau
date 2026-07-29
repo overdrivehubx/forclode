@@ -188,7 +188,7 @@ do
 
 	local V = {
 		chams = false, chamFill = 0.55, chamWalls = true, chamOutline = true, chamDead = true,
-		chamStyle = "ForceField", chamWeapon = true, chamSelf = false,
+		chamStyle = "Hologram", chamWeapon = true, chamSelf = false, chamHide = true,
 		aura = false, auraStyle = "Fire", auraSelf = false,
 		ring = false, ringSelf = false, ringSize = 6, jumpRing = false,
 		hat = false, hatSelf = false, hatSize = 5, hatSpin = true,
@@ -275,24 +275,38 @@ do
 	-- material: Glass at zero looks solid, and Ghost is only a ghost when you can
 	-- see through it — that is why two of the first five looked like nothing was
 	-- happening.
+	-- These are LOOKS. ForceField is not one of them — it is the material a
+	-- couple of them are built out of, which is a different question and not one
+	-- to put in a menu.
 	local STYLE = {
-		ForceField = { mat = "ForceField", t = 0,    r = 0,   glow = true },
-		Neon       = { mat = "Neon",       t = 0,    r = 0,   glow = true },
-		Glass      = { mat = "Glass",      t = 0.55, r = 0.35 },
-		Ghost      = { mat = "Neon",       t = 0.72, r = 0,   glow = true },
-		Ice        = { mat = "Glacier",    t = 0.35, r = 0.5 },
-		Crystal    = { mat = "Glass",      t = 0.25, r = 0.9, glow = true },
-		Plasma     = { mat = "Neon",       t = 0.15, r = 0,   glow = true, cycle = true },
-		Flat       = { mat = "SmoothPlastic", t = 0, r = 0 },
-		Metal      = { mat = "Foil",       t = 0,    r = 0.6 },
-		Wire       = { mat = "ForceField", t = 0.35, r = 0,   glow = true },
+		Hologram = { mat = "ForceField",    t = 0,    r = 0 },
+		Wire     = { mat = "ForceField",    t = 0.45, r = 0 },
+		Glow     = { mat = "Neon",          t = 0,    r = 0 },
+		Ghost    = { mat = "Neon",          t = 0.62, r = 0 },
+		Rainbow  = { mat = "Neon",          t = 0,    r = 0, cycle = true },
+		Crystal  = { mat = "Glass",         t = 0.2,  r = 0.9 },
+		Glass    = { mat = "Glass",         t = 0.5,  r = 0.35 },
+		Ice      = { mat = "Glacier",       t = 0.3,  r = 0.5 },
+		Metal    = { mat = "Foil",          t = 0,    r = 0.65 },
+		Flat     = { mat = "SmoothPlastic", t = 0,    r = 0 },
 	}
-	FX.styleNames = { "ForceField", "Neon", "Ghost", "Wire", "Plasma", "Crystal",
-		"Glass", "Ice", "Metal", "Flat", "Highlight" }
+	-- and these two are the flat overlay, which needs no copy at all
+	local OVERLAY = { Outline = 1, Fill = 0.5 }
+	FX.styleNames = { "Hologram", "Glow", "Ghost", "Wire", "Rainbow", "Crystal",
+		"Glass", "Ice", "Metal", "Flat", "Outline", "Fill" }
+	FX.isOverlay = function(name) return OVERLAY[name] end
 
 	function FX.bodyOff(player)
 		local rec = FX.body[player]
-		if rec then pcall(function() rec.model:Destroy() end) end
+		if not rec then return end
+		-- give them their own body back BEFORE the copy goes, or a frame lands
+		-- with neither showing
+		pcall(function()
+			for _, src in ipairs(rec.hid or {}) do
+				if src.Parent then src.LocalTransparencyModifier = 0 end
+			end
+		end)
+		pcall(function() rec.model:Destroy() end)
 		FX.body[player] = nil
 	end
 
@@ -301,7 +315,8 @@ do
 		local d = STYLE[style]
 		if not d then return FX.bodyOff(player) end
 		local rec = FX.body[player]
-		if rec and (rec.char ~= char or rec.style ~= style or not rec.model.Parent) then
+		if rec and (rec.char ~= char or rec.style ~= style or not rec.model.Parent
+			or rec.hide ~= V.chamHide) then
 			FX.bodyOff(player)
 			rec = nil
 		end
@@ -309,7 +324,7 @@ do
 			local ok, made = pcall(function()
 				local m = Instance.new("Model")
 				m.Name = "MH_Body"
-				local parts = {}
+				local parts, hid = {}, {}
 				for _, src in ipairs(char:GetDescendants()) do
 					local isTool = src:FindFirstAncestorWhichIsA("Tool") ~= nil
 					if src:IsA("BasePart") and src.Name ~= "HumanoidRootPart"
@@ -333,7 +348,11 @@ do
 						c.Material = Enum.Material[d.mat] or Enum.Material.ForceField
 						c.Transparency = d.t
 						c.Reflectance = d.r
-						c.Size = src.Size * 1.01     -- just proud of the real one
+						-- Sitting exactly on top of a body that is still there is
+						-- why the first version was almost invisible: their own
+						-- parts won the depth test. Hide theirs FOR US ONLY and the
+						-- copy is the whole character, the way the shots look.
+						c.Size = V.chamHide and src.Size or (src.Size * 1.04)
 						c.CFrame = src.CFrame
 						c.Parent = m
 						local w = Instance.new("WeldConstraint")
@@ -341,10 +360,15 @@ do
 						w.Part1 = c
 						w.Parent = c
 						parts[#parts + 1] = c
+						if V.chamHide then
+							src.LocalTransparencyModifier = 1
+							hid[#hid + 1] = src
+						end
 					end
 				end
 				m.Parent = char
-				return { model = m, parts = parts, char = char, style = style }
+				return { model = m, parts = parts, hid = hid, char = char, style = style,
+					hide = V.chamHide }
 			end)
 			if not ok or not made or #made.parts == 0 then
 				if made and made.model then pcall(function() made.model:Destroy() end) end
@@ -352,6 +376,16 @@ do
 			end
 			rec = made
 			FX.body[player] = rec
+		end
+		if rec.hide and (os.clock() - (rec.at or 0)) > 0.25 then
+			rec.at = os.clock()
+			pcall(function()
+				for _, src in ipairs(rec.hid) do
+					if src.Parent and src.LocalTransparencyModifier ~= 1 then
+						src.LocalTransparencyModifier = 1
+					end
+				end
+			end)
 		end
 		if d.cycle then colr = Color3.fromHSV((os.clock() * 0.25) % 1, 0.85, 1) end
 		if rec.colr == colr then return end
@@ -589,12 +623,61 @@ do
 		FX.seen[player] = nil
 	end
 
+	-- Anything of ours still standing that nothing owns any more. Re-running the
+	-- script in the same session leaves the previous run's copies behind — it is
+	-- gone as far as the new run knows, and nothing would ever destroy it. This
+	-- sweeps by name, so leftovers from an older build go too.
+	function FX.sweep()
+		pcall(function()
+			local live = {}
+			for _, rec in pairs(FX.body) do live[rec.model] = true end
+			for _, rec in pairs(FX.hat) do live[rec.model] = true end
+			for _, r in pairs(FX.ring) do live[r] = true end
+			for _, e in pairs(FX.aura) do live[e] = true end
+			local roots = { workspace }
+			for _, pl in ipairs(Players:GetPlayers()) do
+				if pl.Character then roots[#roots + 1] = pl.Character end
+			end
+			for _, where in ipairs(roots) do
+				for _, d in ipairs(where:GetChildren()) do
+					local n = tostring(d.Name)
+					if (n == "MH_Body" or n == "MH_Hat" or n == "MH_Ring") and not live[d] then
+						d:Destroy()
+					end
+				end
+				-- an emitter lives on the root part, one level further in
+				local hrp = where:FindFirstChild("HumanoidRootPart")
+				if hrp then
+					for _, d in ipairs(hrp:GetChildren()) do
+						if tostring(d.Name) == "MH_Aura" and not live[d] then d:Destroy() end
+					end
+				end
+				-- and a body we hid but never gave back
+				for _, d in ipairs(where:GetDescendants()) do
+					if d:IsA("BasePart") and d.Name ~= "MH_Copy"
+						and d.LocalTransparencyModifier == 1 and next(FX.body) == nil then
+						d.LocalTransparencyModifier = 0
+					end
+				end
+			end
+		end)
+	end
+
+	-- A slow tick, so leftovers from a previous execution go even while the menu
+	-- is up. Twice a second would be waste; every two seconds nobody notices.
+	function FX.tick()
+		if (os.clock() - (FX.sweptAt or 0)) < 2 then return end
+		FX.sweptAt = os.clock()
+		FX.sweep()
+	end
+
 	function FX.clearAll()
 		for pl in pairs(FX.body) do FX.bodyOff(pl) end
 		for pl in pairs(FX.aura) do FX.dropAura(pl) end
 		for pl in pairs(FX.ring) do FX.dropRing(pl) end
 		for pl in pairs(FX.hat) do FX.dropHat(pl) end
 		FX.seen = {}
+		FX.sweep()
 	end
 
 	-- Role colours, or one colour of your own, and how bright either should be.
@@ -621,7 +704,8 @@ do
 		end
 		-- the body, the aura, the ring and the hat all key off that one colour,
 		-- and all of them come off together when the player dies
-		if V.chams and V.chamStyle ~= "Highlight" and not hidden then
+		local overlay = FX.isOverlay(V.chamStyle)
+		if V.chams and not overlay and not hidden then
 			FX.bodyOn(player, char, colr, V.chamStyle)
 		else
 			FX.bodyOff(player)
@@ -629,7 +713,7 @@ do
 		if V.aura and not hidden then FX.auraOn(player, char, colr) else FX.dropAura(player) end
 		if V.ring and not hidden then FX.ringOn(player, char, colr) else FX.dropRing(player) end
 		if V.hat and not hidden then FX.hatOn(player, char, colr) else FX.dropHat(player) end
-		if not V.chams or V.chamStyle ~= "Highlight" then return dropCham(player) end
+		if not V.chams or not overlay then return dropCham(player) end
 		local h = chams[player]
 		if not h or h.Parent ~= char then
 			dropCham(player)
@@ -647,7 +731,7 @@ do
 		pcall(function()
 			h.FillColor = colr
 			h.OutlineColor = colr
-			h.FillTransparency = V.chamFill
+			h.FillTransparency = (overlay == 1) and 1 or V.chamFill
 			h.OutlineTransparency = V.chamOutline and 0 or 1
 			h.DepthMode = V.chamWalls and Enum.HighlightDepthMode.AlwaysOnTop
 				or Enum.HighlightDepthMode.Occluded
@@ -1017,6 +1101,7 @@ do
 			end
 			if not anythingOn() then return end
 			pollRoles()
+			FX.tick()
 
 			local vp = Camera.ViewportSize
 			local cx, cy = vp.X / 2, vp.Y / 2
@@ -1055,7 +1140,7 @@ do
 				local mine = LocalPlayer.Character
 				if mine and (V.chamSelf or V.auraSelf or V.ringSelf or V.hatSelf) then
 					local c = FX.lit(V.roleColors and COL.Sheriff or V.oneColor, V.bright)
-					if V.chamSelf and V.chamStyle ~= "Highlight" then
+					if V.chamSelf and not FX.isOverlay(V.chamStyle) then
 						FX.bodyOn(LocalPlayer, mine, c, V.chamStyle)
 					else
 						FX.bodyOff(LocalPlayer)
@@ -1194,6 +1279,9 @@ do
 		if anythingOn() then startLoop() else stopLoop() end
 	end
 
+	-- a previous run of this script in the same session leaves its copies behind
+	FX.sweep()
+
 	pcall(function()
 		Players.PlayerRemoving:Connect(function(player)
 			dropPool(player)
@@ -1205,25 +1293,32 @@ do
 	--== chams, on the ESP page =================================================
 	EspTab:Section({ Title = "Chams" })
 	EspTab:Toggle({ Title = "Chams", Desc = "players lit in their role's colour",
-		Default = false, Callback = function(on) V.chams = on sync() end })
+		Default = false, Callback = function(on)
+			V.chams = on
+			if not on then FX.clearAll() end
+			sync()
+		end })
 	EspTab:Dropdown({ Title = "Cham style",
-		Desc = "ForceField is the glowing wireframe; Highlight is a flat overlay",
-		Values = FX.styleNames, Value = "ForceField",
+		Desc = "Hologram is the wireframe one; Outline and Fill are flat overlays",
+		Values = FX.styleNames, Value = "Hologram",
 		Callback = function(v)
 			V.chamStyle = tostring(v)
 			FX.clearAll()
 		end })
+	EspTab:Toggle({ Title = "Replace their body",
+		Desc = "on = you see the cham instead of them, off = it sits around them",
+		Default = true, Callback = function(on) V.chamHide = on FX.clearAll() end })
 	EspTab:Toggle({ Title = "The weapon too", Desc = "their knife or gun gets the same look",
 		Default = true, Callback = function(on) V.chamWeapon = on FX.clearAll() end })
 	EspTab:Slider({ Title = "Brightness", Desc = "1 is the colour as it is", Step = 0.05,
 		Value = { Min = 0.2, Max = 2, Default = 1 },
 		Callback = function(v) V.bright = v FX.clearAll() end })
-	EspTab:Toggle({ Title = "Through walls", Desc = "Highlight style only",
+	EspTab:Toggle({ Title = "Through walls", Desc = "Outline and Fill only",
 		Default = true, Callback = function(on) V.chamWalls = on end })
-	EspTab:Toggle({ Title = "Cham outline", Default = true,
+	EspTab:Toggle({ Title = "Cham outline", Desc = "Outline and Fill only", Default = true,
 		Callback = function(on) V.chamOutline = on end })
-	EspTab:Slider({ Title = "Cham fill", Desc = "Highlight style only", Step = 0.05,
-		Value = { Min = 0, Max = 1, Default = 0.55 },
+	EspTab:Slider({ Title = "Cham fill", Desc = "the Fill style's strength", Step = 0.05,
+		Value = { Min = 0, Max = 1, Default = 0.5 },
 		Callback = function(v) V.chamFill = v end })
 	EspTab:Toggle({ Title = "Hide the dead", Default = true,
 		Callback = function(on) V.chamDead = on end })
@@ -1273,7 +1368,7 @@ do
 
 	EspTab:Section({ Title = "On yourself" })
 	EspTab:Toggle({ Title = "Wear the cham style",
-		Desc = "the material looks, not Highlight", Default = false,
+		Desc = "the looks, not Outline or Fill", Default = false,
 		Callback = function(on) V.chamSelf = on if not on then FX.clear(LocalPlayer) end sync() end })
 	EspTab:Toggle({ Title = "Wear the aura", Default = false,
 		Callback = function(on) V.auraSelf = on if not on then FX.clear(LocalPlayer) end sync() end })
