@@ -189,6 +189,7 @@ do
 	local V = {
 		chams = false, chamFill = 0.55, chamWalls = true, chamOutline = true, chamDead = true,
 		chamStyle = "Hologram", chamWeapon = true, chamSelf = false, chamHide = true,
+		chamAlpha = 0,
 		wallFill = 1,
 		aura = false, auraStyle = "Fire", auraSelf = false, auraAmount = 1, auraGlow = 0.55,
 		ring = false, ringSelf = false, ringSize = 6, jumpRing = false,
@@ -290,21 +291,56 @@ do
 	--   grow  puffs the copy out, so a shell reads as a shell
 	--   fuzz  a second, larger, fainter copy for a glow around the edge
 	local STYLE = {
-		Hologram = { mat = "ForceField",    t = 0,    r = 0 },
+		-- scan: a band travelling up the body, the way a hologram is drawn
+		-- flow: every part its own hue, sliding — a gradient, not one colour
+		-- pulse: breathing, so it is alive rather than painted on
+		-- fuzz: a second, larger, fainter copy for a soft edge instead of a glare
+		Hologram = { mat = "ForceField",    t = 0.1,  r = 0,    scan = true, fuzz = 1.09 },
 		Wire     = { mat = "ForceField",    t = 0.55, r = 0,    grow = 1.06 },
-		Glow     = { mat = "Neon",          t = 0,    r = 0,    fuzz = 1.12 },
-		Ghost    = { mat = "Neon",          t = 0.72, r = 0,    grow = 1.03 },
-		Rainbow  = { mat = "Neon",          t = 0,    r = 0,    cycle = true },
+		Glow     = { mat = "Neon",          t = 0.55, r = 0,    fuzz = 1.22, pulse = 0.18 },
+		Ghost    = { mat = "Neon",          t = 0.78, r = 0,    grow = 1.03, pulse = 0.12 },
+		Rainbow  = { mat = "Neon",          t = 0.45, r = 0,    flow = true, fuzz = 1.14 },
+		Aurora   = { mat = "ForceField",    t = 0.35, r = 0,    flow = true, slow = true,
+			fuzz = 1.16 },
+		Pulse    = { mat = "Neon",          t = 0.3,  r = 0,    pulse = 0.45, fuzz = 1.1 },
 		Crystal  = { mat = "Glass",         t = 0.1,  r = 1,    grow = 1.02 },
 		Glass    = { mat = "Glass",         t = 0.6,  r = 0.2 },
 		Ice      = { mat = "Glacier",       t = 0.25, r = 0.45 },
-		Metal    = { mat = "Foil",          t = 0,    r = 1 },
+		Metal    = { mat = "Foil",          t = 0,    r = 0.75 },
 		Flat     = { mat = "SmoothPlastic", t = 0,    r = 0 },
 	}
 	-- and these two are the flat overlay, which needs no copy at all
 	local OVERLAY = { Outline = 1, Fill = 0.5 }
-	FX.styleNames = { "Hologram", "Glow", "Ghost", "Wire", "Rainbow", "Crystal",
-		"Glass", "Ice", "Metal", "Flat", "Outline", "Fill" }
+	FX.styleNames = { "Hologram", "Glow", "Ghost", "Rainbow", "Aurora", "Pulse",
+		"Wire", "Crystal", "Glass", "Ice", "Metal", "Flat", "Outline", "Fill" }
+
+	-- What moves. A style that only sits there is a colour; a style that breathes
+	-- or is scanned or flows is an effect. Thirty times a second is plenty — this
+	-- writes to a handful of parts per player and no more.
+	function FX.animate(rec, d)
+		local now = os.clock()
+		if (now - (rec.animAt or 0)) < 0.033 then return end
+		rec.animAt = now
+		local base = math.clamp(d.t + V.chamAlpha, 0, 0.95)
+		pcall(function()
+			for i, c in ipairs(rec.parts) do
+				local y = rec.ys[i] or 0
+				local soft = rec.soft[i] and 0.3 or 0
+				if d.flow then
+					local speed = d.slow and 0.08 or 0.22
+					c.Color = Color3.fromHSV((now * speed + y * 0.55 + i * 0.004) % 1, 0.85, 1)
+				end
+				if d.scan then
+					-- a bright band sweeping up, everything else held back
+					local band = math.exp(-((((y * 2 - now * 0.9) % 1) - 0.5) ^ 2) * 26)
+					c.Transparency = math.clamp(base + soft + 0.35 - band * 0.45, 0, 0.96)
+				elseif d.pulse then
+					local k = math.sin(now * 2.1 + y * 1.5) * 0.5 + 0.5
+					c.Transparency = math.clamp(base + soft + k * d.pulse, 0, 0.96)
+				end
+			end
+		end)
+	end
 	FX.isOverlay = function(name) return OVERLAY[name] end
 
 	function FX.bodyOff(player)
@@ -327,7 +363,7 @@ do
 		if not d then return FX.bodyOff(player) end
 		local rec = FX.body[player]
 		if rec and (rec.char ~= char or rec.style ~= style or not rec.model.Parent
-			or rec.hide ~= V.chamHide) then
+			or rec.hide ~= V.chamHide or rec.alpha ~= V.chamAlpha) then
 			FX.bodyOff(player)
 			rec = nil
 		end
@@ -335,7 +371,9 @@ do
 			local ok, made = pcall(function()
 				local m = Instance.new("Model")
 				m.Name = "MH_Body"
-				local parts, hid, count = {}, {}, 0
+				local parts, hid, count, ys, soft = {}, {}, 0, {}, {}
+				local floor = char:FindFirstChild("HumanoidRootPart")
+				local footY = floor and (floor.Position.Y - 3) or 0
 				for _, src in ipairs(char:GetDescendants()) do
 					-- count only THEIR parts. Counting our own copies too meant the
 					-- number never matched next time round and the copy was rebuilt
@@ -374,6 +412,7 @@ do
 						-- copy is the whole character, the way the shots look.
 						local grow = d.grow or (V.chamHide and 1 or 1.04)
 						c.Size = src.Size * grow
+						c.Transparency = math.clamp(d.t + V.chamAlpha, 0, 0.95)
 						c.CFrame = src.CFrame
 						c.Parent = m
 						local w = Instance.new("WeldConstraint")
@@ -381,10 +420,16 @@ do
 						w.Part1 = c
 						w.Parent = c
 						parts[#parts + 1] = c
+						-- how high up the body this part is, 0 at the feet and 1 at
+						-- the head: the scan band and the gradient are both read off
+						-- it, so the effect runs UP the character rather than
+						-- flickering at random
+						ys[#ys + 1] = math.clamp((src.Position.Y - footY) / 6, 0, 1)
+						soft[#soft + 1] = false
 						if d.fuzz then
 							local halo = c:Clone()
 							halo.Size = src.Size * d.fuzz
-							halo.Transparency = 0.82
+							halo.Transparency = math.clamp(0.78 + V.chamAlpha * 0.2, 0, 0.95)
 							halo.CFrame = src.CFrame
 							halo.Parent = m
 							local w2 = Instance.new("WeldConstraint")
@@ -392,6 +437,8 @@ do
 							w2.Part1 = halo
 							w2.Parent = halo
 							parts[#parts + 1] = halo
+							ys[#ys + 1] = ys[#ys]
+							soft[#soft + 1] = true
 						end
 						if V.chamHide then
 							src.LocalTransparencyModifier = 1
@@ -400,8 +447,9 @@ do
 					end
 				end
 				m.Parent = char
-				return { model = m, parts = parts, hid = hid, char = char, style = style,
-					hide = V.chamHide, count = count, countAt = os.clock() }
+				return { model = m, parts = parts, ys = ys, soft = soft, hid = hid,
+					char = char, style = style, hide = V.chamHide, alpha = V.chamAlpha,
+					count = count, countAt = os.clock() }
 			end)
 			if not ok or not made or #made.parts == 0 then
 				if made and made.model then pcall(function() made.model:Destroy() end) end
@@ -436,7 +484,7 @@ do
 				end
 			end)
 		end
-		if d.cycle then colr = Color3.fromHSV((os.clock() * 0.25) % 1, 0.85, 1) end
+		if d.scan or d.pulse or d.flow then FX.animate(rec, d) end
 		-- A copy is a real object, so a wall hides it and a dark room dims it.
 		-- A Highlight on the COPY fixes both: drawn on top when you ask for
 		-- through-walls, and lit by nothing, so a Metal or Glass cham reads at
@@ -463,6 +511,7 @@ do
 			pcall(function() rec.glow:Destroy() end)
 			rec.glow = nil
 		end
+		if d.flow then return end          -- it paints itself, part by part
 		if rec.colr == colr then return end
 		rec.colr = colr
 		pcall(function()
@@ -1592,6 +1641,9 @@ do
 			V.chamStyle = tostring(v)
 			FX.clearAll()
 		end })
+	EspTab:Slider({ Title = "See-through", Desc = "on top of whatever the style already is",
+		Step = 0.05, Value = { Min = 0, Max = 0.9, Default = 0 },
+		Callback = function(v) V.chamAlpha = math.clamp(v, 0, 0.9) FX.clearAll() end })
 	EspTab:Toggle({ Title = "Replace their body",
 		Desc = "on = you see the cham instead of them, off = it sits around them",
 		Default = true, Callback = function(on) V.chamHide = on FX.clearAll() end })
