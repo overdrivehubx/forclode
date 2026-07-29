@@ -1814,7 +1814,7 @@ do
 			sync()
 		end })
 	EspTab:Dropdown({ Title = "Cham style",
-		Desc = "Hologram is ForceField in the role's colour — the one in the "
+		Desc = "Hologram is ForceField in the role's colour - the one in the "
 			.. "screenshots. Glow, Solid, Outline and Soft tint them instead of "
 			.. "repainting them.",
 		Values = FX.styleNames, Value = "Hologram",
@@ -2303,7 +2303,7 @@ do
 
 	VisTab:Toggle({
 		Title = "Weapon in both hands",
-		Desc = "a copy of what you are holding, in your other hand — only you see it",
+		Desc = "a copy of what you are holding, in your other hand - only you see it",
 		Value = false,
 		Callback = function(on) twinOn = on twinSync() end
 	})
@@ -3913,7 +3913,7 @@ do
 		local status = t1.SheriffTab:Paragraph({
 			Title = "Aimlock",
 			Desc = "Off. The camera goes to the murderer's head, and the shot goes "
-				.. "where the camera is pointing — including Shoot murderer and Auto "
+				.. "where the camera is pointing - including Shoot murderer and Auto "
 				.. "shoot on this page.",
 			Image = "crosshair",
 			ImageSize = 20
