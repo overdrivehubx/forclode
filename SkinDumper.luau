@@ -59,15 +59,28 @@ local SETCLIP = grab("setclipboard")
 -- We do not know the other script's field names, so recognise the CONTENT: a
 -- Roblox asset id is a long run of digits, and a weapon table is a lot of
 -- entries whose values carry one or two of those.
+-- A THUMBNAIL URL is not a mesh. This is the mistake that cost a whole dump:
+-- "http://www.roblox.com/Thumbs/Asset.ashx?...assetId=15666596216" is the
+-- PICTURE the shop shows for a weapon, and reading the number out of it gave
+-- 981 records that pointed at images. The one weapon whose real ids are known —
+-- Gingerscope, mesh 15374602183, texture 15409041564 — has 15666596216 as its
+-- Image, and that is exactly the number the old dump recorded. So a thumbnail
+-- url is refused here, whatever field it sits in.
+local function isThumb(v)
+	if type(v) ~= "string" then return false end
+	local l = v:lower()
+	return l:find("thumbs", 1, true) ~= nil or l:find("asset.ashx", 1, true) ~= nil
+		or l:find("assetid=", 1, true) ~= nil or l:find("rbxthumb", 1, true) ~= nil
+end
+
 local function digits(v)
 	if type(v) == "number" then
 		if v ~= v or v < 1e5 then return nil end          -- NaN, or too short to be an id
 		return string.format("%d", math.floor(v))
 	end
 	if type(v) ~= "string" then return nil end
-	local id = v:match("[Aa]sset[Ii][Dd]=(%d+)") or v:match("rbxassetid://(%d+)")
-		or v:match("^(%d%d%d%d%d%d+)$")
-	return id
+	if isThumb(v) then return nil end
+	return v:match("rbxassetid://(%d+)") or v:match("^(%d%d%d%d%d%d+)$")
 end
 
 -- Score one candidate table: how much does it look like "name -> skin"?
@@ -222,8 +235,10 @@ end
 -- Their field names are their own, so map by meaning: the first id that looks
 -- like a mesh, the second like a texture, and any three numbers together like
 -- a scale or a size.
-local MESH_HINTS = { "mesh", "meshid", "model", "id", "asset" }
-local TEX_HINTS = { "tex", "texture", "textureid", "image", "skin" }
+local MESH_HINTS = { "mesh", "model" }
+local TEX_HINTS = { "tex", "texture", "skin" }
+-- fields that hold a picture of the item, never anything you can wear
+local ICON_HINTS = { "image", "icon", "thumb", "preview", "display" }
 
 local function looksLike(key, hints)
 	key = tostring(key):lower()
@@ -238,12 +253,18 @@ local function toRecord(value)
 		local id = digits(value)
 		return id and { mesh = id } or nil
 	end
-	local rec, ids = {}, {}
+	local rec, ids, vecs = {}, {}, {}
 	for k, v in pairs(value) do
 		local id = digits(v)
+		if id and looksLike(k, ICON_HINTS) then
+			id = nil                                   -- a picture, not a skin
+		end
 		if id then
-			if looksLike(k, TEX_HINTS) and not rec.tex then rec.tex = id
-			elseif looksLike(k, MESH_HINTS) and not rec.mesh then rec.mesh = id
+			-- mesh before texture: "TextureId" contains neither "mesh" nor "model",
+			-- while "MeshId" must not be read as a texture just because pairs()
+			-- reached it second
+			if looksLike(k, MESH_HINTS) and not rec.mesh then rec.mesh = id
+			elseif looksLike(k, TEX_HINTS) and not rec.tex then rec.tex = id
 			else ids[#ids + 1] = id end
 		elseif type(v) == "number" then
 			local lk = tostring(k):lower()
@@ -251,17 +272,53 @@ local function toRecord(value)
 		elseif type(v) == "string" then
 			local lv = v:lower()
 			if lv == "gun" or lv == "knife" then rec.slot = (lv == "gun") and "Gun" or "Knife" end
-		elseif typeof(v) == "Vector3" and not rec.sx then
-			-- Their field might be called "sc", or "Sz", or nothing helpful at all,
-			-- so take any three-number value as the size and work out what KIND it
-			-- is the way the harness does: a mesh scale is one number three times,
-			-- while a part size is three different ones.
+		elseif typeof(v) == "CFrame" then
+			-- Where the weapon hangs on you, and how it sits in your hand. These
+			-- are what make a swapped weapon look right rather than merely be the
+			-- right mesh, and the harness reads both.
+			local nums
+			pcall(function() nums = { v:GetComponents() } end)
+			if nums and #nums >= 12 then
+				local lk = tostring(k):lower()
+				if lk:find("grip") then rec.grip = nums
+				elseif not rec.cf then rec.cf = nums end
+			end
+		elseif typeof(v) == "Vector3" then
+			local lk = tostring(k):lower()
+			if lk:find("offset") then
+				rec.ox, rec.oy, rec.oz = v.X, v.Y, v.Z
+			elseif lk:find("vertex") or lk:find("colou") then
+				rec.vx, rec.vy, rec.vz = v.X, v.Y, v.Z
+			else
+				-- an unnamed three-number value: remember it and decide at the end,
+				-- because Offset (0,0,0) and VertexColor (1,1,1) are Vector3 too and
+				-- pairs() can reach either of them before the scale
+				vecs[#vecs + 1] = { key = lk, v = v }
+			end
+		end
+	end
+	-- the scale, out of whatever three-number values had no helpful name
+	if not rec.sx then
+		local best
+		for _, c in ipairs(vecs) do
+			local v = c.v
+			local zero = (v.X == 0 and v.Y == 0 and v.Z == 0)
+			local one = (v.X == 1 and v.Y == 1 and v.Z == 1)
+			if c.key:find("scale") or c.key:find("size") then best = c break end
+			if not zero and not one and not best then best = c end
+		end
+		if not best then
+			for _, c in ipairs(vecs) do
+				if not (c.v.X == 0 and c.v.Y == 0 and c.v.Z == 0) then best = c break end
+			end
+		end
+		if best then
+			local v = best.v
 			rec.sx, rec.sy, rec.sz = v.X, v.Y, v.Z
 			local lo = math.min(v.X, v.Y, v.Z)
 			local hi = math.max(v.X, v.Y, v.Z)
-			local lk = tostring(k):lower()
-			if lk:find("size") then rec.k = "size"
-			elseif lk:find("scale") then rec.k = "scale"
+			if best.key:find("size") then rec.k = "size"
+			elseif best.key:find("scale") then rec.k = "scale"
 			elseif lo > 0 and (hi - lo) / hi < 0.02 then rec.k = "scale"
 			else rec.k = "size" end
 		end
@@ -366,6 +423,22 @@ local function serialise(map)
 		end
 		if r.k then bits[#bits + 1] = string.format("k = %q", r.k) end
 		if r.slot then bits[#bits + 1] = string.format("slot = %q", r.slot) end
+		if r.ox then
+			bits[#bits + 1] = string.format("ox = %s, oy = %s, oz = %s",
+				tostring(r.ox), tostring(r.oy), tostring(r.oz))
+		end
+		if r.vx then
+			bits[#bits + 1] = string.format("vx = %s, vy = %s, vz = %s",
+				tostring(r.vx), tostring(r.vy), tostring(r.vz))
+		end
+		for _, f in ipairs({ "cf", "grip" }) do
+			local t = r[f]
+			if type(t) == "table" and #t >= 12 then
+				local n = {}
+				for i = 1, 12 do n[i] = tostring(t[i]) end
+				bits[#bits + 1] = f .. " = { " .. table.concat(n, ", ") .. " }"
+			end
+		end
 		parts[#parts + 1] = string.format("M[%q] = { %s }", name, table.concat(bits, ", "))
 	end
 	return table.concat(parts, "\n")
