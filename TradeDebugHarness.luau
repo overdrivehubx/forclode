@@ -7043,7 +7043,7 @@ function MH_hookInventory()
 							MH_equipItem(key, (d0 and d0.ItemName) or key)
 						elseif slot then
 							-- a real item we have no skin for: get out of its way
-							_G.MH_LastEquip = "v47 | " .. tostring(key) .. " (" .. tostring(slot)
+							_G.MH_LastEquip = "v48 | " .. tostring(key) .. " (" .. tostring(slot)
 								.. ") has no mesh in the map | " .. MH_skinCounts()
 							MH_clearSkin(slot)
 						end
@@ -7144,6 +7144,34 @@ function MH_skinLookup(nameOrKey)
 		where = "in the map but with no mesh"
 	end
 	return txt .. " -> " .. key .. ": " .. where .. "  |  " .. MH_skinCounts()
+end
+
+-- Throw away only the skins that came out of the CATALOG by mistake. A record
+-- read off the item list carries the picture the shop shows, not a mesh, and
+-- that is recognisable: one of its two ids is exactly the item's Image. A skin
+-- learned off the game never matches that, so this clears the bad rows and
+-- leaves everything real. Returns how many went. GLOBAL.
+function MH_dropIconSkins()
+	MH_loadMeshMap()
+	local map = _G.MH_MeshMap or {}
+	local dropped = 0
+	for k, v in pairs(map) do
+		if type(v) == "table" then
+			local d = ItemDB[k]
+			local img = d and MH_shortId(d.Image) or ""
+			if img ~= "" and (MH_shortId(v.mesh) == img or MH_shortId(v.tex) == img) then
+				map[k] = nil
+				dropped = dropped + 1
+			end
+		end
+	end
+	if dropped > 0 then
+		pcall(function()
+			local HS = game:GetService("HttpService")
+			writefile("MollyHub_skins.json", HS:JSONEncode(map))
+		end)
+	end
+	return dropped
 end
 
 -- Throw away every learned skin (on disk too). Use it if the map picked up a
@@ -7617,7 +7645,7 @@ function MH_equipItem(key, dispName)
 		parts[#parts + 1] = tostring(s)
 		_G.MH_LastEquip = table.concat(parts, " | ")
 	end
-	add("v47")   -- freshness marker so a stale-cache test is obvious
+	add("v48")   -- freshness marker so a stale-cache test is obvious
 	MH_loadMeshMap()
 	add(MH_skinCounts())
 	local lrn, tot = MH_learnMeshes()
