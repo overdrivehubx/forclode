@@ -192,8 +192,11 @@ do
 		chamAlpha = 0,
 		wallFill = 1,
 		aura = false, auraStyle = "Fire", auraSelf = false, auraAmount = 1, auraGlow = 0.55,
-		ring = false, ringSelf = false, ringSize = 6, jumpRing = false,
-		hat = false, hatSelf = false, hatSize = 5, hatSpin = true,
+		ring = false, ringSelf = false, ringSize = 6, ringShape = "Ring",
+		jumpRing = false, jumpSelf = false,
+		wings = false, wingsSelf = false, wingShape = "Feather", wingSize = 4.5,
+		wingSpeed = 2.2, wingFade = 0.25, wingRainbow = false,
+		hat = false, hatSelf = false, hatSize = 5, hatSpin = true, hatShape = "Cone",
 		halo = false, haloSelf = false,
 		light = false, lightSelf = false, lightPower = 2, lightRange = 16,
 		trail = false, trailSelf = false, trailLife = 0.7,
@@ -260,8 +263,8 @@ do
 	-- written per frame at all — the copy simply follows. Nothing fights, so
 	-- nothing flickers, and it costs one build per character instead of a walk of
 	-- the whole model every frame.
-	local FX = { body = {}, aura = {}, ring = {}, hat = {}, halo = {}, light = {},
-		trail = {}, seen = {} }
+	local FX = { body = {}, aura = {}, ring = {}, hat = {}, halo = {}, wings = {},
+		light = {}, trail = {}, seen = {} }
 
 	-- Brighter or darker than the colour asked for, without leaving it.
 	function FX.lit(c, k)
@@ -620,59 +623,107 @@ do
 	end
 
 	--== the things that sit on a player ========================================
+	-- Everything here is built out of plain parts. No mesh means no asset id, and
+	-- an asset id is a thing to get wrong.
 	function FX.dropRing(player)
-		local r = FX.ring[player]
-		if r then pcall(function() r:Destroy() end) end
+		local rec = FX.ring[player]
+		if rec then pcall(function() rec.model:Destroy() end) end
 		FX.ring[player] = nil
 	end
 
-	-- A glowing disc on the floor. With "jump circle" on it swells and fades as
-	-- they leave the ground, so a jump reads at a glance.
+	FX.ringShapes = { "Ring", "Dashed", "Double", "Arc", "Disc" }
+
+	-- A RING, not a dinner plate. The first one was a solid disc lying on the
+	-- floor, which is exactly as good as it sounds. This is a circle of segments,
+	-- turning, and it swells and fades while they are off the ground.
 	function FX.ringOn(player, char, colr)
 		local root = char:FindFirstChild("HumanoidRootPart")
 		if not root then return FX.dropRing(player) end
-		local r = FX.ring[player]
-		if not r or not r.Parent then
+		local rec = FX.ring[player]
+		if rec and (not rec.model.Parent or rec.shape ~= V.ringShape) then
 			FX.dropRing(player)
-			local ok, made = pcall(function()
-				local n = Instance.new("Part")
-				n.Name = "MH_Ring"
-				n.Shape = Enum.PartType.Cylinder
-				n.Anchored = true
-				n.CanCollide = false
-				n.CanQuery = false
-				n.CanTouch = false
-				n.CastShadow = false
-				n.Massless = true
-				n.Material = Enum.Material.Neon
-				n.Parent = workspace
-				return n
-			end)
-			if not ok then return end
-			r = made
-			FX.ring[player] = r
+			rec = nil
 		end
-		local air, size, clear = 0, V.ringSize, 3.1
-		if V.jumpRing then
+		if not rec then
+			local ok, made = pcall(function()
+				local m = Instance.new("Model")
+				m.Name = "MH_Ring"
+				local shape = V.ringShape
+				if shape == "Disc" then
+					local disc = Instance.new("Part")
+					disc.Name = "Seg"
+					disc.Shape = Enum.PartType.Cylinder
+					disc.Anchored = true
+					disc.CanCollide = false
+					disc.CanQuery = false
+					disc.CanTouch = false
+					disc.CastShadow = false
+					disc.Material = Enum.Material.Neon
+					disc:SetAttribute("MHSlot", -1)
+					disc.Parent = m
+				else
+					local n = (shape == "Arc") and 9 or 24
+					for i = 1, n do
+						if not (shape == "Dashed" and i % 2 == 0) then
+							local seg = Instance.new("Part")
+							seg.Name = "Seg"
+							seg.Anchored = true
+							seg.CanCollide = false
+							seg.CanQuery = false
+							seg.CanTouch = false
+							seg.CastShadow = false
+							seg.Material = Enum.Material.Neon
+							seg:SetAttribute("MHSlot", (i - 1) / n)
+							seg:SetAttribute("MHOuter", 0)
+							seg.Parent = m
+							if shape == "Double" then
+								local inner = seg:Clone()
+								inner:SetAttribute("MHOuter", 1)
+								inner.Parent = m
+							end
+						end
+					end
+				end
+				m.Parent = workspace
+				return { model = m, shape = shape }
+			end)
+			if not ok or not made then return end
+			rec = made
+			FX.ring[player] = rec
+		end
+		local air = false
+		if (player == LocalPlayer) and V.jumpSelf or (player ~= LocalPlayer) and V.jumpRing then
 			pcall(function()
 				local hum = char:FindFirstChildOfClass("Humanoid")
 				local st = hum and hum:GetState()
-				if st == Enum.HumanoidStateType.Jumping or st == Enum.HumanoidStateType.Freefall then
-					air = 1
-				end
+				air = (st == Enum.HumanoidStateType.Jumping)
+					or (st == Enum.HumanoidStateType.Freefall)
 			end)
-			if air == 1 then
-				local t = (os.clock() * 2) % 1
-				size = V.ringSize * (1 + t * 0.9)
-				clear = 3.1 + t * 1.2
-			end
 		end
+		local now = os.clock()
+		local beat = air and ((now * 2.2) % 1) or 0
+		local rad = V.ringSize * 0.5 * (1 + beat * 0.75)
+		local drop = 3.1 + beat * 1.4
+		local fade = air and (0.15 + beat * 0.75) or 0.2
+		local turn = now * (air and 3.5 or 0.8)
 		pcall(function()
-			r.Size = Vector3.new(0.12, size, size)
-			r.Color = colr
-			r.Transparency = (air == 1) and (0.3 + ((os.clock() * 2) % 1) * 0.6) or 0.35
-			r.CFrame = CFrame.new(root.Position - Vector3.new(0, clear, 0))
-				* CFrame.Angles(0, 0, math.rad(90))
+			local mid = root.Position - Vector3.new(0, drop, 0)
+			for _, seg in ipairs(rec.model:GetChildren()) do
+				seg.Color = colr
+				seg.Transparency = fade
+				local slot = seg:GetAttribute("MHSlot") or 0
+				if slot < 0 then
+					seg.Size = Vector3.new(0.08, rad * 2, rad * 2)
+					seg.CFrame = CFrame.new(mid) * CFrame.Angles(0, 0, math.rad(90))
+				else
+					local r = rad * ((seg:GetAttribute("MHOuter") == 1) and 0.72 or 1)
+					local a = slot * math.pi * 2 + turn
+					local step = (2 * math.pi * r) / 24
+					seg.Size = Vector3.new(step * 0.75, 0.12, 0.28)
+					seg.CFrame = CFrame.new(mid + Vector3.new(math.cos(a) * r, 0, math.sin(a) * r))
+						* CFrame.Angles(0, -a, 0)
+				end
+			end
 		end)
 	end
 
@@ -682,15 +733,18 @@ do
 		FX.hat[player] = nil
 	end
 
-	-- A china hat: a smooth cone over the head. Built from discs rather than a
-	-- cone mesh, because a mesh means an asset id and an asset id is a thing to
-	-- get wrong — but built properly this time: enough of them that they OVERLAP,
-	-- so it is a cone and not a stack of rings with daylight between them.
+	FX.hatShapes = { "Cone", "Dome", "Spikes" }
+
+	-- A hat over the head. The cone is a stack of discs — but SOLID discs, packed
+	-- hard. The first go used twenty see-through ones, and twenty transparent
+	-- surfaces stacked on each other is a mess of overdraw, which is what made it
+	-- look broken rather than pointed.
 	function FX.hatOn(player, char, colr)
 		local head = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
 		if not head then return FX.dropHat(player) end
 		local rec = FX.hat[player]
-		if rec and (rec.head ~= head or not rec.model.Parent or rec.size ~= V.hatSize) then
+		if rec and (rec.head ~= head or not rec.model.Parent or rec.size ~= V.hatSize
+			or rec.shape ~= V.hatShape) then
 			FX.dropHat(player)
 			rec = nil
 		end
@@ -698,57 +752,170 @@ do
 			local ok, made = pcall(function()
 				local m = Instance.new("Model")
 				m.Name = "MH_Hat"
-				local rungs = 20
-				local high = V.hatSize * 0.6
-				local step = high / rungs
-				for i = 1, rungs do
-					local t = (i - 1) / rungs
-					-- squared taper: full at the brim, pinching towards the tip,
-					-- which is the shape a real one has
-					local w = V.hatSize * (1 - t) ^ 0.85
-					local disc = Instance.new("Part")
-					disc.Name = "Rung"
-					disc.Shape = Enum.PartType.Cylinder
-					disc.Size = Vector3.new(step * 1.9, math.max(w, 0.12), math.max(w, 0.12))
-					disc.Anchored = true
-					disc.CanCollide = false
-					disc.CanQuery = false
-					disc.CanTouch = false
-					disc.CastShadow = false
-					disc.Material = Enum.Material.Neon
-					disc.Transparency = 0.12
-					disc:SetAttribute("MHLift", t * high)
-					disc.Parent = m
+				local shape, size = V.hatShape, V.hatSize
+				local function piece(name)
+					local p = Instance.new("Part")
+					p.Name = name
+					p.Anchored = true
+					p.CanCollide = false
+					p.CanQuery = false
+					p.CanTouch = false
+					p.CastShadow = false
+					p.Material = Enum.Material.Neon
+					p.Transparency = 0
+					p.Parent = m
+					return p
 				end
-				-- a thin brim so the base reads as an edge rather than a stump
-				local brim = Instance.new("Part")
-				brim.Name = "Brim"
-				brim.Shape = Enum.PartType.Cylinder
-				brim.Size = Vector3.new(0.06, V.hatSize * 1.12, V.hatSize * 1.12)
-				brim.Anchored = true
-				brim.CanCollide = false
-				brim.CanQuery = false
-				brim.CanTouch = false
-				brim.CastShadow = false
-				brim.Material = Enum.Material.Neon
-				brim.Transparency = 0.45
-				brim:SetAttribute("MHLift", 0)
-				brim.Parent = m
+				if shape == "Spikes" then
+					for i = 1, 10 do
+						local sp = piece("Spike")
+						sp.Shape = Enum.PartType.Ball
+						sp:SetAttribute("MHSlot", (i - 1) / 10)
+					end
+				elseif shape == "Dome" then
+					local rungs = 14
+					for i = 1, rungs do
+						local d = piece("Rung")
+						d.Shape = Enum.PartType.Cylinder
+						local t = (i - 1) / rungs
+						local w = size * math.sqrt(math.max(1 - t * t, 0.01))
+						d.Size = Vector3.new(size * 0.55 / rungs * 2.4, w, w)
+						d:SetAttribute("MHLift", t * size * 0.55)
+					end
+				else
+					local rungs = 26
+					local high = size * 0.62
+					local step = high / rungs
+					for i = 1, rungs do
+						local d = piece("Rung")
+						d.Shape = Enum.PartType.Cylinder
+						local t = (i - 1) / rungs
+						local w = size * (1 - t) ^ 0.9
+						d.Size = Vector3.new(step * 2.4, math.max(w, 0.1), math.max(w, 0.1))
+						d:SetAttribute("MHLift", t * high)
+					end
+					local brim = piece("Brim")
+					brim.Shape = Enum.PartType.Cylinder
+					brim.Size = Vector3.new(0.08, size * 1.2, size * 1.2)
+					brim.Transparency = 0.35
+					brim:SetAttribute("MHLift", -0.03)
+				end
 				m.Parent = workspace
-				return { model = m, head = head, size = V.hatSize }
+				return { model = m, head = head, size = size, shape = shape }
 			end)
 			if not ok or not made then return end
 			rec = made
 			FX.hat[player] = rec
 		end
-		local spin = V.hatSpin and (os.clock() * 1.6) or 0
+		local spin = V.hatSpin and (os.clock() * 1.4) or 0
 		pcall(function()
-			local base = head.Position + Vector3.new(0, 1.1, 0)
-			for _, disc in ipairs(rec.model:GetChildren()) do
-				disc.Color = colr
-				disc.CFrame = CFrame.new(base + Vector3.new(0, disc:GetAttribute("MHLift") or 0, 0))
-					* CFrame.Angles(0, spin, 0)
-					* CFrame.Angles(0, 0, math.rad(90))
+			local base = head.Position + Vector3.new(0, 1.05, 0)
+			for _, p in ipairs(rec.model:GetChildren()) do
+				p.Color = colr
+				local slot = p:GetAttribute("MHSlot")
+				if slot then
+					local a = slot * math.pi * 2 + spin
+					local r = V.hatSize * 0.45
+					p.Size = Vector3.new(0.35, 0.35, 0.35)
+					p.CFrame = CFrame.new(base + Vector3.new(math.cos(a) * r,
+						math.abs(math.sin(a * 3)) * 0.5, math.sin(a) * r))
+				else
+					p.CFrame = CFrame.new(base + Vector3.new(0, p:GetAttribute("MHLift") or 0, 0))
+						* CFrame.Angles(0, spin, 0)
+						* CFrame.Angles(0, 0, math.rad(90))
+				end
+			end
+		end)
+	end
+
+	--== wings ==================================================================
+	FX.wingShapes = { "Feather", "Bat", "Blade", "Butterfly" }
+
+	-- Wings out of parts: a fan of feathers off the back, each one a little
+	-- behind the last, flapping in a wave rather than all together. Nothing is
+	-- welded — they are placed every frame from the torso, which is what lets
+	-- them flap at all.
+	function FX.dropWings(player)
+		local rec = FX.wings[player]
+		if rec then pcall(function() rec.model:Destroy() end) end
+		FX.wings[player] = nil
+	end
+
+	function FX.wingsOn(player, char, colr)
+		local torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
+			or char:FindFirstChild("HumanoidRootPart")
+		if not torso then return FX.dropWings(player) end
+		local rec = FX.wings[player]
+		if rec and (not rec.model.Parent or rec.shape ~= V.wingShape) then
+			FX.dropWings(player)
+			rec = nil
+		end
+		local per = (V.wingShape == "Butterfly") and 4 or 7
+		if not rec then
+			local ok, made = pcall(function()
+				local m = Instance.new("Model")
+				m.Name = "MH_Wings"
+				for side = 1, 2 do
+					for i = 1, per do
+						local f = Instance.new("Part")
+						f.Name = "Feather"
+						f.Anchored = true
+						f.CanCollide = false
+						f.CanQuery = false
+						f.CanTouch = false
+						f.CastShadow = false
+						f.Material = Enum.Material.Neon
+						f.Shape = (V.wingShape == "Blade") and Enum.PartType.Block
+							or Enum.PartType.Cylinder
+						f:SetAttribute("MHSide", (side == 1) and 1 or -1)
+						f:SetAttribute("MHIdx", (i - 1) / math.max(per - 1, 1))
+						f.Parent = m
+					end
+				end
+				m.Parent = workspace
+				return { model = m, shape = V.wingShape }
+			end)
+			if not ok or not made then return end
+			rec = made
+			FX.wings[player] = rec
+		end
+		local now = os.clock()
+		pcall(function()
+			-- the anchor point: between the shoulder blades, tilted back a little
+			local back = torso.CFrame * CFrame.new(0, 0.35, 0.55)
+				* CFrame.Angles(math.rad(-18), 0, 0)
+			local beat = math.sin(now * V.wingSpeed)
+			for _, f in ipairs(rec.model:GetChildren()) do
+				local side = f:GetAttribute("MHSide") or 1
+				local t = f:GetAttribute("MHIdx") or 0
+				-- the wave reaches the tip after the root, so it sweeps
+				local flap = math.sin(now * V.wingSpeed - t * 1.1) * math.rad(14)
+				local out, len, wide
+				if V.wingShape == "Bat" then
+					out = math.rad(28 + t * 66)
+					len = V.wingSize * (1 - t * 0.15)
+					wide = 0.5
+				elseif V.wingShape == "Blade" then
+					out = math.rad(18 + t * 40)
+					len = V.wingSize * (1.15 - t * 0.5)
+					wide = 0.22
+				elseif V.wingShape == "Butterfly" then
+					out = math.rad(35 + t * 55)
+					len = V.wingSize * (1 - t * 0.3)
+					wide = 1.15
+				else
+					out = math.rad(22 + t * 62)
+					len = V.wingSize * (1 - t * 0.38)
+					wide = 0.42
+				end
+				f.Size = Vector3.new(wide * 0.35, len, wide)
+				f.Color = V.wingRainbow
+					and Color3.fromHSV((now * 0.15 + t * 0.35) % 1, 0.8, 1) or colr
+				f.Transparency = math.clamp(V.wingFade + math.abs(beat) * 0.08, 0, 0.95)
+				f.CFrame = back
+					* CFrame.Angles(0, side * math.rad(24), 0)
+					* CFrame.Angles(0, 0, -side * (out + flap))
+					* CFrame.new(0, len * 0.5, 0)
 			end
 		end)
 	end
@@ -933,6 +1100,7 @@ do
 		FX.dropRing(player)
 		FX.dropHat(player)
 		FX.dropHalo(player)
+		FX.dropWings(player)
 		FX.dropLight(player)
 		FX.dropTrail(player)
 		FX.seen[player] = nil
@@ -948,6 +1116,7 @@ do
 			for _, rec in pairs(FX.body) do live[rec.model] = true end
 			for _, rec in pairs(FX.hat) do live[rec.model] = true end
 			for _, rec in pairs(FX.halo) do live[rec.model] = true end
+			for _, rec in pairs(FX.wings) do live[rec.model] = true end
 			for _, r in pairs(FX.ring) do live[r] = true end
 			for _, e in pairs(FX.aura) do live[e] = true end
 			for _, l in pairs(FX.light) do live[l] = true end
@@ -961,8 +1130,8 @@ do
 			for _, where in ipairs(roots) do
 				for _, d in ipairs(where:GetChildren()) do
 					local n = tostring(d.Name)
-					if (n == "MH_Body" or n == "MH_Hat" or n == "MH_Ring" or n == "MH_Halo")
-						and not live[d] then
+					if (n == "MH_Body" or n == "MH_Hat" or n == "MH_Ring" or n == "MH_Halo"
+						or n == "MH_Wings") and not live[d] then
 						d:Destroy()
 					end
 				end
@@ -1002,6 +1171,7 @@ do
 		for pl in pairs(FX.ring) do FX.dropRing(pl) end
 		for pl in pairs(FX.hat) do FX.dropHat(pl) end
 		for pl in pairs(FX.halo) do FX.dropHalo(pl) end
+		for pl in pairs(FX.wings) do FX.dropWings(pl) end
 		for pl in pairs(FX.light) do FX.dropLight(pl) end
 		for pl in pairs(FX.trail) do FX.dropTrail(pl) end
 		FX.seen = {}
@@ -1042,6 +1212,7 @@ do
 		if V.ring and not hidden then FX.ringOn(player, char, colr) else FX.dropRing(player) end
 		if V.hat and not hidden then FX.hatOn(player, char, colr) else FX.dropHat(player) end
 		if V.halo and not hidden then FX.haloOn(player, char, colr) else FX.dropHalo(player) end
+		if V.wings and not hidden then FX.wingsOn(player, char, colr) else FX.dropWings(player) end
 		if V.light and not hidden then FX.lightOn(player, char, colr) else FX.dropLight(player) end
 		if V.trail and not hidden then FX.trailOn(player, char, colr) else FX.dropTrail(player) end
 		if not V.chams or not overlay then return dropCham(player) end
@@ -1401,6 +1572,7 @@ do
 			or V.radar or V.gunEsp or V.coinEsp or V.headDot or V.aura or V.ring
 			or V.chamSelf or V.auraSelf or V.ringSelf or V.hat or V.hatSelf
 			or V.light or V.lightSelf or V.trail or V.trailSelf or V.halo or V.haloSelf
+			or V.wings or V.wingsSelf
 	end
 
 	local conn
@@ -1471,7 +1643,7 @@ do
 			do
 				local mine = LocalPlayer.Character
 				if mine and (V.chamSelf or V.auraSelf or V.ringSelf or V.hatSelf
-					or V.lightSelf or V.trailSelf or V.haloSelf) then
+					or V.lightSelf or V.trailSelf or V.haloSelf or V.wingsSelf) then
 					local c = FX.lit(V.roleColors and COL.Sheriff or V.oneColor, V.bright)
 					if V.chamSelf and not FX.isOverlay(V.chamStyle) then
 						FX.bodyOn(LocalPlayer, mine, c, V.chamStyle)
@@ -1482,6 +1654,7 @@ do
 					if V.ringSelf then FX.ringOn(LocalPlayer, mine, c) else FX.dropRing(LocalPlayer) end
 					if V.hatSelf then FX.hatOn(LocalPlayer, mine, c) else FX.dropHat(LocalPlayer) end
 					if V.haloSelf then FX.haloOn(LocalPlayer, mine, c) else FX.dropHalo(LocalPlayer) end
+					if V.wingsSelf then FX.wingsOn(LocalPlayer, mine, c) else FX.dropWings(LocalPlayer) end
 					if V.lightSelf then FX.lightOn(LocalPlayer, mine, c) else FX.dropLight(LocalPlayer) end
 					if V.trailSelf then FX.trailOn(LocalPlayer, mine, c) else FX.dropTrail(LocalPlayer) end
 				elseif FX.body[LocalPlayer] or FX.aura[LocalPlayer] or FX.ring[LocalPlayer]
@@ -1707,14 +1880,30 @@ do
 		end })
 	EspTab:Toggle({ Title = "Halo", Desc = "a ring of lights turning over their head",
 		Default = false, Callback = function(on) V.halo = on if not on then FX.clearAll() end sync() end })
-	EspTab:Toggle({ Title = "Floor ring", Desc = "a glowing disc under each player",
+	EspTab:Toggle({ Title = "Floor ring", Desc = "a turning ring under each player",
 		Default = false, Callback = function(on) V.ring = on if not on then FX.clearAll() end sync() end })
+	EspTab:Dropdown({ Title = "Ring shape", Values = FX.ringShapes, Value = "Ring",
+		Callback = function(v) V.ringShape = tostring(v) FX.clearAll() end })
 	EspTab:Toggle({ Title = "Jump circle", Desc = "the ring swells while they are off the ground",
 		Default = false, Callback = function(on) V.jumpRing = on end })
 	EspTab:Slider({ Title = "Ring size", Step = 0.5, Value = { Min = 3, Max = 14, Default = 6 },
 		Callback = function(v) V.ringSize = v end })
+	EspTab:Toggle({ Title = "Wings", Desc = "a fan of feathers off the back, flapping",
+		Default = false, Callback = function(on) V.wings = on if not on then FX.clearAll() end sync() end })
+	EspTab:Dropdown({ Title = "Wing shape", Values = FX.wingShapes, Value = "Feather",
+		Callback = function(v) V.wingShape = tostring(v) FX.clearAll() end })
+	EspTab:Slider({ Title = "Wing size", Step = 0.25, Value = { Min = 2, Max = 12, Default = 4.5 },
+		Callback = function(v) V.wingSize = v end })
+	EspTab:Slider({ Title = "Wing beat", Step = 0.1, Value = { Min = 0.4, Max = 8, Default = 2.2 },
+		Callback = function(v) V.wingSpeed = v end })
+	EspTab:Slider({ Title = "Wing fade", Step = 0.05, Value = { Min = 0, Max = 0.9, Default = 0.25 },
+		Callback = function(v) V.wingFade = math.clamp(v, 0, 0.9) end })
+	EspTab:Toggle({ Title = "Rainbow wings", Default = false,
+		Callback = function(on) V.wingRainbow = on end })
 	EspTab:Toggle({ Title = "China hat", Desc = "a cone over the head",
 		Default = false, Callback = function(on) V.hat = on if not on then FX.clearAll() end sync() end })
+	EspTab:Dropdown({ Title = "Hat shape", Values = FX.hatShapes, Value = "Cone",
+		Callback = function(v) V.hatShape = tostring(v) FX.clearAll() end })
 	EspTab:Toggle({ Title = "Spin the hat", Default = true,
 		Callback = function(on) V.hatSpin = on end })
 	EspTab:Slider({ Title = "Hat size", Step = 0.5, Value = { Min = 2, Max = 12, Default = 5 },
@@ -1746,6 +1935,10 @@ do
 		Callback = function(on) V.auraSelf = on if not on then FX.clear(LocalPlayer) end sync() end })
 	EspTab:Toggle({ Title = "Stand on a ring", Default = false,
 		Callback = function(on) V.ringSelf = on if not on then FX.clear(LocalPlayer) end sync() end })
+	EspTab:Toggle({ Title = "Jump circle on me", Desc = "your own ring swells when you jump",
+		Default = false, Callback = function(on) V.jumpSelf = on end })
+	EspTab:Toggle({ Title = "Wear wings", Default = false,
+		Callback = function(on) V.wingsSelf = on if not on then FX.clear(LocalPlayer) end sync() end })
 	EspTab:Toggle({ Title = "Wear a china hat", Default = false,
 		Callback = function(on) V.hatSelf = on if not on then FX.clear(LocalPlayer) end sync() end })
 	EspTab:Toggle({ Title = "Wear a halo", Default = false,
