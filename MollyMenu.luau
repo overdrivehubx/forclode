@@ -1731,34 +1731,69 @@ function UI:CreateWindow(o)
 	-- walking the window and replacing exactly the old value with the new one.
 	-- Nothing has to remember it uses the accent, so widgets built later pick the
 	-- change up too.
-	local function repaint(from, to)
-		if from == to then return end
+	-- ONE walk, however many colours are changing. Six separate walks of a window
+	-- with three thousand objects in it is where the two to four seconds went when
+	-- you switched the background. Anything inside the settings panel is left
+	-- alone, or picking a colour would repaint the swatch you picked it from and
+	-- every swatch beside it.
+	local settingsPanel                     -- assigned when the panel is built
+	local function recolour(pairsList)
+		local n = 0
+		for _, e in ipairs(pairsList) do
+			if e[1] ~= e[2] then n = n + 1 end
+		end
+		if n == 0 then return end
 		pcall(function()
+			local skip = settingsPanel
 			for _, d in ipairs(gui:GetDescendants()) do
-				if d:IsA("UIStroke") then
-					if d.Color == from then d.Color = to end
-				elseif d:IsA("UIGradient") then
-					-- leave gradients alone; the logo's is rebuilt below
-				else
-					local okc = pcall(function()
-						if d.BackgroundColor3 == from then d.BackgroundColor3 = to end
-					end)
-					pcall(function() if d.TextColor3 == from then d.TextColor3 = to end end)
-					pcall(function() if d.ImageColor3 == from then d.ImageColor3 = to end end)
-					pcall(function()
-						if d.ScrollBarImageColor3 == from then d.ScrollBarImageColor3 = to end
-					end)
-					if not okc then end
+				local inPanel = false
+				if skip then
+					local node = d
+					for _ = 1, 6 do
+						if node == skip then inPanel = true break end
+						node = node.Parent
+						if not node then break end
+					end
+				end
+				if not inPanel then
+					if d:IsA("UIStroke") then
+						for _, e in ipairs(pairsList) do
+							if d.Color == e[1] then d.Color = e[2] break end
+						end
+					elseif d:IsA("GuiObject") then
+						for _, e in ipairs(pairsList) do
+							if d.BackgroundColor3 == e[1] then d.BackgroundColor3 = e[2] break end
+						end
+						if d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") then
+							for _, e in ipairs(pairsList) do
+								if d.TextColor3 == e[1] then d.TextColor3 = e[2] break end
+							end
+						end
+						if d:IsA("ScrollingFrame") then
+							for _, e in ipairs(pairsList) do
+								if d.ScrollBarImageColor3 == e[1] then
+									d.ScrollBarImageColor3 = e[2]
+									break
+								end
+							end
+						end
+						if d:IsA("ImageLabel") or d:IsA("ImageButton") then
+							for _, e in ipairs(pairsList) do
+								if d.ImageColor3 == e[1] then d.ImageColor3 = e[2] break end
+							end
+						end
+					end
 				end
 			end
 		end)
 	end
 
+	local afterAccent                        -- the panel refreshes its own chips
 	local function setAccent(c)
-		if type(c) ~= "table" and typeof and typeof(c) ~= "Color3" then return end
 		local was = T.Accent
+		if was == c then return end
 		T.Accent = c
-		repaint(was, c)
+		recolour({ { was, c } })
 		pcall(function()
 			for _, g in ipairs(logo:GetChildren()) do
 				if g:IsA("UIGradient") then
@@ -1769,35 +1804,47 @@ function UI:CreateWindow(o)
 				end
 			end
 		end)
+		if afterAccent then afterAccent() end
 	end
 
-	-- Tones move the whole panel set together, so the menu can be black, charcoal,
-	-- navy or plum without every shade being picked by hand.
+	-- Tones are generated from one hue, one saturation and a ramp, so the six
+	-- panel shades always sit together instead of being six numbers typed by hand.
+	local function ramp(h, sat, base)
+		local steps = { 0, 0.028, 0.055, 0.085, 0.12, 0.165 }
+		local keys = { "Bg", "Rail", "Panel", "Panel2", "Hover", "Edge" }
+		local out = {}
+		for i, k in ipairs(keys) do
+			local v = math.clamp(base + steps[i], 0, 1)
+			local s2 = sat * (1 - i * 0.06)
+			out[k] = Color3.fromHSV(h, math.clamp(s2, 0, 1), v)
+		end
+		return out
+	end
 	local TONES = {
-		Black    = { Bg = { 11, 12, 16 },  Rail = { 16, 17, 22 }, Panel = { 21, 23, 29 },
-			Panel2 = { 27, 29, 36 }, Hover = { 33, 36, 44 }, Edge = { 38, 41, 50 } },
-		Charcoal = { Bg = { 20, 21, 24 },  Rail = { 26, 27, 31 }, Panel = { 32, 34, 39 },
-			Panel2 = { 40, 42, 48 }, Hover = { 48, 51, 58 }, Edge = { 56, 59, 67 } },
-		Navy     = { Bg = { 10, 13, 24 },  Rail = { 14, 18, 33 }, Panel = { 19, 24, 43 },
-			Panel2 = { 25, 31, 54 }, Hover = { 31, 39, 66 }, Edge = { 38, 47, 78 } },
-		Plum     = { Bg = { 16, 11, 21 },  Rail = { 22, 15, 29 }, Panel = { 29, 20, 38 },
-			Panel2 = { 37, 26, 48 }, Hover = { 45, 32, 58 }, Edge = { 54, 39, 69 } },
+		Midnight = ramp(0.62, 0.30, 0.045),
+		Graphite = ramp(0.62, 0.05, 0.075),
+		Mono     = ramp(0.00, 0.00, 0.035),
+		Ocean    = ramp(0.52, 0.36, 0.055),
+		Orchid   = ramp(0.79, 0.32, 0.055),
+		Forest   = ramp(0.38, 0.28, 0.045),
+		Wine     = ramp(0.97, 0.34, 0.050),
+		Sand     = ramp(0.09, 0.22, 0.060),
 	}
-	local toneNow = "Black"
+	local TONE_NAMES = { "Midnight", "Graphite", "Mono", "Ocean",
+		"Orchid", "Forest", "Wine", "Sand" }
+	local toneNow = "Midnight"
+	local afterTone
 	local function setTone(nm)
 		local t = TONES[nm]
 		if not t then return end
 		toneNow = nm
-		local pairsToDo = {}
-		for k, rgb in pairs(t) do
-			pairsToDo[#pairsToDo + 1] = { T[k], Color3.fromRGB(rgb[1], rgb[2], rgb[3]), k }
-		end
-		-- the window's own background is not a descendant, so it is done by hand
-		for _, e in ipairs(pairsToDo) do
-			repaint(e[1], e[2])
-			T[e[3]] = e[2]
-		end
+		local list = {}
+		local keys = { "Bg", "Rail", "Panel", "Panel2", "Hover", "Edge" }
+		for _, k in ipairs(keys) do list[#list + 1] = { T[k], t[k] } end
+		recolour(list)
+		for _, k in ipairs(keys) do T[k] = t[k] end
 		pcall(function() card.BackgroundColor3 = T.Bg end)
+		if afterTone then afterTone() end
 	end
 
 	--== weather ================================================================
@@ -1947,9 +1994,24 @@ function UI:CreateWindow(o)
 		BackgroundColor3 = T.Panel,
 		BorderSizePixel = 0,
 		Visible = false,
+		Active = true,          -- a Frame does not stop a click; this does
 		ZIndex = 9,
 		Parent = content,
 	}, { corner(10), stroke(T.Edge, 0.35), pad(10, 10, 10, 12), list(8) })
+	settingsPanel = panel
+	-- Belt and braces: a transparent button filling the panel swallows anything
+	-- the layout leaves uncovered, so a tap on the panel cannot reach a toggle
+	-- sitting behind it.
+	make("TextButton", {
+		Name = "Catcher",
+		Position = UDim2.fromOffset(-10, -10),
+		Size = UDim2.new(1, 20, 1, 20),
+		BackgroundTransparency = 1,
+		Text = "",
+		AutoButtonColor = false,
+		ZIndex = 0,
+		Parent = panel,
+	})
 
 	local function panelHead(text, order)
 		make("TextLabel", {
@@ -1984,6 +2046,7 @@ function UI:CreateWindow(o)
 		{ 240, 104, 76 }, { 240, 176, 60 }, { 74, 205, 132 }, { 60, 200, 214 },
 		{ 232, 234, 240 },
 	}
+	local swatches = {}
 	for i, rgb in ipairs(ACCENTS) do
 		local c = Color3.fromRGB(rgb[1], rgb[2], rgb[3])
 		local sw = make("TextButton", {
@@ -1994,42 +2057,66 @@ function UI:CreateWindow(o)
 			AutoButtonColor = false,
 			LayoutOrder = i,
 			Parent = swatchRow,
-		}, { corner(6) })
+		}, { corner(6), stroke(Color3.fromRGB(255, 255, 255), 1, 2) })
+		swatches[#swatches + 1] = { btn = sw, colr = c }
 		pcall(function()
 			sw.MouseButton1Click:Connect(function() setAccent(c) end)
 		end)
 	end
+	local function paintSwatches()
+		for _, e in ipairs(swatches) do
+			for _, k in ipairs(e.btn:GetChildren()) do
+				if k:IsA("UIStroke") then
+					pcall(function() k.Transparency = (e.colr == T.Accent) and 0 or 1 end)
+				end
+			end
+		end
+	end
+	paintSwatches()
 
 	-- tone
 	panelHead("BACKGROUND", 3)
 	local toneRow = make("Frame", {
-		Size = UDim2.new(1, 0, 0, 24),
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundTransparency = 1,
 		LayoutOrder = 4,
 		Parent = panel,
 	}, {
-		make("UIListLayout", {
-			FillDirection = Enum.FillDirection.Horizontal,
-			Padding = UDim.new(0, 6),
+		make("UIGridLayout", {
+			CellSize = UDim2.fromOffset(54, 26),
+			CellPadding = UDim2.fromOffset(6, 6),
 			SortOrder = Enum.SortOrder.LayoutOrder,
 		}),
 	})
-	local toneNames = { "Black", "Charcoal", "Navy", "Plum" }
-	for i, nm in ipairs(toneNames) do
+	local toneBtns = {}
+	for i, nm in ipairs(TONE_NAMES) do
+		local swatch = TONES[nm]
 		local b2 = make("TextButton", {
-			Size = UDim2.fromOffset(54, 22),
-			BackgroundColor3 = T.Panel2,
+			Size = UDim2.fromOffset(54, 26),
+			BackgroundColor3 = swatch.Panel,
 			BorderSizePixel = 0,
 			Text = nm,
-			TextColor3 = T.Muted,
+			TextColor3 = T.Text,
 			TextSize = 10,
 			Font = Enum.Font.GothamMedium,
 			AutoButtonColor = false,
 			LayoutOrder = i,
 			Parent = toneRow,
-		}, { corner(6) })
+		}, { corner(6), stroke(Color3.fromRGB(255, 255, 255), 1, 2) })
+		toneBtns[#toneBtns + 1] = { btn = b2, name = nm }
 		pcall(function() b2.MouseButton1Click:Connect(function() setTone(nm) end) end)
 	end
+	local function paintTones()
+		for _, e in ipairs(toneBtns) do
+			for _, k in ipairs(e.btn:GetChildren()) do
+				if k:IsA("UIStroke") then
+					pcall(function() k.Transparency = (e.name == toneNow) and 0.2 or 1 end)
+				end
+			end
+		end
+	end
+	paintTones()
 
 	-- a small slider for the panel's own use
 	local function panelSlider(label, lo, hi, def, order, onChange)
@@ -2152,6 +2239,29 @@ function UI:CreateWindow(o)
 		end)
 	end
 	paintChips()
+	-- the panel paints its own marks after any change, because the recolour walk
+	-- deliberately skips it
+	afterAccent = function()
+		paintSwatches()
+		paintChips()
+		pcall(function()
+			for _, e in ipairs(swatches) do e.btn.BackgroundColor3 = e.colr end
+		end)
+	end
+	afterTone = function()
+		paintTones()
+		paintChips()
+		pcall(function()
+			panel.BackgroundColor3 = T.Panel
+			for _, k in ipairs(panel:GetChildren()) do
+				if k:IsA("UIStroke") then k.Color = T.Edge end
+			end
+			for _, e in ipairs(toneBtns) do e.btn.BackgroundColor3 = TONES[e.name].Panel end
+			for _, l in ipairs(panel:GetDescendants()) do
+				if l:IsA("TextLabel") then l.TextColor3 = T.Muted end
+			end
+		end)
+	end
 	local setAmountCap = panelSlider("how much", 0.2, 2, 1, 9, function(v)
 		weather.amount = v
 		if weather.kind ~= "None" then startWeather() end
@@ -2431,6 +2541,7 @@ function UI:CreateWindow(o)
 	local picked = "default"
 	cfgList = make("ScrollingFrame", {
 		Name = "ConfigList",
+		Active = true,
 		Position = UDim2.fromOffset(52, barH - 4),
 		Size = UDim2.fromOffset(132, 0),
 		BackgroundColor3 = T.Panel,
