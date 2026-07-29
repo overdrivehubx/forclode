@@ -692,20 +692,41 @@ do
 			FX.ring[player] = rec
 		end
 		local air = false
-		if (player == LocalPlayer) and V.jumpSelf or (player ~= LocalPlayer) and V.jumpRing then
+		local want = (player == LocalPlayer) and V.jumpSelf or V.jumpRing
+		if want then
+			-- GetState alone was the wrong question: for somebody else's humanoid
+			-- it is replicated and late, and for your own it can read Running the
+			-- whole way up a short hop. What the feet are standing on is a
+			-- property, it is replicated for everyone, and Air means airborne.
 			pcall(function()
 				local hum = char:FindFirstChildOfClass("Humanoid")
-				local st = hum and hum:GetState()
-				air = (st == Enum.HumanoidStateType.Jumping)
-					or (st == Enum.HumanoidStateType.Freefall)
+				if hum then
+					if hum.FloorMaterial == Enum.Material.Air then air = true end
+					local st = hum:GetState()
+					if st == Enum.HumanoidStateType.Jumping
+						or st == Enum.HumanoidStateType.Freefall then
+						air = true
+					end
+				end
 			end)
+			-- and if the humanoid says nothing useful, going up or down does
+			if not air then
+				pcall(function()
+					local v = root.AssemblyLinearVelocity or root.Velocity
+					if v and math.abs(v.Y) > 6 then air = true end
+				end)
+			end
 		end
 		local now = os.clock()
-		local beat = air and ((now * 2.2) % 1) or 0
-		local rad = V.ringSize * 0.5 * (1 + beat * 0.75)
-		local drop = 3.1 + beat * 1.4
-		local fade = air and (0.15 + beat * 0.75) or 0.2
-		local turn = now * (air and 3.5 or 0.8)
+		-- the swell restarts the moment they leave the ground, so it reads as one
+		-- ripple per jump instead of a wave that happens to be passing
+		if air and not rec.air then rec.jumpAt = now end
+		rec.air = air
+		local beat = air and math.min((now - (rec.jumpAt or now)) * 1.6, 1) or 0
+		local rad = V.ringSize * 0.5 * (1 + beat * 1.6)
+		local drop = 3.1 + beat * 0.6
+		local fade = air and (0.1 + beat * 0.85) or 0.2
+		local turn = now * (air and 5 or 0.8)
 		pcall(function()
 			local mid = root.Position - Vector3.new(0, drop, 0)
 			for _, seg in ipairs(rec.model:GetChildren()) do
@@ -831,10 +852,21 @@ do
 	--== wings ==================================================================
 	FX.wingShapes = { "Feather", "Bat", "Blade", "Butterfly" }
 
-	-- Wings out of parts: a fan of feathers off the back, each one a little
-	-- behind the last, flapping in a wave rather than all together. Nothing is
-	-- welded — they are placed every frame from the torso, which is what lets
-	-- them flap at all.
+	-- How each wing is laid out. A feather starts at the shoulder, is rolled out
+	-- to its own angle, swept back, and then pushed out along its OWN length —
+	-- so the size has to run along Y. The first version used a Cylinder part,
+	-- whose length runs along X, which turned every feather into a flat disc
+	-- standing on edge. That is what was on your back.
+	--   n      feathers per side          lift/span  the arc they fan through
+	--   thick  across the feather         wide       front to back
+	local WING = {
+		Feather   = { n = 8, lift = 8,  span = 88, thick = 0.16, wide = 0.85, taper = 0.42 },
+		Bat       = { n = 6, lift = 14, span = 78, thick = 0.13, wide = 1.5,  taper = 0.2 },
+		Blade     = { n = 5, lift = 6,  span = 52, thick = 0.22, wide = 0.3,  taper = 0.55,
+			sharp = true },
+		Butterfly = { n = 2, lift = 28, span = 58, thick = 0.14, wide = 2.6,  taper = 0.35 },
+	}
+
 	function FX.dropWings(player)
 		local rec = FX.wings[player]
 		if rec then pcall(function() rec.model:Destroy() end) end
@@ -845,18 +877,18 @@ do
 		local torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
 			or char:FindFirstChild("HumanoidRootPart")
 		if not torso then return FX.dropWings(player) end
+		local d = WING[V.wingShape] or WING.Feather
 		local rec = FX.wings[player]
 		if rec and (not rec.model.Parent or rec.shape ~= V.wingShape) then
 			FX.dropWings(player)
 			rec = nil
 		end
-		local per = (V.wingShape == "Butterfly") and 4 or 7
 		if not rec then
 			local ok, made = pcall(function()
 				local m = Instance.new("Model")
 				m.Name = "MH_Wings"
 				for side = 1, 2 do
-					for i = 1, per do
+					for i = 1, d.n do
 						local f = Instance.new("Part")
 						f.Name = "Feather"
 						f.Anchored = true
@@ -865,10 +897,15 @@ do
 						f.CanTouch = false
 						f.CastShadow = false
 						f.Material = Enum.Material.Neon
-						f.Shape = (V.wingShape == "Blade") and Enum.PartType.Block
-							or Enum.PartType.Cylinder
+						-- a rounded feather rather than a brick, without a mesh
+						-- asset: a Sphere mesh on a long thin part is an ellipsoid
+						if not d.sharp then
+							local sm = Instance.new("SpecialMesh")
+							sm.MeshType = Enum.MeshType.Sphere
+							sm.Parent = f
+						end
 						f:SetAttribute("MHSide", (side == 1) and 1 or -1)
-						f:SetAttribute("MHIdx", (i - 1) / math.max(per - 1, 1))
+						f:SetAttribute("MHIdx", (i - 1) / math.max(d.n - 1, 1))
 						f.Parent = m
 					end
 				end
@@ -881,40 +918,28 @@ do
 		end
 		local now = os.clock()
 		pcall(function()
-			-- the anchor point: between the shoulder blades, tilted back a little
-			local back = torso.CFrame * CFrame.new(0, 0.35, 0.55)
-				* CFrame.Angles(math.rad(-18), 0, 0)
-			local beat = math.sin(now * V.wingSpeed)
+			-- between the shoulder blades. A character faces -Z, so +Z is behind
+			-- them, and the whole set leans back a little.
+			local back = torso.CFrame * CFrame.new(0, 0.45, 0.5)
+				* CFrame.Angles(math.rad(-12), 0, 0)
 			for _, f in ipairs(rec.model:GetChildren()) do
 				local side = f:GetAttribute("MHSide") or 1
 				local t = f:GetAttribute("MHIdx") or 0
-				-- the wave reaches the tip after the root, so it sweeps
-				local flap = math.sin(now * V.wingSpeed - t * 1.1) * math.rad(14)
-				local out, len, wide
-				if V.wingShape == "Bat" then
-					out = math.rad(28 + t * 66)
-					len = V.wingSize * (1 - t * 0.15)
-					wide = 0.5
-				elseif V.wingShape == "Blade" then
-					out = math.rad(18 + t * 40)
-					len = V.wingSize * (1.15 - t * 0.5)
-					wide = 0.22
-				elseif V.wingShape == "Butterfly" then
-					out = math.rad(35 + t * 55)
-					len = V.wingSize * (1 - t * 0.3)
-					wide = 1.15
-				else
-					out = math.rad(22 + t * 62)
-					len = V.wingSize * (1 - t * 0.38)
-					wide = 0.42
-				end
-				f.Size = Vector3.new(wide * 0.35, len, wide)
+				-- the beat reaches the tip after the root, so the wing sweeps
+				-- rather than flapping in one piece
+				local flap = math.sin(now * V.wingSpeed - t * 0.9) * math.rad(15)
+				local spread = math.rad(d.lift + t * d.span) + flap
+				local sweep = math.rad(-6 - t * 26)
+				local len = V.wingSize * (1 - t * d.taper)
+				f.Size = Vector3.new(d.thick * V.wingSize * 0.25,
+					len, d.wide * V.wingSize * 0.22 * (1 - t * 0.35))
 				f.Color = V.wingRainbow
-					and Color3.fromHSV((now * 0.15 + t * 0.35) % 1, 0.8, 1) or colr
-				f.Transparency = math.clamp(V.wingFade + math.abs(beat) * 0.08, 0, 0.95)
+					and Color3.fromHSV((now * 0.15 + t * 0.3) % 1, 0.8, 1) or colr
+				f.Transparency = math.clamp(V.wingFade, 0, 0.9)
 				f.CFrame = back
-					* CFrame.Angles(0, side * math.rad(24), 0)
-					* CFrame.Angles(0, 0, -side * (out + flap))
+					* CFrame.Angles(0, side * math.rad(16), 0)
+					* CFrame.Angles(sweep, 0, 0)
+					* CFrame.Angles(0, 0, -side * spread)
 					* CFrame.new(0, len * 0.5, 0)
 			end
 		end)
