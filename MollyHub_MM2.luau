@@ -189,9 +189,12 @@ do
 	local V = {
 		chams = false, chamFill = 0.55, chamWalls = true, chamOutline = true, chamDead = true,
 		chamStyle = "Hologram", chamWeapon = true, chamSelf = false, chamHide = true,
+		wallFill = 0.6,
 		aura = false, auraStyle = "Fire", auraSelf = false,
 		ring = false, ringSelf = false, ringSize = 6, jumpRing = false,
 		hat = false, hatSelf = false, hatSize = 5, hatSpin = true,
+		light = false, lightSelf = false, lightPower = 2, lightRange = 16,
+		trail = false, trailSelf = false, trailLife = 0.7,
 		roleColors = true, oneColor = Color3.fromRGB(150, 120, 255), bright = 1,
 		visCheck = false, visHide = false, visDim = 0.45,
 		distStuds = true, distRole = true,
@@ -254,7 +257,7 @@ do
 	-- written per frame at all — the copy simply follows. Nothing fights, so
 	-- nothing flickers, and it costs one build per character instead of a walk of
 	-- the whole model every frame.
-	local FX = { body = {}, aura = {}, ring = {}, hat = {}, seen = {} }
+	local FX = { body = {}, aura = {}, ring = {}, hat = {}, light = {}, trail = {}, seen = {} }
 
 	-- Brighter or darker than the colour asked for, without leaving it.
 	function FX.lit(c, k)
@@ -324,8 +327,12 @@ do
 			local ok, made = pcall(function()
 				local m = Instance.new("Model")
 				m.Name = "MH_Body"
-				local parts, hid = {}, {}
+				local parts, hid, count = {}, {}, 0
 				for _, src in ipairs(char:GetDescendants()) do
+					-- count only THEIR parts. Counting our own copies too meant the
+					-- number never matched next time round and the copy was rebuilt
+					-- for ever.
+					if src:IsA("BasePart") and src.Name ~= "MH_Copy" then count = count + 1 end
 					local isTool = src:FindFirstAncestorWhichIsA("Tool") ~= nil
 					if src:IsA("BasePart") and src.Name ~= "HumanoidRootPart"
 						and src.Transparency < 1 and (V.chamWeapon or not isTool) then
@@ -339,6 +346,11 @@ do
 							end
 						end
 						c.Name = "MH_Copy"
+						-- A MeshPart draws its own texture over any colour you give
+						-- it, which is why some styles came out wearing the player's
+						-- shirt instead of the colour asked for.
+						pcall(function() c.TextureID = "" end)
+						pcall(function() c.Texture = "" end)
 						c.Anchored = false
 						c.CanCollide = false
 						c.CanQuery = false
@@ -368,7 +380,7 @@ do
 				end
 				m.Parent = char
 				return { model = m, parts = parts, hid = hid, char = char, style = style,
-					hide = V.chamHide }
+					hide = V.chamHide, count = count, countAt = os.clock() }
 			end)
 			if not ok or not made or #made.parts == 0 then
 				if made and made.model then pcall(function() made.model:Destroy() end) end
@@ -376,6 +388,22 @@ do
 			end
 			rec = made
 			FX.body[player] = rec
+		end
+		if (os.clock() - (rec.countAt or 0)) > 0.5 then
+			rec.countAt = os.clock()
+			local now = 0
+			pcall(function()
+				for _, d in ipairs(char:GetDescendants()) do
+					if d:IsA("BasePart") and d.Name ~= "MH_Copy" then now = now + 1 end
+				end
+			end)
+			-- a weapon handed out, a hat loaded late, an arm blown off: the copy
+			-- was built once and never noticed, which is why some of them ended up
+			-- half done
+			if now ~= rec.count then
+				FX.bodyOff(player)
+				return FX.bodyOn(player, char, colr, style)
+			end
 		end
 		if rec.hide and (os.clock() - (rec.at or 0)) > 0.25 then
 			rec.at = os.clock()
@@ -388,6 +416,32 @@ do
 			end)
 		end
 		if d.cycle then colr = Color3.fromHSV((os.clock() * 0.25) % 1, 0.85, 1) end
+		-- A copy is a real object, so a wall hides it and a dark room dims it.
+		-- A Highlight on the COPY fixes both: drawn on top when you ask for
+		-- through-walls, and lit by nothing, so a Metal or Glass cham reads at
+		-- night as well as it does at noon.
+		if V.chamWalls or V.chamOutline then
+			if not rec.glow or not rec.glow.Parent then
+				pcall(function()
+					local g = Instance.new("Highlight")
+					g.Name = "MH_Glow"
+					g.Adornee = rec.model
+					g.Parent = rec.model
+					rec.glow = g
+				end)
+			end
+			pcall(function()
+				rec.glow.FillColor = colr
+				rec.glow.OutlineColor = FX.lit(colr, 1.6)
+				rec.glow.FillTransparency = V.chamWalls and V.wallFill or 1
+				rec.glow.OutlineTransparency = V.chamOutline and 0 or 1
+				rec.glow.DepthMode = V.chamWalls and Enum.HighlightDepthMode.AlwaysOnTop
+					or Enum.HighlightDepthMode.Occluded
+			end)
+		elseif rec.glow then
+			pcall(function() rec.glow:Destroy() end)
+			rec.glow = nil
+		end
 		if rec.colr == colr then return end
 		rec.colr = colr
 		pcall(function()
@@ -539,9 +593,10 @@ do
 		FX.hat[player] = nil
 	end
 
-	-- A china hat: a cone over the head. Built from a stack of thin discs rather
-	-- than a cone mesh, because a mesh means an asset id and an asset id is a
-	-- thing to get wrong — this needs nothing but parts.
+	-- A china hat: a smooth cone over the head. Built from discs rather than a
+	-- cone mesh, because a mesh means an asset id and an asset id is a thing to
+	-- get wrong — but built properly this time: enough of them that they OVERLAP,
+	-- so it is a cone and not a stack of rings with daylight between them.
 	function FX.hatOn(player, char, colr)
 		local head = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
 		if not head then return FX.dropHat(player) end
@@ -554,23 +609,42 @@ do
 			local ok, made = pcall(function()
 				local m = Instance.new("Model")
 				m.Name = "MH_Hat"
-				local rungs = 9
+				local rungs = 20
+				local high = V.hatSize * 0.6
+				local step = high / rungs
 				for i = 1, rungs do
-					local w = (1 - (i - 1) / rungs) * V.hatSize
+					local t = (i - 1) / rungs
+					-- squared taper: full at the brim, pinching towards the tip,
+					-- which is the shape a real one has
+					local w = V.hatSize * (1 - t) ^ 0.85
 					local disc = Instance.new("Part")
 					disc.Name = "Rung"
 					disc.Shape = Enum.PartType.Cylinder
-					disc.Size = Vector3.new(0.08, w, w)
+					disc.Size = Vector3.new(step * 1.9, math.max(w, 0.12), math.max(w, 0.12))
 					disc.Anchored = true
 					disc.CanCollide = false
 					disc.CanQuery = false
 					disc.CanTouch = false
 					disc.CastShadow = false
 					disc.Material = Enum.Material.Neon
-					disc.Transparency = 0.25
-					disc:SetAttribute("MHLift", (i - 1) * 0.16)
+					disc.Transparency = 0.12
+					disc:SetAttribute("MHLift", t * high)
 					disc.Parent = m
 				end
+				-- a thin brim so the base reads as an edge rather than a stump
+				local brim = Instance.new("Part")
+				brim.Name = "Brim"
+				brim.Shape = Enum.PartType.Cylinder
+				brim.Size = Vector3.new(0.06, V.hatSize * 1.12, V.hatSize * 1.12)
+				brim.Anchored = true
+				brim.CanCollide = false
+				brim.CanQuery = false
+				brim.CanTouch = false
+				brim.CastShadow = false
+				brim.Material = Enum.Material.Neon
+				brim.Transparency = 0.45
+				brim:SetAttribute("MHLift", 0)
+				brim.Parent = m
 				m.Parent = workspace
 				return { model = m, head = head, size = V.hatSize }
 			end)
@@ -580,7 +654,7 @@ do
 		end
 		local spin = V.hatSpin and (os.clock() * 1.6) or 0
 		pcall(function()
-			local base = head.Position + Vector3.new(0, 1.4, 0)
+			local base = head.Position + Vector3.new(0, 1.1, 0)
 			for _, disc in ipairs(rec.model:GetChildren()) do
 				disc.Color = colr
 				disc.CFrame = CFrame.new(base + Vector3.new(0, disc:GetAttribute("MHLift") or 0, 0))
@@ -590,6 +664,89 @@ do
 		end)
 	end
 
+	--== the small extras =======================================================
+	-- A light on them, so a dark corner is not where a player disappears; and a
+	-- trail, so you can read where somebody went.
+	function FX.dropLight(player)
+		local l = FX.light[player]
+		if l then pcall(function() l:Destroy() end) end
+		FX.light[player] = nil
+	end
+
+	function FX.lightOn(player, char, colr)
+		local root = char:FindFirstChild("HumanoidRootPart")
+		if not root then return FX.dropLight(player) end
+		local l = FX.light[player]
+		if not l or l.Parent ~= root then
+			FX.dropLight(player)
+			local ok, made = pcall(function()
+				local n = Instance.new("PointLight")
+				n.Name = "MH_Light"
+				n.Shadows = false
+				n.Parent = root
+				return n
+			end)
+			if not ok then return end
+			l = made
+			FX.light[player] = l
+		end
+		pcall(function()
+			l.Color = colr
+			l.Brightness = V.lightPower
+			l.Range = V.lightRange
+		end)
+	end
+
+	function FX.dropTrail(player)
+		local t = FX.trail[player]
+		if t then
+			pcall(function() t.trail:Destroy() end)
+			pcall(function() t.a0:Destroy() end)
+			pcall(function() t.a1:Destroy() end)
+		end
+		FX.trail[player] = nil
+	end
+
+	function FX.trailOn(player, char, colr)
+		local root = char:FindFirstChild("HumanoidRootPart")
+		if not root then return FX.dropTrail(player) end
+		local rec = FX.trail[player]
+		if not rec or rec.a0.Parent ~= root then
+			FX.dropTrail(player)
+			local ok, made = pcall(function()
+				local a0 = Instance.new("Attachment")
+				a0.Name = "MH_T0"
+				a0.Position = Vector3.new(0, 1.6, 0)
+				a0.Parent = root
+				local a1 = Instance.new("Attachment")
+				a1.Name = "MH_T1"
+				a1.Position = Vector3.new(0, -1.6, 0)
+				a1.Parent = root
+				local tr = Instance.new("Trail")
+				tr.Name = "MH_Trail"
+				tr.Attachment0 = a0
+				tr.Attachment1 = a1
+				tr.LightEmission = 1
+				tr.LightInfluence = 0
+				tr.FaceCamera = true
+				tr.Parent = root
+				return { trail = tr, a0 = a0, a1 = a1 }
+			end)
+            if not ok or not made then return end
+			rec = made
+			FX.trail[player] = rec
+		end
+		pcall(function()
+			rec.trail.Lifetime = V.trailLife
+			rec.trail.Color = ColorSequence.new(colr)
+			rec.trail.Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 0.25),
+				NumberSequenceKeypoint.new(1, 1),
+			})
+		end)
+	end
+
+	--== can you actually see them ==============================================
 	--== can you actually see them ==============================================
 	-- One ray to the head, ignoring your own character and theirs. Cached for a
 	-- fifth of a second: a ray per player per frame is the one thing here that
@@ -620,6 +777,8 @@ do
 		FX.dropAura(player)
 		FX.dropRing(player)
 		FX.dropHat(player)
+		FX.dropLight(player)
+		FX.dropTrail(player)
 		FX.seen[player] = nil
 	end
 
@@ -634,6 +793,10 @@ do
 			for _, rec in pairs(FX.hat) do live[rec.model] = true end
 			for _, r in pairs(FX.ring) do live[r] = true end
 			for _, e in pairs(FX.aura) do live[e] = true end
+			for _, l in pairs(FX.light) do live[l] = true end
+			for _, t in pairs(FX.trail) do
+				live[t.trail] = true live[t.a0] = true live[t.a1] = true
+			end
 			local roots = { workspace }
 			for _, pl in ipairs(Players:GetPlayers()) do
 				if pl.Character then roots[#roots + 1] = pl.Character end
@@ -649,7 +812,11 @@ do
 				local hrp = where:FindFirstChild("HumanoidRootPart")
 				if hrp then
 					for _, d in ipairs(hrp:GetChildren()) do
-						if tostring(d.Name) == "MH_Aura" and not live[d] then d:Destroy() end
+						local n = tostring(d.Name)
+						if (n == "MH_Aura" or n == "MH_Light" or n == "MH_Trail"
+							or n == "MH_T0" or n == "MH_T1") and not live[d] then
+							d:Destroy()
+						end
 					end
 				end
 				-- and a body we hid but never gave back
@@ -676,6 +843,8 @@ do
 		for pl in pairs(FX.aura) do FX.dropAura(pl) end
 		for pl in pairs(FX.ring) do FX.dropRing(pl) end
 		for pl in pairs(FX.hat) do FX.dropHat(pl) end
+		for pl in pairs(FX.light) do FX.dropLight(pl) end
+		for pl in pairs(FX.trail) do FX.dropTrail(pl) end
 		FX.seen = {}
 		FX.sweep()
 	end
@@ -713,6 +882,8 @@ do
 		if V.aura and not hidden then FX.auraOn(player, char, colr) else FX.dropAura(player) end
 		if V.ring and not hidden then FX.ringOn(player, char, colr) else FX.dropRing(player) end
 		if V.hat and not hidden then FX.hatOn(player, char, colr) else FX.dropHat(player) end
+		if V.light and not hidden then FX.lightOn(player, char, colr) else FX.dropLight(player) end
+		if V.trail and not hidden then FX.trailOn(player, char, colr) else FX.dropTrail(player) end
 		if not V.chams or not overlay then return dropCham(player) end
 		local h = chams[player]
 		if not h or h.Parent ~= char then
@@ -1069,6 +1240,7 @@ do
 		return V.chams or V.box or V.cross or V.mark or V.tracer or V.arrows
 			or V.radar or V.gunEsp or V.coinEsp or V.headDot or V.aura or V.ring
 			or V.chamSelf or V.auraSelf or V.ringSelf or V.hat or V.hatSelf
+			or V.light or V.lightSelf or V.trail or V.trailSelf
 	end
 
 	local conn
@@ -1138,7 +1310,8 @@ do
 			-- yourself: the same three effects, none of the on-screen drawing
 			do
 				local mine = LocalPlayer.Character
-				if mine and (V.chamSelf or V.auraSelf or V.ringSelf or V.hatSelf) then
+				if mine and (V.chamSelf or V.auraSelf or V.ringSelf or V.hatSelf
+					or V.lightSelf or V.trailSelf) then
 					local c = FX.lit(V.roleColors and COL.Sheriff or V.oneColor, V.bright)
 					if V.chamSelf and not FX.isOverlay(V.chamStyle) then
 						FX.bodyOn(LocalPlayer, mine, c, V.chamStyle)
@@ -1148,8 +1321,10 @@ do
 					if V.auraSelf then FX.auraOn(LocalPlayer, mine, c) else FX.dropAura(LocalPlayer) end
 					if V.ringSelf then FX.ringOn(LocalPlayer, mine, c) else FX.dropRing(LocalPlayer) end
 					if V.hatSelf then FX.hatOn(LocalPlayer, mine, c) else FX.dropHat(LocalPlayer) end
+					if V.lightSelf then FX.lightOn(LocalPlayer, mine, c) else FX.dropLight(LocalPlayer) end
+					if V.trailSelf then FX.trailOn(LocalPlayer, mine, c) else FX.dropTrail(LocalPlayer) end
 				elseif FX.body[LocalPlayer] or FX.aura[LocalPlayer] or FX.ring[LocalPlayer]
-					or FX.hat[LocalPlayer] then
+					or FX.hat[LocalPlayer] or FX.light[LocalPlayer] or FX.trail[LocalPlayer] then
 					FX.clear(LocalPlayer)
 				end
 			end
@@ -1313,10 +1488,13 @@ do
 	EspTab:Slider({ Title = "Brightness", Desc = "1 is the colour as it is", Step = 0.05,
 		Value = { Min = 0.2, Max = 2, Default = 1 },
 		Callback = function(v) V.bright = v FX.clearAll() end })
-	EspTab:Toggle({ Title = "Through walls", Desc = "Outline and Fill only",
-		Default = true, Callback = function(on) V.chamWalls = on end })
-	EspTab:Toggle({ Title = "Cham outline", Desc = "Outline and Fill only", Default = true,
-		Callback = function(on) V.chamOutline = on end })
+	EspTab:Toggle({ Title = "Through walls", Desc = "works on every style now",
+		Default = true, Callback = function(on) V.chamWalls = on FX.clearAll() end })
+	EspTab:Slider({ Title = "How solid through a wall", Desc = "0 is a flat silhouette",
+		Step = 0.05, Value = { Min = 0, Max = 1, Default = 0.6 },
+		Callback = function(v) V.wallFill = v end })
+	EspTab:Toggle({ Title = "Cham outline", Default = true,
+		Callback = function(on) V.chamOutline = on FX.clearAll() end })
 	EspTab:Slider({ Title = "Cham fill", Desc = "the Fill style's strength", Step = 0.05,
 		Value = { Min = 0, Max = 1, Default = 0.5 },
 		Callback = function(v) V.chamFill = v end })
@@ -1365,6 +1543,16 @@ do
 		Callback = function(on) V.hatSpin = on end })
 	EspTab:Slider({ Title = "Hat size", Step = 0.5, Value = { Min = 2, Max = 12, Default = 5 },
 		Callback = function(v) V.hatSize = v FX.clearAll() end })
+	EspTab:Toggle({ Title = "Light them up", Desc = "a lamp in their colour, so a dark room is not a hiding place",
+		Default = false, Callback = function(on) V.light = on if not on then FX.clearAll() end sync() end })
+	EspTab:Slider({ Title = "Light strength", Step = 0.25, Value = { Min = 0.5, Max = 8, Default = 2 },
+		Callback = function(v) V.lightPower = v end })
+	EspTab:Slider({ Title = "Light reach", Step = 1, Value = { Min = 6, Max = 60, Default = 16 },
+		Callback = function(v) V.lightRange = v end })
+	EspTab:Toggle({ Title = "Trail", Desc = "a ribbon showing where they went",
+		Default = false, Callback = function(on) V.trail = on if not on then FX.clearAll() end sync() end })
+	EspTab:Slider({ Title = "Trail length", Step = 0.1, Value = { Min = 0.2, Max = 4, Default = 0.7 },
+		Callback = function(v) V.trailLife = v end })
 
 	EspTab:Section({ Title = "On yourself" })
 	EspTab:Toggle({ Title = "Wear the cham style",
@@ -1376,6 +1564,10 @@ do
 		Callback = function(on) V.ringSelf = on if not on then FX.clear(LocalPlayer) end sync() end })
 	EspTab:Toggle({ Title = "Wear a china hat", Default = false,
 		Callback = function(on) V.hatSelf = on if not on then FX.clear(LocalPlayer) end sync() end })
+	EspTab:Toggle({ Title = "Carry a light", Default = false,
+		Callback = function(on) V.lightSelf = on if not on then FX.clear(LocalPlayer) end sync() end })
+	EspTab:Toggle({ Title = "Leave a trail", Default = false,
+		Callback = function(on) V.trailSelf = on if not on then FX.clear(LocalPlayer) end sync() end })
 
 	--== overlay ================================================================
 	if not HAVE_DRAWING then
