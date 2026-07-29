@@ -91,89 +91,37 @@ local u8 = _Raw:CreateWindow({
 		Color = ColorSequence.new(ACCENT, ACCENT_DEEP)
 	}
 })
+-- Six pages, the set from the reference. Everything that used to have a page of
+-- its own is now a GROUP on one of them, so the layout matches the screenshots
+-- and nothing had to be rewritten: a group answers every call a page did.
+local PAGE = {
+	GAME    = u8:Tab({ Title = "Game",    Icon = "box" }),
+	VISUALS = u8:Tab({ Title = "Visuals", Icon = "eye" }),
+	PLAYER  = u8:Tab({ Title = "Player",  Icon = "user" }),
+	TARGET  = u8:Tab({ Title = "Target",  Icon = "target" }),
+	MISC    = u8:Tab({ Title = "Misc",    Icon = "gear" }),
+	INFO    = u8:Tab({ Title = "Info",    Icon = "info" }),
+}
 local t1 = {
-	HomeTab = u8:Tab({
-		Title = "Home",
-		Icon = "house",
-		ShowTabTitle = true,
-		Border = true
-	})
+	HomeTab = PAGE.INFO:Sub("Game info"),
 }
 
 do
-	local v10 = u8:Section({
-		Title = "Game",
-		Icon = "gamepad-2",
-		Opened = true,
-		u8:Divider()
-	})
-	local v11 = u8:Section({
-		Title = "Movement",
-		Icon = "move",
-		Opened = false
-	})
-	local v12 = u8:Section({
-		Title = "System",
-		Icon = "settings",
-		Opened = false
-	})
-
-	t1.MainTab = v10:Tab({
-		Title = "Main",
-		Icon = "box",
-		ShowTabTitle = true
-	})
-	t1.AutoFarmTab = v10:Tab({
-		Title = "Farming",
-		Icon = "bitcoin",
-		ShowTabTitle = true
-	})
-	t1.MurdTab = v10:Tab({
-		Title = "Murder",
-		Icon = "sword",
-		ShowTabTitle = true
-	})
-	t1.SheriffTab = v10:Tab({
-		Title = "Sheriff",
-		Icon = "swords",
-		ShowTabTitle = true
-	})
-	t1.ESPTab = v10:Tab({
-		Title = "ESP",
-		Icon = "crosshair",
-		ShowTabTitle = true,
-		u8:Divider()
-	})
-	t1.VisualsTab = v10:Tab({
-		Title = "Visuals",
-		Icon = "sparkles",
-		ShowTabTitle = true
-	})
-	t1.TeleportTab = v11:Tab({
-		Title = "Teleport",
-		Icon = "map-pin",
-		ShowTabTitle = true
-	})
-	t1.PlayerTab = v11:Tab({
-		Title = "Player",
-		Icon = "person-standing",
-		ShowTabTitle = true
-	})
-	t1.TrollingTab = v11:Tab({
-		Title = "Trolling",
-		Icon = "laugh",
-		ShowTabTitle = true
-	})
-	t1.MiscTab = v12:Tab({
-		Title = "Misc",
-		Icon = "settings",
-		ShowTabTitle = true
-	})
-	t1.Visual = v11:Tab({
-		Title = "Spawners",
-		Icon = "package-plus",
-		ShowTabTitle = true
-	})
+	-- GAME holds what you do in a round: the sheriff's shot, the murderer's
+	-- reach, the farming. VISUALS holds what you see. TARGET is the aim work,
+	-- which is why silent aim and the aimlock live there rather than under
+	-- Sheriff. PLAYER is your own character and where you stand. MISC is the rest.
+	t1.MainTab    = PAGE.GAME:Sub("Main")
+	t1.AutoFarmTab = PAGE.GAME:Sub("Auto")
+	t1.MurdTab    = PAGE.GAME:Sub("Murder")
+	t1.SheriffTab = PAGE.TARGET:Sub("Sheriff")
+	t1.ESPTab     = PAGE.VISUALS:Sub("ESP")
+	t1.VisualsTab = PAGE.VISUALS:Sub("World")
+	t1.TeleportTab = PAGE.PLAYER:Sub("Teleport")
+	t1.PlayerTab  = PAGE.PLAYER:Sub("Character")
+	t1.TrollingTab = PAGE.MISC:Sub("Trolling")
+	t1.MiscTab    = PAGE.MISC:Sub("Tools")
+	t1.Visual     = PAGE.MISC:Sub("Spawners")
 end
 
 --==============================================================================
@@ -5517,12 +5465,7 @@ t1.TrollingTab:Button({
 local RunService5, Workspace4, VirtualUser2, LocalPlayer12, CoinCollected, t24, t25, u162, u163, Part, u166, u167, u168, u169, TextLabel
 
 do
-	local v143 = u8:Tab({
-		Title = "Configs",
-		Icon = "folder",
-		IconColor = ACCENT,
-		Border = true
-	})
+	local v143 = PAGE.INFO:Sub("Configs")
 	local ConfigManager = u8.ConfigManager
 	local s6 = "default"
 	local u146 = v143:Input({

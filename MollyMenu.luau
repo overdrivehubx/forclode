@@ -29,18 +29,20 @@ UI.Windows = {}
 
 --== theme =====================================================================
 local T = {
-	Bg      = Color3.fromRGB(9, 10, 14),
-	Panel   = Color3.fromRGB(15, 17, 23),
-	Panel2  = Color3.fromRGB(20, 22, 30),
-	Hover   = Color3.fromRGB(27, 30, 40),
-	Edge    = Color3.fromRGB(42, 45, 58),
-	Text    = Color3.fromRGB(241, 242, 247),
-	Muted   = Color3.fromRGB(147, 151, 166),
-	Accent  = Color3.fromRGB(99, 121, 255),
-	Accent2 = Color3.fromRGB(149, 96, 255),
+	Bg      = Color3.fromRGB(11, 12, 16),   -- the page behind the groups
+	Rail    = Color3.fromRGB(16, 17, 22),   -- the sidebar
+	Panel   = Color3.fromRGB(21, 23, 29),   -- a group of rows
+	Panel2  = Color3.fromRGB(27, 29, 36),   -- the active tab, a pressed control
+	Hover   = Color3.fromRGB(33, 36, 44),
+	Edge    = Color3.fromRGB(38, 41, 50),
+	Text    = Color3.fromRGB(238, 240, 245),
+	Muted   = Color3.fromRGB(132, 137, 152),
+	Faint   = Color3.fromRGB(96, 100, 113),
+	Accent  = Color3.fromRGB(58, 130, 247), -- the blue on the switches
+	Accent2 = Color3.fromRGB(112, 96, 245),
 	Good    = Color3.fromRGB(79, 211, 132),
 	Bad     = Color3.fromRGB(255, 90, 112),
-	Off     = Color3.fromRGB(50, 53, 65),
+	Off     = Color3.fromRGB(88, 92, 104),  -- a switch that is off is just this dot
 }
 
 function UI:SetTheme(name)
@@ -288,99 +290,14 @@ function UI:CreateWindow(o)
 		if W._applyRail then W._applyRail() end
 	end
 
-	--== top bar ================================================================
-	local barH = 58
-	local top = make("Frame", {
-		Name = "TopBar",
-		Size = UDim2.new(1, 0, 0, barH),
-		BackgroundColor3 = T.Panel,
-		BorderSizePixel = 0,
-		Parent = card,
-	})
-	make("Frame", {
-		AnchorPoint = Vector2.new(0, 1),
-		Position = UDim2.fromScale(0, 1),
-		Size = UDim2.new(1, 0, 0, 1),
-		BackgroundColor3 = T.Edge,
-		BorderSizePixel = 0,
-		Parent = top,
-	})
-	local logo = make("TextLabel", {
-		Name = "Logo",
-		Position = UDim2.fromOffset(20, 0),
-		Size = UDim2.fromOffset(230, barH),
-		BackgroundTransparency = 1,
-		Text = tostring(o.Title or "Molly Hub"),
-		TextColor3 = T.Text,
-		TextSize = 23,
-		Font = Enum.Font.GothamBold,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		Parent = top,
-	})
-	pcall(function()
-		make("UIGradient", {
-			Color = ColorSequence.new({
-				ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
-				ColorSequenceKeypoint.new(0.5, Color3.fromRGB(207, 211, 255)),
-				ColorSequenceKeypoint.new(1, Color3.fromRGB(180, 129, 255)),
-			}),
-			Parent = logo,
-		})
-	end)
-	W._logo = logo
-
-	local pill = make("Frame", {
-		Name = "Status",
-		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -66, 0.5, 0),
-		Size = UDim2.fromOffset(150, 30),
-		BackgroundColor3 = T.Panel2,
-		BorderSizePixel = 0,
-		Parent = top,
-	}, { corner(8), stroke(T.Edge, 0.3) })
-	make("Frame", {
-		AnchorPoint = Vector2.new(0, 0.5),
-		Position = UDim2.new(0, 11, 0.5, 0),
-		Size = UDim2.fromOffset(7, 7),
-		BackgroundColor3 = T.Good,
-		BorderSizePixel = 0,
-		Parent = pill,
-	}, { corner(99) })
-	local pillText = make("TextLabel", {
-		Position = UDim2.fromOffset(26, 0),
-		Size = UDim2.new(1, -32, 1, 0),
-		BackgroundTransparency = 1,
-		Text = tostring(o.SubTitle or o.Author or "Murder Mystery 2"),
-		TextColor3 = T.Muted,
-		TextSize = 11,
-		Font = Enum.Font.GothamMedium,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		TextTruncate = Enum.TextTruncate.AtEnd,
-		Parent = pill,
-	})
-	W._hint = pillText
-
-	local closeBtn = make("TextButton", {
-		Name = "Close",
-		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -16, 0.5, 0),
-		Size = UDim2.fromOffset(34, 34),
-		BackgroundColor3 = T.Panel2,
-		BorderSizePixel = 0,
-		Text = "\u{00D7}",
-		TextColor3 = T.Muted,
-		TextSize = 22,
-		Font = Enum.Font.GothamMedium,
-		AutoButtonColor = false,
-		Parent = top,
-	}, { corner(9), stroke(T.Edge, 0.3) })
-
-	--== sidebar ================================================================
+	--== the sidebar: who you are, the pages, and you again at the foot ==========
+	-- No top bar. In the reference the sidebar runs the full height and carries
+	-- the name at the top and the player at the bottom, and the content area
+	-- starts with the config strip instead of a title.
 	local side = make("Frame", {
 		Name = "Sidebar",
-		Position = UDim2.fromOffset(0, barH),
-		Size = UDim2.new(0, wide, 1, -barH),
-		BackgroundColor3 = T.Panel,
+		Size = UDim2.new(0, wide, 1, 0),
+		BackgroundColor3 = T.Rail,
 		BorderSizePixel = 0,
 		Parent = card,
 	})
@@ -392,91 +309,284 @@ function UI:CreateWindow(o)
 		BorderSizePixel = 0,
 		Parent = side,
 	})
+
+	-- rbxthumb is a scheme the client resolves itself, so there is no asset id
+	-- here to be wrong about
+	local function headshot(userId, px)
+		return "rbxthumb://type=AvatarHeadShot&id=" .. tostring(userId or 1)
+			.. "&w=" .. tostring(px or 48) .. "&h=" .. tostring(px or 48)
+	end
+
+	local head = make("Frame", {
+		Name = "Head",
+		Position = UDim2.fromOffset(14, 14),
+		Size = UDim2.new(1, -28, 0, 46),
+		BackgroundTransparency = 1,
+		Parent = side,
+	})
+	local badge = make("ImageLabel", {
+		Name = "Badge",
+		Size = UDim2.fromOffset(42, 42),
+		BackgroundColor3 = T.Panel2,
+		BorderSizePixel = 0,
+		Image = headshot(LocalPlayer and LocalPlayer.UserId, 60),
+		Parent = head,
+	}, { corner(10), stroke(T.Edge, 0.4) })
+	local logo = make("TextLabel", {
+		Name = "Logo",
+		Position = UDim2.fromOffset(54, 3),
+		Size = UDim2.new(1, -54, 0, 22),
+		BackgroundTransparency = 1,
+		Text = tostring(o.Title or "Molly Hub"):upper(),
+		TextColor3 = T.Text,
+		TextSize = 17,
+		Font = Enum.Font.GothamBold,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		Parent = head,
+	})
+	W._logo = logo
+	make("TextLabel", {
+		Position = UDim2.fromOffset(54, 25),
+		Size = UDim2.new(1, -54, 0, 16),
+		BackgroundTransparency = 1,
+		Text = tostring(o.SubTitle or o.Author or "Murder Mystery 2"),
+		TextColor3 = T.Faint,
+		TextSize = 11,
+		Font = Enum.Font.Gotham,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		Parent = head,
+	})
+
+	local footH = 58
 	local tabbar = make("ScrollingFrame", {
 		Name = "Tabs",
-		Position = UDim2.fromOffset(10, 14),
-		Size = UDim2.new(1, -20, 1, -70),
+		Position = UDim2.fromOffset(10, 74),
+		Size = UDim2.new(1, -20, 1, -(74 + footH + 10)),
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		ScrollBarThickness = 2,
-		ScrollBarImageColor3 = T.Accent,
+		ScrollBarImageColor3 = T.Edge,
 		CanvasSize = UDim2.new(),
 		AutomaticCanvasSize = Enum.AutomaticSize.Y,
 		Parent = side,
-	}, { list(6) })
+	}, { list(3) })
 	W._tabbar = tabbar
 	W._sidebar = true
 	W._menuBtn = nil
 
-	local keyHint = make("TextLabel", {
-		Name = "KeyHint",
-		AnchorPoint = Vector2.new(0.5, 1),
-		Position = UDim2.new(0.5, 0, 1, -12),
-		Size = UDim2.new(1, -20, 0, 38),
+	-- the profile at the foot, the way the reference has it
+	local foot = make("TextButton", {
+		Name = "Profile",
+		AnchorPoint = Vector2.new(0, 1),
+		Position = UDim2.new(0, 10, 1, -10),
+		Size = UDim2.new(1, -20, 0, footH - 12),
+		BackgroundColor3 = T.Rail,
+		BorderSizePixel = 0,
+		Text = "",
+		AutoButtonColor = false,
+		Parent = side,
+	}, { corner(10) })
+	make("Frame", {
+		Name = "Line",
+		Position = UDim2.fromOffset(2, -8),
+		Size = UDim2.new(1, -4, 0, 1),
+		BackgroundColor3 = T.Edge,
+		BackgroundTransparency = 0.35,
+		BorderSizePixel = 0,
+		Parent = foot,
+	})
+	make("ImageLabel", {
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, 4, 0.5, 0),
+		Size = UDim2.fromOffset(30, 30),
 		BackgroundColor3 = T.Panel2,
 		BorderSizePixel = 0,
-		Text = "RightShift  \u{2022}  hide",
-		TextColor3 = T.Muted,
-		TextSize = 11,
-		Font = Enum.Font.GothamMedium,
-		Parent = side,
-	}, { corner(9), stroke(T.Edge, 0.35) })
+		Image = headshot(LocalPlayer and LocalPlayer.UserId, 48),
+		Parent = foot,
+	}, { corner(8) })
+	local whoName = make("TextLabel", {
+		Position = UDim2.fromOffset(42, 4),
+		Size = UDim2.new(1, -66, 0, 16),
+		BackgroundTransparency = 1,
+		Text = tostring((LocalPlayer and (LocalPlayer.DisplayName or LocalPlayer.Name)) or "player"),
+		TextColor3 = T.Text,
+		TextSize = 12,
+		Font = Enum.Font.GothamBold,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		Parent = foot,
+	})
+	local whoSub = make("TextLabel", {
+		Position = UDim2.fromOffset(42, 20),
+		Size = UDim2.new(1, -66, 0, 14),
+		BackgroundTransparency = 1,
+		Text = "@" .. tostring((LocalPlayer and LocalPlayer.Name) or "player"),
+		TextColor3 = T.Faint,
+		TextSize = 10,
+		Font = Enum.Font.Gotham,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		Parent = foot,
+	})
+	make("TextLabel", {
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -6, 0.5, 0),
+		Size = UDim2.fromOffset(14, 14),
+		BackgroundTransparency = 1,
+		Text = "\u{203A}",
+		TextColor3 = T.Faint,
+		TextSize = 15,
+		Font = Enum.Font.GothamBold,
+		Parent = foot,
+	})
+	W._who = whoName
+	pcall(function()
+		foot.MouseEnter:Connect(function() tween(foot, 0.12, { BackgroundColor3 = T.Panel }) end)
+		foot.MouseLeave:Connect(function() tween(foot, 0.12, { BackgroundColor3 = T.Rail }) end)
+	end)
 
-	--== content ================================================================
+	--== content: the config strip, then the page ================================
 	local content = make("Frame", {
 		Name = "Content",
-		Position = UDim2.fromOffset(wide, barH),
-		Size = UDim2.new(1, -wide, 1, -barH),
+		Position = UDim2.fromOffset(wide, 0),
+		Size = UDim2.new(1, -wide, 1, 0),
 		BackgroundTransparency = 1,
 		Parent = card,
 	})
-	local title = make("TextLabel", {
-		Name = "PageTitle",
-		Position = UDim2.fromOffset(22, 14),
-		Size = UDim2.new(1, -44, 0, 30),
+	local barH = 50
+	local bar = make("Frame", {
+		Name = "ConfigBar",
+		Size = UDim2.new(1, 0, 0, barH),
 		BackgroundTransparency = 1,
-		Text = "",
-		TextColor3 = T.Text,
-		TextSize = 21,
-		Font = Enum.Font.GothamBold,
-		TextXAlignment = Enum.TextXAlignment.Left,
 		Parent = content,
 	})
-	W._pageTitle = title
-	local sub = make("TextLabel", {
-		Name = "PageSub",
-		Position = UDim2.fromOffset(22, 42),
-		Size = UDim2.new(1, -44, 0, 18),
-		BackgroundTransparency = 1,
-		Text = "",
+	make("Frame", {
+		AnchorPoint = Vector2.new(0, 1),
+		Position = UDim2.fromScale(0, 1),
+		Size = UDim2.new(1, 0, 0, 1),
+		BackgroundColor3 = T.Edge,
+		BackgroundTransparency = 0.4,
+		BorderSizePixel = 0,
+		Parent = bar,
+	})
+	local saveBtn = make("TextButton", {
+		Name = "Save",
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, 16, 0.5, 0),
+		Size = UDim2.fromOffset(30, 28),
+		BackgroundColor3 = T.Panel,
+		BorderSizePixel = 0,
+		Text = "\u{25A4}",
 		TextColor3 = T.Muted,
-		TextSize = 11,
-		Font = Enum.Font.Gotham,
+		TextSize = 15,
+		Font = Enum.Font.GothamBold,
+		AutoButtonColor = false,
+		Parent = bar,
+	}, { corner(8), stroke(T.Edge, 0.45) })
+	local cfgPill = make("TextButton", {
+		Name = "Config",
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, 52, 0.5, 0),
+		Size = UDim2.fromOffset(132, 28),
+		BackgroundColor3 = T.Panel,
+		BorderSizePixel = 0,
+		Text = "",
+		AutoButtonColor = false,
+		Parent = bar,
+	}, { corner(8), stroke(T.Edge, 0.45) })
+	local cfgText = make("TextLabel", {
+		Position = UDim2.fromOffset(11, 0),
+		Size = UDim2.new(1, -30, 1, 0),
+		BackgroundTransparency = 1,
+		Text = "default",
+		TextColor3 = T.Text,
+		TextSize = 12,
+		Font = Enum.Font.GothamMedium,
 		TextXAlignment = Enum.TextXAlignment.Left,
-		Parent = content,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		Parent = cfgPill,
 	})
+	make("TextLabel", {
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -9, 0.5, 0),
+		Size = UDim2.fromOffset(12, 12),
+		BackgroundTransparency = 1,
+		Text = "\u{25BE}",
+		TextColor3 = T.Faint,
+		TextSize = 11,
+		Font = Enum.Font.GothamBold,
+		Parent = cfgPill,
+	})
+	local closeBtn = make("TextButton", {
+		Name = "Close",
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -14, 0.5, 0),
+		Size = UDim2.fromOffset(28, 28),
+		BackgroundTransparency = 1,
+		Text = "\u{00D7}",
+		TextColor3 = T.Muted,
+		TextSize = 20,
+		Font = Enum.Font.GothamMedium,
+		AutoButtonColor = false,
+		Parent = bar,
+	}, { corner(8) })
+	local searchBtn = make("TextButton", {
+		Name = "Search",
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -48, 0.5, 0),
+		Size = UDim2.fromOffset(28, 28),
+		BackgroundTransparency = 1,
+		Text = "\u{2315}",
+		TextColor3 = T.Muted,
+		TextSize = 16,
+		Font = Enum.Font.GothamBold,
+		AutoButtonColor = false,
+		Parent = bar,
+	}, { corner(8) })
+	W._hint = cfgText
+
+	local searchBox = make("TextBox", {
+		Name = "SearchBox",
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -80, 0.5, 0),
+		Size = UDim2.fromOffset(160, 28),
+		BackgroundColor3 = T.Panel,
+		BorderSizePixel = 0,
+		Text = "",
+		PlaceholderText = "find a setting",
+		PlaceholderColor3 = T.Faint,
+		TextColor3 = T.Text,
+		TextSize = 12,
+		Font = Enum.Font.Gotham,
+		ClearTextOnFocus = false,
+		Visible = false,
+		Parent = bar,
+	}, { corner(8), stroke(T.Edge, 0.45), pad(9, 9, 0, 0) })
+
 	local pages = make("Frame", {
 		Name = "Pages",
-		Position = UDim2.fromOffset(18, 66),
-		Size = UDim2.new(1, -36, 1, -80),
+		Position = UDim2.fromOffset(14, barH + 8),
+		Size = UDim2.new(1, -28, 1, -(barH + 18)),
 		BackgroundTransparency = 1,
 		Parent = content,
 	})
+	W._pageTitle = cfgText
 
 	-- the icon rail: on a narrow screen the sidebar keeps the icons and drops
 	-- the words, and the page takes the room back
 	function W._applyRail()
-		local w = W._narrow and 52 or wide
-		side.Size = UDim2.new(0, w, 1, -barH)
-		content.Position = UDim2.fromOffset(w, barH)
-		content.Size = UDim2.new(1, -w, 1, -barH)
-		keyHint.Visible = not W._narrow
-		tabbar.Size = UDim2.new(1, -20, 1, W._narrow and -20 or -70)
+		local w = W._narrow and 54 or wide
+		side.Size = UDim2.new(0, w, 1, 0)
+		content.Position = UDim2.fromOffset(w, 0)
+		content.Size = UDim2.new(1, -w, 1, 0)
+		head.Size = UDim2.new(1, -28, 0, 46)
+		logo.Visible = not W._narrow
+		whoName.Visible = not W._narrow
+		whoSub.Visible = not W._narrow
 		for _, t in ipairs(W._tabs) do
 			if t._label then t._label.Visible = not W._narrow end
-			if t._btn then
-				t._btn.Size = UDim2.new(1, 0, 0, W._narrow and 40 or 42)
-			end
 		end
 	end
 
@@ -496,16 +606,28 @@ function UI:CreateWindow(o)
 			BorderSizePixel = 0,
 			LayoutOrder = order or 1,
 			Parent = parent,
-		}, { corner(11), stroke(T.Edge, 0.2), pad(10, 10, 10, 12), list(7) })
+		}, { corner(10), pad(4, 4, 8, 10), list(0) })
 	end
 
+	-- A row is FLAT: the group is the panel, and the rows inside it are label and
+	-- control on nothing at all, the way the reference reads. Boxing each one
+	-- inside its own bordered card is what made it look like a form.
 	local function row(parent, h)
-		return make("Frame", {
-			Size = UDim2.new(1, 0, 0, h or 46),
-			BackgroundColor3 = T.Panel2,
+		local r = make("Frame", {
+			Size = UDim2.new(1, 0, 0, h or 38),
+			BackgroundColor3 = T.Panel,
+			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
 			Parent = parent,
-		}, { corner(9), stroke(T.Edge, 0.4) })
+		})
+		pcall(function()
+			r.MouseEnter:Connect(function()
+				tween(r, 0.1, { BackgroundTransparency = 0.55, BackgroundColor3 = T.Hover })
+			end)
+			r.MouseLeave:Connect(function() tween(r, 0.1, { BackgroundTransparency = 1 }) end)
+		end)
+		corner(8).Parent = r
+		return r
 	end
 
 	local function rowTitle(host, text, desc, rightGap)
@@ -608,6 +730,8 @@ function UI:CreateWindow(o)
 			W._reg[#W._reg + 1] = { key = name .. "/" .. tostring(title), get = get, set = set }
 		end
 
+		Tab._ctx = nil            -- which group new widgets land in
+
 		local function shortest()
 			local best, bh = 1, P.heights[1] or 0
 			for i = 2, P.n do
@@ -619,7 +743,33 @@ function UI:CreateWindow(o)
 			local i = Tab._colIdx or 1
 			P.heights[i] = (P.heights[i] or 0) + h
 		end
+		local function heading(box, text)
+			make("TextLabel", {
+				Size = UDim2.new(1, 0, 0, 26),
+				BackgroundTransparency = 1,
+				Text = tostring(text or ""),
+				TextColor3 = T.Muted,
+				TextSize = 12,
+				Font = Enum.Font.GothamBold,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				LayoutOrder = 0,
+				Parent = box,
+			}, { pad(8, 8, 4, 0) })
+		end
+
 		local function host(h)
+			local ctx = Tab._ctx
+			if ctx then
+				if not ctx.card then
+					ctx.col = shortest()
+					Tab._order = (Tab._order or 0) + 1
+					ctx.card = cardBox(P.cols[ctx.col], Tab._order)
+					if ctx.title and ctx.title ~= "" then heading(ctx.card, ctx.title) end
+					P.heights[ctx.col] = (P.heights[ctx.col] or 0) + 34
+				end
+				P.heights[ctx.col] = (P.heights[ctx.col] or 0) + h
+				return ctx.card
+			end
 			if not Tab._card then
 				Tab._colIdx = shortest()
 				Tab._card = cardBox(P.cols[Tab._colIdx], (Tab._order or 0) + 1)
@@ -631,22 +781,28 @@ function UI:CreateWindow(o)
 
 		function Tab:Section(so)
 			so = so or {}
+			-- inside a group, a Section is simply the next group
+			if Tab._ctx then
+				Tab._ctx.card = nil
+				Tab._ctx.title = tostring(so.Title or "")
+				return { Instance = host(0) }
+			end
 			Tab._colIdx = shortest()
 			Tab._order = (Tab._order or 0) + 1
 			local box = cardBox(P.cols[Tab._colIdx], Tab._order)
 			Tab._card = box
-			P.heights[Tab._colIdx] = (P.heights[Tab._colIdx] or 0) + 40
+			P.heights[Tab._colIdx] = (P.heights[Tab._colIdx] or 0) + 34
 			make("TextLabel", {
-				Size = UDim2.new(1, 0, 0, 20),
+				Size = UDim2.new(1, 0, 0, 26),
 				BackgroundTransparency = 1,
-				Text = tostring(so.Title or ""):upper(),
+				Text = tostring(so.Title or ""),
 				TextColor3 = T.Muted,
-				TextSize = 11,
+				TextSize = 12,
 				Font = Enum.Font.GothamBold,
 				TextXAlignment = Enum.TextXAlignment.Left,
 				LayoutOrder = 0,
 				Parent = box,
-			})
+			}, { pad(8, 8, 4, 0) })
 			if so.Desc and tostring(so.Desc) ~= "" then
 				make("TextLabel", {
 					Size = UDim2.new(1, 0, 0, 0),
@@ -728,15 +884,15 @@ function UI:CreateWindow(o)
 			bo = bo or {}
 			local desc = fits(bo, "Desc", "Description")
 			local hasDesc = desc ~= nil and tostring(desc) ~= ""
-			local h = hasDesc and 50 or 42
+			local h = hasDesc and 44 or 34
 			local btn = make("TextButton", {
 				Size = UDim2.new(1, 0, 0, h),
-				BackgroundColor3 = (bo.Style == "primary") and T.Accent or T.Panel2,
+				BackgroundColor3 = (bo.Style == "primary") and T.Accent or T.Panel,
 				BorderSizePixel = 0,
 				Text = "",
 				AutoButtonColor = false,
 				Parent = host(h + 7),
-			}, { corner(9), stroke(T.Edge, 0.4) })
+			}, { corner(8) })
 			local isPrimary = bo.Style == "primary"
 			make("TextLabel", {
 				Position = UDim2.fromOffset(12, hasDesc and 8 or 0),
@@ -769,13 +925,13 @@ function UI:CreateWindow(o)
 				Position = UDim2.new(1, -14, 0.5, 0),
 				Size = UDim2.fromOffset(16, 16),
 				BackgroundTransparency = 1,
-				Text = "\u{203A}",
-				TextColor3 = isPrimary and Color3.fromRGB(255, 255, 255) or T.Muted,
-				TextSize = 16,
+				Text = "\u{2039}",
+				TextColor3 = isPrimary and Color3.fromRGB(255, 255, 255) or T.Faint,
+				TextSize = 15,
 				Font = Enum.Font.GothamBold,
 				Parent = btn,
 			})
-			if not isPrimary then hover(btn, T.Panel2, T.Hover) end
+			if not isPrimary then hover(btn, T.Panel, T.Hover) end
 			pcall(function()
 				btn.MouseButton1Click:Connect(function()
 					local ok, err = pcall(bo.Callback or function() end)
@@ -790,14 +946,18 @@ function UI:CreateWindow(o)
 			local state = fits(to, "Value", "Default") == true
 			local desc = fits(to, "Desc", "Description")
 			local hasDesc = desc ~= nil and tostring(desc) ~= ""
-			local h = hasDesc and 50 or 44
-			local r = row(host(h + 7), h)
-			rowTitle(r, to.Title, hasDesc and desc or nil, 76)
+			local h = hasDesc and 44 or 34
+			local r = row(host(h + 2), h)
+			rowTitle(r, to.Title, hasDesc and desc or nil, 66)
+			-- Off is a single grey dot with no track behind it, on is a blue pill
+			-- with the dot at the far end. That difference is the whole tell in the
+			-- reference, and it reads at a glance across a column of them.
 			local sw = make("TextButton", {
 				AnchorPoint = Vector2.new(1, 0.5),
-				Position = UDim2.new(1, -12, 0.5, 0),
-				Size = UDim2.fromOffset(44, 24),
-				BackgroundColor3 = state and T.Accent or T.Off,
+				Position = UDim2.new(1, -10, 0.5, 0),
+				Size = UDim2.fromOffset(40, 20),
+				BackgroundColor3 = T.Accent,
+				BackgroundTransparency = state and 0 or 1,
 				BorderSizePixel = 0,
 				Text = "",
 				AutoButtonColor = false,
@@ -805,17 +965,18 @@ function UI:CreateWindow(o)
 			}, { corner(99) })
 			local knob = make("Frame", {
 				AnchorPoint = Vector2.new(0.5, 0.5),
-				Position = state and UDim2.new(1, -12, 0.5, 0) or UDim2.new(0, 12, 0.5, 0),
-				Size = UDim2.fromOffset(18, 18),
-				BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+				Position = state and UDim2.new(1, -10, 0.5, 0) or UDim2.new(1, -10, 0.5, 0),
+				Size = UDim2.fromOffset(16, 16),
+				BackgroundColor3 = state and Color3.fromRGB(255, 255, 255) or T.Off,
 				BorderSizePixel = 0,
 				Parent = sw,
 			}, { corner(99) })
 			local api = { Instance = r }
 			local function paint()
-				tween(sw, 0.15, { BackgroundColor3 = state and T.Accent or T.Off })
+				tween(sw, 0.15, { BackgroundTransparency = state and 0 or 1 })
 				tween(knob, 0.15, {
-					Position = state and UDim2.new(1, -12, 0.5, 0) or UDim2.new(0, 12, 0.5, 0),
+					Position = state and UDim2.new(1, -10, 0.5, 0) or UDim2.new(1, -10, 0.5, 0),
+					BackgroundColor3 = state and Color3.fromRGB(255, 255, 255) or T.Off,
 				})
 			end
 			local function fire()
@@ -829,7 +990,6 @@ function UI:CreateWindow(o)
 					fire()
 				end)
 			end)
-			hover(r, T.Panel2, T.Hover)
 			function api:Set(v)
 				state = v == true
 				paint()
@@ -854,8 +1014,8 @@ function UI:CreateWindow(o)
 			local val = math.clamp(def, lo, hi)
 			local desc = fits(so, "Desc", "Description")
 			local hasDesc = desc ~= nil and tostring(desc) ~= ""
-			local h = hasDesc and 74 or 60
-			local r = row(host(h + 7), h)
+			local h = hasDesc and 62 or 48
+			local r = row(host(h + 2), h)
 			local function pretty(x)
 				if step > 0 and step < 1 then return string.format("%.2f", x) end
 				if x == math.floor(x) then return string.format("%d", x) end
@@ -976,8 +1136,8 @@ function UI:CreateWindow(o)
 
 		function Tab:Input(io)
 			io = io or {}
-			local r = row(host(51), 44)
-			rowTitle(r, io.Title, nil, 160)
+			local r = row(host(38), 36)
+			rowTitle(r, io.Title, nil, 158)
 			local box = make("TextBox", {
 				AnchorPoint = Vector2.new(1, 0.5),
 				Position = UDim2.new(1, -12, 0.5, 0),
@@ -1011,9 +1171,9 @@ function UI:CreateWindow(o)
 			local key = tostring(fits(ko, "Value", "Default", "Key") or "")
 			local desc = fits(ko, "Desc", "Description")
 			local hasDesc = desc ~= nil and tostring(desc) ~= ""
-			local h = hasDesc and 50 or 44
-			local r = row(host(h + 7), h)
-			rowTitle(r, ko.Title, hasDesc and desc or nil, 110)
+			local h = hasDesc and 44 or 34
+			local r = row(host(h + 2), h)
+			rowTitle(r, ko.Title, hasDesc and desc or nil, 106)
 			local chip = make("TextButton", {
 				AnchorPoint = Vector2.new(1, 0.5),
 				Position = UDim2.new(1, -12, 0.5, 0),
@@ -1067,8 +1227,8 @@ function UI:CreateWindow(o)
 		function Tab:Colorpicker(co)
 			co = co or {}
 			local colr = co.Default or co.Value or Color3.fromRGB(255, 255, 255)
-			local r = row(host(51), 44)
-			rowTitle(r, co.Title, nil, 130)
+			local r = row(host(38), 36)
+			rowTitle(r, co.Title, nil, 76)
 			local swatch = make("TextButton", {
 				AnchorPoint = Vector2.new(1, 0.5),
 				Position = UDim2.new(1, -12, 0.5, 0),
@@ -1193,9 +1353,9 @@ function UI:CreateWindow(o)
 			end
 			local desc = fits(dobj, "Desc", "Description")
 			local hasDesc = desc ~= nil and tostring(desc) ~= ""
-			local h = hasDesc and 50 or 44
-			local r = row(host(h + 7), h)
-			rowTitle(r, dobj.Title, hasDesc and desc or nil, 150)
+			local h = hasDesc and 44 or 34
+			local r = row(host(h + 2), h)
+			rowTitle(r, dobj.Title, hasDesc and desc or nil, 148)
 			local function label()
 				local out = {}
 				for _, v in ipairs(values) do
@@ -1323,6 +1483,27 @@ function UI:CreateWindow(o)
 			return api
 		end
 
+		-- A GROUP on a page: its own heading, its own card, and every widget call
+		-- forwarded to this tab. It lets several of the old pages share one tab
+		-- without their rows running into each other.
+		local WIDGETS = { "Section", "Divider", "Space", "Paragraph", "Button", "Toggle",
+			"Slider", "Input", "Keybind", "Colorpicker", "Dropdown", "Label" }
+		function Tab:Sub(title)
+			local ctx = { title = tostring(title or ""), card = nil }
+			local S = { _ctx = ctx, _parent = Tab, Instance = P.page }
+			for _, m in ipairs(WIDGETS) do
+				S[m] = function(_, arg)
+					local prev = Tab._ctx
+					Tab._ctx = ctx
+					local a1, a2 = Tab[m](Tab, arg)
+					Tab._ctx = prev
+					return a1, a2
+				end
+			end
+			function S:Sub(t) return Tab:Sub(t) end
+			return S
+		end
+
 		-- names the old library also answered to
 		Tab.Label = Tab.Paragraph
 		Tab.Dropdown_Multi = Tab.Dropdown
@@ -1341,17 +1522,19 @@ function UI:CreateWindow(o)
 		local btn = make("TextButton", {
 			Name = name .. "Tab",
 			LayoutOrder = order,
-			Size = UDim2.new(1, 0, 0, 42),
-			BackgroundColor3 = T.Panel,
+			Size = UDim2.new(1, 0, 0, 38),
+			BackgroundColor3 = T.Panel2,
+			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
 			Text = "",
 			AutoButtonColor = false,
 			Parent = tabbar,
-		}, { corner(9) })
+		}, { corner(8) })
 		local mark = make("Frame", {
 			Name = "Mark",
-			Position = UDim2.fromOffset(0, 9),
-			Size = UDim2.fromOffset(3, 24),
+			AnchorPoint = Vector2.new(0, 0.5),
+			Position = UDim2.new(0, 0, 0.5, 0),
+			Size = UDim2.fromOffset(2, 18),
 			BackgroundColor3 = T.Accent,
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
@@ -1359,23 +1542,23 @@ function UI:CreateWindow(o)
 		}, { corner(99) })
 		local ico = make("TextLabel", {
 			Name = "Icon",
-			Position = UDim2.fromOffset(11, 0),
-			Size = UDim2.fromOffset(24, 42),
+			Position = UDim2.fromOffset(10, 0),
+			Size = UDim2.fromOffset(22, 38),
 			BackgroundTransparency = 1,
 			Text = glyph(to.Icon),
-			TextColor3 = T.Muted,
-			TextSize = 15,
+			TextColor3 = T.Faint,
+			TextSize = 14,
 			Font = Enum.Font.GothamBold,
 			Parent = btn,
 		})
 		local lab = make("TextLabel", {
 			Name = "Label",
-			Position = UDim2.fromOffset(41, 0),
-			Size = UDim2.new(1, -50, 1, 0),
+			Position = UDim2.fromOffset(38, 0),
+			Size = UDim2.new(1, -46, 1, 0),
 			BackgroundTransparency = 1,
 			Text = name:upper(),
 			TextColor3 = T.Muted,
-			TextSize = 12,
+			TextSize = 11,
 			Font = Enum.Font.GothamBold,
 			TextXAlignment = Enum.TextXAlignment.Left,
 			TextTruncate = Enum.TextTruncate.AtEnd,
@@ -1388,13 +1571,13 @@ function UI:CreateWindow(o)
 
 		local function select()
 			if W._cur == name then return end
+			-- there is no page title in this layout: the group headings do that job,
+			-- and the strip at the top belongs to the config
 			W._cur = name
-			title.Text = name
-			sub.Text = subtitle
 			for _, t in ipairs(W._tabs) do
 				local on = t.Name == name
-				tween(t._btn, 0.15, { BackgroundColor3 = on and T.Hover or T.Panel })
-				tween(t._icon, 0.15, { TextColor3 = on and T.Text or T.Muted })
+				tween(t._btn, 0.15, { BackgroundTransparency = on and 0 or 1 })
+				tween(t._icon, 0.15, { TextColor3 = on and T.Accent or T.Faint })
 				tween(t._label, 0.15, { TextColor3 = on and T.Text or T.Muted })
 				tween(t._mark, 0.15, { BackgroundTransparency = on and 0 or 1 })
 				t._page.page.Visible = on
@@ -1404,10 +1587,10 @@ function UI:CreateWindow(o)
 		pcall(function()
 			btn.MouseButton1Click:Connect(select)
 			btn.MouseEnter:Connect(function()
-				if W._cur ~= name then tween(btn, 0.12, { BackgroundColor3 = T.Panel2 }) end
+				if W._cur ~= name then tween(btn, 0.12, { BackgroundTransparency = 0.55 }) end
 			end)
 			btn.MouseLeave:Connect(function()
-				if W._cur ~= name then tween(btn, 0.12, { BackgroundColor3 = T.Panel }) end
+				if W._cur ~= name then tween(btn, 0.12, { BackgroundTransparency = 1 }) end
 			end)
 		end)
 		if not W._cur then select() end
@@ -1507,7 +1690,8 @@ function UI:CreateWindow(o)
 			pcall(function() toggleKey = Enum.KeyCode[k] end)
 		end
 		pcall(function()
-			keyHint.Text = tostring(toggleKey):gsub("^Enum%.KeyCode%.", "") .. "  \u{2022}  hide"
+			local nm = tostring(toggleKey):gsub("^Enum%.KeyCode%.", "")
+			reopen.Text = tostring(o.Title or "Molly Hub") .. "   " .. nm
 		end)
 		return self
 	end
@@ -1521,14 +1705,18 @@ function UI:CreateWindow(o)
 
 	local dragging, from, at0 = false, nil, nil
 	pcall(function()
-		top.InputBegan:Connect(function(input)
-			local t = input.UserInputType
-			if t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch then
-				dragging = true
-				from = input.Position
-				at0 = card.Position
-			end
-		end)
+		local function grip(where)
+			where.InputBegan:Connect(function(input)
+				local t = input.UserInputType
+				if t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch then
+					dragging = true
+					from = input.Position
+					at0 = card.Position
+				end
+			end)
+		end
+		grip(head)
+		grip(bar)
 		UserInputService.InputChanged:Connect(function(input)
 			if not dragging or not from or not at0 then return end
 			local t = input.UserInputType
@@ -1548,7 +1736,7 @@ function UI:CreateWindow(o)
 	end)
 
 	-- the old library let you set the strip in the top bar
-	function W:Tag(text) pcall(function() pillText.Text = tostring(text or "") end) return self end
+	function W:Tag(text) pcall(function() cfgText.Text = tostring(text or "") end) return self end
 	W.SetHint = W.Tag
 	function W:SetIconSize() return self end
 
@@ -1668,6 +1856,119 @@ function UI:CreateWindow(o)
 	end
 	W.ConfigManager = CM
 	W.CurrentConfig = configObject("default")
+
+	--== the config strip does what it looks like it does =======================
+	local picked = "default"
+	local cfgList = make("ScrollingFrame", {
+		Name = "ConfigList",
+		Position = UDim2.fromOffset(52, barH - 4),
+		Size = UDim2.fromOffset(132, 0),
+		BackgroundColor3 = T.Panel,
+		BorderSizePixel = 0,
+		CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		ScrollBarThickness = 2,
+		ScrollBarImageColor3 = T.Edge,
+		Visible = false,
+		ZIndex = 8,
+		Parent = content,
+	}, { corner(8), stroke(T.Edge, 0.4), list(3), pad(5, 5, 5, 5) })
+
+	local function drawList()
+		for _, c in ipairs(cfgList:GetChildren()) do
+			if c:IsA("TextButton") then c:Destroy() end
+		end
+		local all = CM:AllConfigs()
+		if #all == 0 then all = { "default" } end
+		for i, nm in ipairs(all) do
+			local item = make("TextButton", {
+				Size = UDim2.new(1, 0, 0, 26),
+				BackgroundColor3 = (nm == picked) and T.Accent or T.Bg,
+				BorderSizePixel = 0,
+				Text = nm,
+				TextColor3 = (nm == picked) and Color3.fromRGB(255, 255, 255) or T.Text,
+				TextSize = 12,
+				Font = Enum.Font.Gotham,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				AutoButtonColor = false,
+				LayoutOrder = i,
+				Parent = cfgList,
+			}, { corner(6), pad(8, 8, 0, 0) })
+			pcall(function()
+				item.MouseButton1Click:Connect(function()
+					picked = nm
+					cfgText.Text = nm
+					cfgList.Visible = false
+					W.CurrentConfig = configObject(nm)
+					if W.CurrentConfig:Load() then
+						UI:Notify({ Title = "Config", Content = "loaded " .. nm })
+					end
+					drawList()
+				end)
+			end)
+		end
+		cfgList.Size = UDim2.fromOffset(132, math.min(#all * 29 + 10, 190))
+	end
+	drawList()
+
+	pcall(function()
+		cfgPill.MouseButton1Click:Connect(function()
+			cfgList.Visible = not cfgList.Visible
+			if cfgList.Visible then drawList() end
+		end)
+		saveBtn.MouseButton1Click:Connect(function()
+			W.CurrentConfig = configObject(picked)
+			if W.CurrentConfig:Save() then
+				UI:Notify({ Title = "Config", Content = "saved " .. picked })
+			end
+			drawList()
+		end)
+		saveBtn.MouseEnter:Connect(function()
+			tween(saveBtn, 0.12, { BackgroundColor3 = T.Hover, TextColor3 = T.Text })
+		end)
+		saveBtn.MouseLeave:Connect(function()
+			tween(saveBtn, 0.12, { BackgroundColor3 = T.Panel, TextColor3 = T.Muted })
+		end)
+	end)
+
+	-- the magnifier: type a word and only the rows that match stay on the page
+	pcall(function()
+		searchBtn.MouseButton1Click:Connect(function()
+			searchBox.Visible = not searchBox.Visible
+			if searchBox.Visible then
+				pcall(function() searchBox:CaptureFocus() end)
+			else
+				searchBox.Text = ""
+			end
+		end)
+		local function apply()
+			local q = tostring(searchBox.Text or ""):lower()
+			for _, t in ipairs(W._tabs) do
+				for _, colFrame in ipairs(t._cols or {}) do
+					for _, box in ipairs(colFrame:GetChildren()) do
+						if box:IsA("Frame") then
+							local anyShown, rows = false, 0
+							for _, r in ipairs(box:GetChildren()) do
+								if r:IsA("Frame") or r:IsA("TextButton") then
+									rows = rows + 1
+									local text = ""
+									for _, l in ipairs(r:GetDescendants()) do
+										if l:IsA("TextLabel") then text = text .. " " .. tostring(l.Text) end
+									end
+									if r:IsA("TextButton") then text = text .. " " .. tostring(r.Text) end
+									local hit = (q == "") or text:lower():find(q, 1, true) ~= nil
+									r.Visible = hit
+									if hit then anyShown = true end
+								end
+							end
+							if rows > 0 then box.Visible = anyShown or q == "" end
+						end
+					end
+				end
+			end
+		end
+		searchBox:GetPropertyChangedSignal("Text"):Connect(apply)
+	end)
 
 	UI.Windows[#UI.Windows + 1] = W
 	return W
