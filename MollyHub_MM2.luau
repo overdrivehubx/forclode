@@ -30,10 +30,14 @@ game:GetService("HttpService")
 
 local CurrentCamera = Workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
--- Rubis draws this menu. It is the library the script was written against, so
--- every widget behaves the way it was meant to; the styling below is Rubis's
--- own options rather than anything bolted on.
-local _Raw = loadstring(game:HttpGet("https://api.rubis.app/v2/scrap/D9CpDTMz8Hh4v1wA/raw"))()
+-- MollyMenu draws this menu: one file of ours, no outside library, no asset ids.
+-- It answers the same calls the old one did, so nothing below had to change to
+-- move onto it. The query string misses GitHub's cache, which otherwise serves a
+-- build from several minutes ago with nothing on screen to say so.
+local MENU_URL = "https://raw.githubusercontent.com/overdrivehubx/forclode/"
+	.. "claude/trading-ui-offline-harness-vxuc86/MollyMenu.luau?nc="
+	.. tostring(os.time()) .. "-" .. tostring(math.random(1, 1000000000))
+local _Raw = loadstring(game:HttpGet(MENU_URL))()
 
 _Raw:SetTheme("Dark")
 
@@ -56,18 +60,18 @@ local ACCENT = Color3.fromHex("#8B7CFF")
 local ACCENT_DEEP = Color3.fromHex("#6D5BD0")
 
 local u8 = _Raw:CreateWindow({
-	Title = "MollyHub",
+	Title = "Molly Hub",
 	Icon = "crown",
 	Author = "Murder Mystery 2",
 	Folder = "MollyHub",
-	Size = UDim2.fromOffset(560, 380),
+	Size = UDim2.fromOffset(820, 500),
 	-- Transparent asks the library for an acrylic backdrop, and an executor that
 	-- cannot blur draws the whole window see-through instead — which is what
 	-- Potassium does. A solid panel looks the same everywhere.
 	Transparent = false,
 	Theme = "Dark",
 	Resizable = true,
-	SideBarWidth = 168,
+	SideBarWidth = 205,
 	BackgroundImageTransparency = 1,
 	HideSearchBar = false,
 	ScrollBarEnabled = true,
@@ -78,7 +82,7 @@ local u8 = _Raw:CreateWindow({
 		end
 	},
 	OpenButton = {
-		Title = "MollyHub",
+		Title = "Molly Hub",
 		CornerRadius = UDim.new(1, 0),
 		StrokeThickness = 1,
 		Enabled = true,
