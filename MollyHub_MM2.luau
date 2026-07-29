@@ -194,7 +194,7 @@ do
 		chamStyle = "Hologram", chamWeapon = true, chamSelf = false, chamHide = true,
 		chamAlpha = 0,
 		wallFill = 1,
-		aura = false, auraStyle = "Mist", auraSelf = false, auraAmount = 1, auraGlow = 0.35,
+		aura = false, auraStyle = "Mist", auraSelf = false, auraAmount = 1, auraGlow = 0.6,
 		ring = false, ringSelf = false, ringSize = 6, ringShape = "Ring",
 		jumpRing = false, jumpSelf = false,
 		wings = false, wingsSelf = false, wingShape = "Feather", wingSize = 4.5,
@@ -296,29 +296,14 @@ do
 			end
 			-- The weapon MM2 hangs on the body — a knife on the back, a gun at the
 			-- hip. Those markers are replicated, so they read for every player
-			-- whether the weapon is in their hands or not.
+			-- whether the weapon is in their hands or not. This and the tool above
+			-- are one question, "what are they carrying", and it is the only
+			-- fallback: the attribute hunt that was here has gone.
 			if not role then
 				local k = char:FindFirstChild("DisplayRefKnife")
 				local g = char:FindFirstChild("DisplayRefGun")
 				if k and k.Value then role = "Murderer"
 				elseif g and g.Value then role = "Sheriff" end
-			end
-			-- and anything the game left on an attribute
-			if not role then
-				for _, src in ipairs({ player, char }) do
-					local oka, at = pcall(function() return src:GetAttributes() end)
-					if oka and type(at) == "table" then
-						for an, av in pairs(at) do
-							local ln = tostring(an):lower()
-							if (ln:find("role") or ln:find("team")) and type(av) == "string" then
-								local lv = av:lower()
-								if lv:find("murder") then role = "Murderer"
-								elseif lv:find("sheriff") or lv:find("hero") then role = "Sheriff"
-								elseif lv:find("innocent") then role = "Innocent" end
-							end
-						end
-					end
-				end
 			end
 		end)
 		sniffed[player] = { role = role, dead = dead, at = os.clock() }
@@ -399,6 +384,8 @@ do
 	function FX.chamOff(player)
 		local rec = FX.cham[player]
 		if not rec then return end
+		rec.off = true
+		for _, c in ipairs(rec.conns or {}) do pcall(function() c:Disconnect() end) end
 		-- their own look back, before the highlight goes
 		pcall(function()
 			for part, was in pairs(rec.mats or {}) do
@@ -407,11 +394,39 @@ do
 					part.Color = was.c
 					part.Transparency = was.t
 					part.Reflectance = was.r
+					if was.tex ~= nil then part.TextureID = was.tex end
 				end
+			end
+		end)
+		pcall(function()
+			for dec, was in pairs(rec.decals or {}) do
+				if dec.Parent then dec.Transparency = was end
 			end
 		end)
 		pcall(function() if rec.hl then rec.hl:Destroy() end end)
 		FX.cham[player] = nil
+	end
+
+	-- Hold one part at the look we gave it. NOT on a timer — a timer is what the
+	-- flicker was: we wrote, the game wrote back, and a quarter of a second later
+	-- we wrote again, which is a blink four times a second. Instead we listen for
+	-- the property changing and put it back in the same frame, so a write by the
+	-- game never gets drawn.
+	local function pin(rec, part, prop)
+		local conn
+		pcall(function()
+			conn = part:GetPropertyChangedSignal(prop):Connect(function()
+				if rec.off or rec.guard then return end
+				rec.guard = true
+				pcall(function()
+					if prop == "Material" then part.Material = rec.want.mat
+					elseif prop == "Color" then part.Color = rec.want.colr
+					elseif prop == "Transparency" then part.Transparency = rec.want.alpha end
+				end)
+				rec.guard = false
+			end)
+		end)
+		if conn then rec.conns[#rec.conns + 1] = conn end
 	end
 
 	function FX.chamOn(player, char, colr, style)
@@ -423,11 +438,11 @@ do
 			rec = nil
 		end
 		if not rec then
-			rec = { char = char, style = style, mats = {} }
+			rec = { char = char, style = style, mats = {}, decals = {}, conns = {},
+				want = {}, n = 0 }
 			FX.cham[player] = rec
 		end
 		if d.cycle then colr = Color3.fromHSV((os.clock() * 0.18) % 1, 0.9, 1) end
-		colr = FX.lit(colr, 1)
 
 		-- the rim, and the only way to see them through a wall
 		local wantRim = V.chamOutline or (d.fill and d.fill < 1)
@@ -459,16 +474,32 @@ do
 		end
 
 		if not d.paint then return end
-		-- The painted look. Written to their real parts, and only where it differs
-		-- from what is already there — four times a second, not sixty. The game
-		-- writing to the same parts is what made an every-frame version flicker.
-		if (os.clock() - (rec.at or 0)) < 0.25 and rec.colr == colr then return end
-		rec.at = os.clock()
-		rec.colr = colr
+		local mat = Enum.Material[d.paint]
+		if not mat then return end
+		rec.want.mat = mat
+		rec.want.alpha = math.clamp(d.t + V.chamAlpha, 0, 0.95)
+		-- a colour that is meant to move gets written when it has moved enough to
+		-- see, which is ten times a second, not sixty
+		local moved = (rec.want.colr == nil) or (not d.cycle and rec.want.colr ~= colr)
+			or (d.cycle and (os.clock() - (rec.colrAt or 0)) > 0.09)
+		if moved then
+			rec.want.colr = colr
+			rec.colrAt = os.clock()
+		end
+
+		-- count what we paint: a part handed out late (a weapon, a hat) or a face
+		-- that loaded after we started needs the look and its own watchers
+		local now = 0
 		pcall(function()
-			local want = Enum.Material[d.paint]
-			if not want then return end
-			local alpha = math.clamp(d.t + V.chamAlpha, 0, 0.95)
+			for _, p in ipairs(char:GetDescendants()) do
+				if p:IsA("BasePart") or p:IsA("Decal") or p:IsA("Texture") then
+					now = now + 1
+				end
+			end
+		end)
+		if now == rec.n and not moved then return end
+		rec.n = now
+		pcall(function()
 			for _, p in ipairs(char:GetDescendants()) do
 				local isTool = p:FindFirstAncestorWhichIsA("Tool") ~= nil
 				if p:IsA("BasePart") and p.Name ~= "HumanoidRootPart"
@@ -476,11 +507,32 @@ do
 					if not rec.mats[p] then
 						rec.mats[p] = { m = p.Material, c = p.Color,
 							t = p.Transparency, r = p.Reflectance }
+						-- A MeshPart draws its own texture over the material, so a
+						-- head with a skin on it stayed a head while the rest of
+						-- them turned to glass. Clear it and remember it.
+						pcall(function()
+							if p:IsA("MeshPart") and p.TextureID ~= "" then
+								rec.mats[p].tex = p.TextureID
+								p.TextureID = ""
+							end
+						end)
+						pin(rec, p, "Material")
+						pin(rec, p, "Color")
+						pin(rec, p, "Transparency")
 					end
-					if p.Material ~= want then p.Material = want end
-					if p.Color ~= colr then p.Color = colr end
-					if p.Transparency ~= alpha then p.Transparency = alpha end
+					rec.guard = true
+					if p.Material ~= mat then p.Material = mat end
+					if p.Color ~= rec.want.colr then p.Color = rec.want.colr end
+					if p.Transparency ~= rec.want.alpha then p.Transparency = rec.want.alpha end
 					if p.Reflectance ~= 0 then p.Reflectance = 0 end
+					rec.guard = false
+				end
+			end
+			-- and the face, which is a Decal and is drawn on top of everything
+			for _, dec in ipairs(char:GetDescendants()) do
+				if dec:IsA("Decal") or dec:IsA("Texture") then
+					if rec.decals[dec] == nil then rec.decals[dec] = dec.Transparency end
+					if dec.Transparency ~= 1 then dec.Transparency = 1 end
 				end
 			end
 		end)
@@ -491,28 +543,33 @@ do
 	-- to throw. Fire is still fire, but it sits on them instead of towering.
 	--   drag pulls particles up short so they hang rather than shoot
 	--   spin gives each one its own rotation, which stops the flat sprite look
+	-- Visible, and not a torch. The pass before this went too far the other way:
+	-- Mist sat at 0.86 transparency and Wisp at a fifth of a stud, so there was
+	-- nothing on screen to see. These are sized and faded to read at ten studs.
+	--   drag pulls particles up short so they hang rather than shoot
+	--   spin gives each one its own rotation, which stops the flat sprite look
 	local AURA = {
 		Mist     = { tex = "rbxasset://textures/particles/smoke_main.dds",
-			rate = 22, life = 1.1, size = 1.1, grow = 1.9, speed = 0.5, spread = 60,
-			up = 0.8, drag = 4, spin = 18, fade = 0.86 },
+			rate = 26, life = 1.2, size = 2.2, grow = 3, speed = 0.6, spread = 55,
+			up = 1, drag = 3.5, spin = 20, fade = 0.45 },
 		Wisp     = { tex = "rbxasset://textures/particles/sparkles_main.dds",
-			rate = 16, life = 1.6, size = 0.22, grow = 0.2, speed = 0.6, spread = 140,
-			up = 1.4, drag = 3, spin = 90, fade = 0.4 },
+			rate = 24, life = 1.5, size = 0.55, grow = 0.4, speed = 0.8, spread = 140,
+			up = 1.6, drag = 2.5, spin = 90, fade = 0.15 },
 		Fire     = { tex = "rbxasset://textures/particles/fire_main.dds",
-			rate = 34, life = 0.5, size = 0.7, grow = 1.1, speed = 1.8, spread = 14,
-			up = 4, drag = 3.5, spin = 70, fade = 0.55 },
+			rate = 40, life = 0.6, size = 1.4, grow = 1.8, speed = 2.2, spread = 16,
+			up = 5, drag = 3, spin = 70, fade = 0.25 },
 		Sparkles = { tex = "rbxasset://textures/particles/sparkles_main.dds",
-			rate = 26, life = 1.2, size = 0.2, grow = 0.7, speed = 1, spread = 180,
-			up = 1.2, drag = 2, spin = 160, fade = 0.35 },
+			rate = 30, life = 1.2, size = 0.45, grow = 0.8, speed = 1.2, spread = 180,
+			up = 1.4, drag = 2, spin = 160, fade = 0.15 },
 		Smoke    = { tex = "rbxasset://textures/particles/smoke_main.dds",
-			rate = 8, life = 2.2, size = 1.3, grow = 2.6, speed = 0.6, spread = 40,
-			up = 1, drag = 1.5, spin = 22, fade = 0.8 },
+			rate = 12, life = 2.2, size = 2.6, grow = 4.5, speed = 0.7, spread = 40,
+			up = 1.2, drag = 1.5, spin = 22, fade = 0.6 },
 		Wings    = { tex = "rbxasset://textures/particles/sparkles_main.dds",
-			rate = 55, life = 0.45, size = 0.4, grow = 0.7, speed = 6, spread = 45,
-			up = 2.5, drag = 6, spin = 110, fade = 0.35, back = true },
+			rate = 70, life = 0.5, size = 0.7, grow = 1, speed = 7, spread = 45,
+			up = 3, drag = 6, spin = 110, fade = 0.2, back = true },
 		Ember    = { tex = "rbxasset://textures/particles/fire_main.dds",
-			rate = 7, life = 2.4, size = 0.18, grow = 0.25, speed = 0.6, spread = 120,
-			up = 1.8, drag = 3, spin = 60, fade = 0.4 },
+			rate = 10, life = 2.4, size = 0.4, grow = 0.5, speed = 0.8, spread = 120,
+			up = 2, drag = 3, spin = 60, fade = 0.2 },
 	}
 	FX.auraNames = { "Mist", "Wisp", "Fire", "Sparkles", "Smoke", "Wings", "Ember" }
 
@@ -1861,7 +1918,7 @@ do
 	EspTab:Slider({ Title = "Aura amount", Step = 0.1, Value = { Min = 0.2, Max = 3, Default = 1 },
 		Callback = function(v) V.auraAmount = v end })
 	EspTab:Slider({ Title = "Aura glow", Desc = "1 washes the colour out", Step = 0.05,
-		Value = { Min = 0, Max = 1, Default = 0.35 },
+		Value = { Min = 0, Max = 1, Default = 0.6 },
 		Callback = function(v)
 			V.auraGlow = v
 			for pl in pairs(FX.aura) do FX.dropAura(pl) end
