@@ -118,18 +118,26 @@ end
 
 --== the scan =================================================================
 local found = {}
+-- The scan walks every table in the VM, and its own bookkeeping is in there
+-- too: the candidate list, and the list getgc handed back. Both came back as
+-- "finds" and filled the report with our own output. Mark them and skip them.
+local MINE = setmetatable({}, { __mode = "k" })
+MINE[found] = true
 
 local function scan()
 	found = {}
+	MINE[found] = true
 	if not GETGC then return nil, "this executor has no getgc, so memory cannot be read" end
 	local objects
 	local ok = pcall(function() objects = GETGC(true) end)
 	if not ok or type(objects) ~= "table" then
 		return nil, "getgc refused"
 	end
+	MINE[objects] = true
 	local seen = {}
 	for _, o in pairs(objects) do
-		if type(o) == "table" and not seen[o] then
+		if type(o) == "table" and not seen[o] and not MINE[o] and o ~= _G
+			and o ~= rawget(_G, "MH_MeshMap") then
 			seen[o] = true
 			local s, entries, withId, named, sample = score(o)
 			if s > 0 then
@@ -170,12 +178,14 @@ end
 
 local function anchoredScan(want)
 	found = {}
+	MINE[found] = true
 	if not GETGC then return nil, "this executor has no getgc, so memory cannot be read" end
 	local id = tostring(want or ""):match("(%d+)")
 	if not id then return nil, "type an asset id to look for" end
 	local objects
 	local ok = pcall(function() objects = GETGC(true) end)
 	if not ok or type(objects) ~= "table" then return nil, "getgc refused" end
+	MINE[objects] = true
 	local function holds(v)
 		if type(v) == "number" then return string.format("%d", math.floor(v)) == id end
 		if type(v) == "string" then return v == id or v:match("(%d%d%d%d%d+)") == id end
@@ -183,7 +193,8 @@ local function anchoredScan(want)
 	end
 	local seen = {}
 	for _, o in pairs(objects) do
-		if type(o) == "table" and not seen[o] then
+		if type(o) == "table" and not seen[o] and not MINE[o] and o ~= _G
+			and o ~= rawget(_G, "MH_MeshMap") then
 			seen[o] = true
 			local at, field
 			local okw = pcall(function()
@@ -349,6 +360,55 @@ local function toMeshMap(t)
 		end
 	end)
 	return out, n
+end
+
+--== finding it by SHAPE, not by a lucky id ===================================
+-- Anchoring on an id only works if you already wear a weapon the other script
+-- knows. Anchoring on the SHAPE does not: a weapon record is the only thing in
+-- a game that carries an asset id AND a placement — a Scale, an Offset, a
+-- CFrame, a Grip. The item catalog has ids and no geometry; a list of parts has
+-- geometry and no ids. Nothing else in memory has both, per entry, hundreds of
+-- times over.
+local function shapeScan()
+	found = {}
+	MINE[found] = true
+	if not GETGC then return nil, "this executor has no getgc, so memory cannot be read" end
+	local objects
+	local ok = pcall(function() objects = GETGC(true) end)
+	if not ok or type(objects) ~= "table" then return nil, "getgc refused" end
+	MINE[objects] = true
+	local seen = {}
+	for _, o in pairs(objects) do
+		if type(o) == "table" and not seen[o] and not MINE[o] and o ~= _G
+			and o ~= rawget(_G, "MH_MeshMap") then
+			seen[o] = true
+			local recs, entries, placed, sample = 0, 0, 0, nil
+			pcall(function()
+				for k, v in pairs(o) do
+					entries = entries + 1
+					if entries > 4000 then break end
+					if type(k) == "string" and #k > 1 and #k < 64 and type(v) == "table" then
+						local rec = toRecord(v)
+						if rec then
+							recs = recs + 1
+							if rec.sx or rec.cf or rec.grip then placed = placed + 1 end
+							if not sample then sample = { key = k, value = v } end
+						end
+					end
+				end
+			end)
+			-- a handful of placed records is already more than a catalog can fake
+			if placed >= 3 then
+				found[#found + 1] = {
+					table = o, score = placed * 10 + recs, entries = entries,
+					withId = recs, named = recs, sample = sample,
+					note = recs .. " weapon record(s), " .. placed .. " with a placement",
+				}
+			end
+		end
+	end
+	table.sort(found, function(a, b) return a.score > b.score end)
+	return found
 end
 
 --== describing a table we cannot convert =====================================
@@ -526,11 +586,11 @@ T:Button({
 
 T:Section({ Title = "Or look for an id you know is a mesh" })
 T:Paragraph({
-	Title = "Why this is the better scan",
-	Desc = "Ranking by shape picked the item catalog last time, and every id in it "
-		.. "was an icon, not a mesh. Put in an id you know IS a mesh and only "
-		.. "tables holding it come back. Leave the box alone to use the mesh on "
-		.. "your own weapon right now, or Gingerscope's, which was checked by hand.",
+	Title = "Two ways past the item catalog",
+	Desc = "By shape is the one to try first — a weapon record is the only thing "
+		.. "carrying an asset id and a placement together, which no catalog does. "
+		.. "By id is the fallback: put in a number you know IS a mesh, or leave the "
+		.. "box empty to try Gingerscope's and whatever you are wearing.",
 })
 
 local anchorId = ""
@@ -540,31 +600,55 @@ T:Search({
 	Callback = function(v) anchorId = v end,
 })
 T:Button({
-	Title = "Find the table holding it",
+	Title = "Find a weapon table by its shape",
+	Desc = "no id needed: looks for records that carry an asset id AND a placement",
 	Style = "primary",
+	Callback = function()
+		local list, why = shapeScan()
+		if not list then
+			return UI:Notify({ Title = "Cannot scan", Content = tostring(why), Duration = 8 })
+		end
+		listView:Set(rows(), #found .. " table(s) shaped like a weapon list")
+		UI:Notify({ Title = #found > 0 and "Found" or "Nothing shaped like one", Duration = 10,
+			Content = #found > 0 and (found[1].note .. "  -  best of " .. #found)
+				or "no table holds records with both an id and a placement. Run the "
+					.. "other script first and let it finish loading." })
+	end,
+})
+
+T:Button({
+	Title = "Find the table holding it",
+	Desc = "the id search: every id is tried and the results are merged",
 	Callback = function()
 		local tries = {}
 		if tostring(anchorId):match("%d+") then
-			tries[#tries + 1] = anchorId
+			tries[#tries + 1] = tostring(anchorId):match("(%d+)")
 		else
+			-- Gingerscope first: it is a SKIN mesh, so a skin list would hold it.
+			-- The mesh you happen to be wearing is usually the default weapon,
+			-- which a skin list has no reason to contain — searching only for
+			-- that is why the last scan came back with nothing but lists of parts.
+			tries[#tries + 1] = "15374602183"
 			for _, id in ipairs(meshOnMe()) do tries[#tries + 1] = id end
-			tries[#tries + 1] = "15374602183"          -- Gingerscope, verified by hand
 		end
-		local why
+		local all, why = {}, nil
 		for _, id in ipairs(tries) do
 			local list, w = anchoredScan(id)
-			why = w
-			if list and #list > 0 then
-				listView:Set(rows(), #found .. " table(s) hold " .. id)
-				return UI:Notify({ Title = "Found it", Duration = 8,
-					Content = #found .. " table(s) hold " .. id .. "  -  best has "
-						.. found[1].entries .. " entries" })
+			why = w or why
+			for _, c in ipairs(list or {}) do
+				local dup = false
+				for _, e in ipairs(all) do if e.table == c.table then dup = true break end end
+				if not dup then all[#all + 1] = c end
 			end
 		end
-		listView:Set(rows(), "nothing holds any of those ids")
-		UI:Notify({ Title = "Nothing holds it", Duration = 10,
-			Content = why or ("tried " .. #tries .. " id(s). If no table in memory "
-				.. "holds a real mesh id, the other script has no mesh list to take.") })
+		found = all
+		MINE[found] = true
+		table.sort(found, function(a, b) return (a.score or 0) > (b.score or 0) end)
+		listView:Set(rows(), #found .. " table(s) across " .. #tries .. " id(s)")
+		UI:Notify({ Title = #found > 0 and "Found" or "Nothing holds them", Duration = 10,
+			Content = #found > 0 and (#found .. " table(s), best has "
+				.. tostring(found[1].entries) .. " entries")
+				or (why or ("tried " .. #tries .. " id(s) and nothing in memory holds any")) })
 	end,
 })
 
