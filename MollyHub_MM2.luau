@@ -189,12 +189,14 @@ do
 	local V = {
 		chams = false, chamFill = 0.55, chamWalls = true, chamOutline = true, chamDead = true,
 		chamStyle = "Hologram", chamWeapon = true, chamSelf = false, chamHide = true,
-		wallFill = 0.6,
-		aura = false, auraStyle = "Fire", auraSelf = false,
+		wallFill = 1,
+		aura = false, auraStyle = "Fire", auraSelf = false, auraAmount = 1, auraGlow = 0.55,
 		ring = false, ringSelf = false, ringSize = 6, jumpRing = false,
 		hat = false, hatSelf = false, hatSize = 5, hatSpin = true,
+		halo = false, haloSelf = false,
 		light = false, lightSelf = false, lightPower = 2, lightRange = 16,
 		trail = false, trailSelf = false, trailLife = 0.7,
+		trailWidth = 1.6, trailGlow = 0.25, trailFade = 0.55,
 		roleColors = true, oneColor = Color3.fromRGB(150, 120, 255), bright = 1,
 		visCheck = false, visHide = false, visDim = 0.45,
 		distStuds = true, distRole = true,
@@ -257,7 +259,8 @@ do
 	-- written per frame at all — the copy simply follows. Nothing fights, so
 	-- nothing flickers, and it costs one build per character instead of a walk of
 	-- the whole model every frame.
-	local FX = { body = {}, aura = {}, ring = {}, hat = {}, light = {}, trail = {}, seen = {} }
+	local FX = { body = {}, aura = {}, ring = {}, hat = {}, halo = {}, light = {},
+		trail = {}, seen = {} }
 
 	-- Brighter or darker than the colour asked for, without leaving it.
 	function FX.lit(c, k)
@@ -281,16 +284,21 @@ do
 	-- These are LOOKS. ForceField is not one of them — it is the material a
 	-- couple of them are built out of, which is a different question and not one
 	-- to put in a menu.
+	-- Each of these has to look like a DIFFERENT thing, not the same thing in
+	-- another colour. What separates them is the material, how much you can see
+	-- through it, how much it mirrors, and whether it is lit by the world at all.
+	--   grow  puffs the copy out, so a shell reads as a shell
+	--   fuzz  a second, larger, fainter copy for a glow around the edge
 	local STYLE = {
 		Hologram = { mat = "ForceField",    t = 0,    r = 0 },
-		Wire     = { mat = "ForceField",    t = 0.45, r = 0 },
-		Glow     = { mat = "Neon",          t = 0,    r = 0 },
-		Ghost    = { mat = "Neon",          t = 0.62, r = 0 },
-		Rainbow  = { mat = "Neon",          t = 0,    r = 0, cycle = true },
-		Crystal  = { mat = "Glass",         t = 0.2,  r = 0.9 },
-		Glass    = { mat = "Glass",         t = 0.5,  r = 0.35 },
-		Ice      = { mat = "Glacier",       t = 0.3,  r = 0.5 },
-		Metal    = { mat = "Foil",          t = 0,    r = 0.65 },
+		Wire     = { mat = "ForceField",    t = 0.55, r = 0,    grow = 1.06 },
+		Glow     = { mat = "Neon",          t = 0,    r = 0,    fuzz = 1.12 },
+		Ghost    = { mat = "Neon",          t = 0.72, r = 0,    grow = 1.03 },
+		Rainbow  = { mat = "Neon",          t = 0,    r = 0,    cycle = true },
+		Crystal  = { mat = "Glass",         t = 0.1,  r = 1,    grow = 1.02 },
+		Glass    = { mat = "Glass",         t = 0.6,  r = 0.2 },
+		Ice      = { mat = "Glacier",       t = 0.25, r = 0.45 },
+		Metal    = { mat = "Foil",          t = 0,    r = 1 },
 		Flat     = { mat = "SmoothPlastic", t = 0,    r = 0 },
 	}
 	-- and these two are the flat overlay, which needs no copy at all
@@ -364,7 +372,8 @@ do
 						-- why the first version was almost invisible: their own
 						-- parts won the depth test. Hide theirs FOR US ONLY and the
 						-- copy is the whole character, the way the shots look.
-						c.Size = V.chamHide and src.Size or (src.Size * 1.04)
+						local grow = d.grow or (V.chamHide and 1 or 1.04)
+						c.Size = src.Size * grow
 						c.CFrame = src.CFrame
 						c.Parent = m
 						local w = Instance.new("WeldConstraint")
@@ -372,6 +381,18 @@ do
 						w.Part1 = c
 						w.Parent = c
 						parts[#parts + 1] = c
+						if d.fuzz then
+							local halo = c:Clone()
+							halo.Size = src.Size * d.fuzz
+							halo.Transparency = 0.82
+							halo.CFrame = src.CFrame
+							halo.Parent = m
+							local w2 = Instance.new("WeldConstraint")
+							w2.Part0 = src
+							w2.Part1 = halo
+							w2.Parent = halo
+							parts[#parts + 1] = halo
+						end
 						if V.chamHide then
 							src.LocalTransparencyModifier = 1
 							hid[#hid + 1] = src
@@ -433,7 +454,7 @@ do
 			pcall(function()
 				rec.glow.FillColor = colr
 				rec.glow.OutlineColor = FX.lit(colr, 1.6)
-				rec.glow.FillTransparency = V.chamWalls and V.wallFill or 1
+				rec.glow.FillTransparency = V.chamWalls and math.clamp(V.wallFill, 0, 1) or 1
 				rec.glow.OutlineTransparency = V.chamOutline and 0 or 1
 				rec.glow.DepthMode = V.chamWalls and Enum.HighlightDepthMode.AlwaysOnTop
 					or Enum.HighlightDepthMode.Occluded
@@ -452,21 +473,33 @@ do
 	-- The particle textures below are rbxasset:// paths, which are files inside
 	-- the Roblox client itself rather than uploaded assets — nothing to look up
 	-- and nothing to get wrong.
+	-- Retuned. The first set was one shape with the numbers nudged: everything
+	-- came out of the middle of the chest in a column, far too big and far too
+	-- fast. These differ in where they come from, how they move and how long
+	-- they last, which is what makes them read as different effects.
+	--   drag pulls particles up short so they hang rather than shoot
+	--   spin gives each one its own rotation, which stops the flat sprite look
 	local AURA = {
-		Fire     = { tex = "rbxasset://textures/particles/fire_main.dds", rate = 26, life = 0.8,
-			size = 2.6, speed = 3, spread = 12, up = 4 },
-		Sparkles = { tex = "rbxasset://textures/particles/sparkles_main.dds", rate = 34, life = 1.1,
-			size = 1.1, speed = 2, spread = 40, up = 2 },
-		Smoke    = { tex = "rbxasset://textures/particles/smoke_main.dds", rate = 14, life = 1.6,
-			size = 4, speed = 1.5, spread = 25, up = 3 },
-		Wings    = { tex = "rbxasset://textures/particles/sparkles_main.dds", rate = 60, life = 0.7,
-			size = 1.6, speed = 6, spread = 80, up = 6, back = true },
-		Halo     = { tex = "rbxasset://textures/particles/sparkles_main.dds", rate = 45, life = 0.5,
-			size = 0.8, speed = 0.5, spread = 4, up = 0 },
-		Ember    = { tex = "rbxasset://textures/particles/fire_main.dds", rate = 12, life = 2.2,
-			size = 0.9, speed = 1, spread = 60, up = -2 },
+		Fire     = { tex = "rbxasset://textures/particles/fire_main.dds",
+			rate = 55, life = 0.55, size = 1.1, grow = 1.6, speed = 3.5, spread = 8,
+			up = 7, drag = 2.5, spin = 90, fade = 0.25 },
+		Sparkles = { tex = "rbxasset://textures/particles/sparkles_main.dds",
+			rate = 30, life = 1.3, size = 0.28, grow = 0.9, speed = 1.2, spread = 180,
+			up = 1.5, drag = 1.5, spin = 180, fade = 0.1 },
+		Smoke    = { tex = "rbxasset://textures/particles/smoke_main.dds",
+			rate = 9, life = 2.4, size = 1.6, grow = 3.4, speed = 0.8, spread = 30,
+			up = 1.2, drag = 1, spin = 25, fade = 0.75 },
+		Wings    = { tex = "rbxasset://textures/particles/sparkles_main.dds",
+			rate = 90, life = 0.5, size = 0.5, grow = 0.9, speed = 9, spread = 45,
+			up = 3, drag = 6, spin = 120, fade = 0.15, back = true },
+		Ember    = { tex = "rbxasset://textures/particles/fire_main.dds",
+			rate = 8, life = 2.6, size = 0.22, grow = 0.3, speed = 0.7, spread = 120,
+			up = 2.2, drag = 3, spin = 60, fade = 0.2 },
+		Storm    = { tex = "rbxasset://textures/particles/sparkles_main.dds",
+			rate = 70, life = 0.35, size = 0.35, grow = 0.5, speed = 14, spread = 180,
+			up = 0, drag = 9, spin = 260, fade = 0.1 },
 	}
-	FX.auraNames = { "Fire", "Sparkles", "Smoke", "Wings", "Halo", "Ember" }
+	FX.auraNames = { "Fire", "Sparkles", "Smoke", "Wings", "Ember", "Storm" }
 
 	function FX.dropAura(player)
 		local e = FX.aura[player]
@@ -498,25 +531,32 @@ do
 		local d = AURA[V.auraStyle] or AURA.Fire
 		-- Only the colour can change without rebuilding. Writing the sequences
 		-- every frame is what made the particles stutter.
-		if fresh then
+		if fresh or e:GetAttribute("MHAmount") ~= V.auraAmount then
 			pcall(function()
+				local k = V.auraAmount
+				e:SetAttribute("MHAmount", k)
 				e.Texture = d.tex
-				e.Rate = d.rate
-				e.Lifetime = NumberRange.new(d.life * 0.7, d.life)
+				e.Rate = d.rate * k
+				e.Lifetime = NumberRange.new(d.life * 0.65, d.life)
 				e.Size = NumberSequence.new({
-					NumberSequenceKeypoint.new(0, d.size * 0.4),
-					NumberSequenceKeypoint.new(0.4, d.size),
-					NumberSequenceKeypoint.new(1, 0),
+					NumberSequenceKeypoint.new(0, d.size * 0.5),
+					NumberSequenceKeypoint.new(0.35, d.size),
+					NumberSequenceKeypoint.new(1, d.grow * 0.15),
 				})
 				e.Transparency = NumberSequence.new({
-					NumberSequenceKeypoint.new(0, 0.35),
+					NumberSequenceKeypoint.new(0, 1),
+					NumberSequenceKeypoint.new(0.12, d.fade),
+					NumberSequenceKeypoint.new(0.75, d.fade + (1 - d.fade) * 0.5),
 					NumberSequenceKeypoint.new(1, 1),
 				})
-				e.Speed = NumberRange.new(d.speed * 0.5, d.speed)
+				e.Speed = NumberRange.new(d.speed * 0.45, d.speed)
 				e.SpreadAngle = Vector2.new(d.spread, d.spread)
-				e.LightEmission = 1
+				e.Drag = d.drag
+				e.Rotation = NumberRange.new(-180, 180)
+				e.RotSpeed = NumberRange.new(-d.spin, d.spin)
+				e.LightEmission = math.clamp(V.auraGlow, 0, 1)
 				e.LightInfluence = 0
-				e.ZOffset = -0.5
+				e.ZOffset = -0.4
 				e.Acceleration = Vector3.new(0, d.up, 0)
 				e.EmissionDirection = d.back and Enum.NormalId.Back or Enum.NormalId.Top
 				e.Enabled = true
@@ -664,6 +704,60 @@ do
 		end)
 	end
 
+	-- A halo: a ring of small lights turning over their head. Made of spheres for
+	-- the same reason the hat is made of discs — no mesh means no asset id.
+	function FX.dropHalo(player)
+		local rec = FX.halo[player]
+		if rec then pcall(function() rec.model:Destroy() end) end
+		FX.halo[player] = nil
+	end
+
+	function FX.haloOn(player, char, colr)
+		local head = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
+		if not head then return FX.dropHalo(player) end
+		local rec = FX.halo[player]
+		if rec and (rec.head ~= head or not rec.model.Parent) then
+			FX.dropHalo(player)
+			rec = nil
+		end
+		if not rec then
+			local ok, made = pcall(function()
+				local m = Instance.new("Model")
+				m.Name = "MH_Halo"
+				for i = 1, 14 do
+					local bead = Instance.new("Part")
+					bead.Name = "Bead"
+					bead.Shape = Enum.PartType.Ball
+					bead.Size = Vector3.new(0.28, 0.28, 0.28)
+					bead.Anchored = true
+					bead.CanCollide = false
+					bead.CanQuery = false
+					bead.CanTouch = false
+					bead.CastShadow = false
+					bead.Material = Enum.Material.Neon
+					bead.Transparency = 0.1
+					bead:SetAttribute("MHSlot", (i - 1) / 14)
+					bead.Parent = m
+				end
+				m.Parent = workspace
+				return { model = m, head = head }
+			end)
+			if not ok or not made then return end
+			rec = made
+			FX.halo[player] = rec
+		end
+		pcall(function()
+			local base = head.Position + Vector3.new(0, 1.5, 0)
+			local turn = os.clock() * 1.1
+			for _, bead in ipairs(rec.model:GetChildren()) do
+				local a = (bead:GetAttribute("MHSlot") or 0) * math.pi * 2 + turn
+				bead.Color = colr
+				bead.CFrame = CFrame.new(base + Vector3.new(math.cos(a) * 1.5,
+					math.sin(a * 2) * 0.12, math.sin(a) * 1.5))
+			end
+		end)
+	end
+
 	--== the small extras =======================================================
 	-- A light on them, so a dark corner is not where a player disappears; and a
 	-- trail, so you can read where somebody went.
@@ -707,6 +801,9 @@ do
 		FX.trail[player] = nil
 	end
 
+	-- The first one spanned the whole body at full emission, which is a wall of
+	-- light you cannot see past. It is a ribbon now: short, narrow at the tail,
+	-- dimmable, and it stops drawing when they stand still instead of smearing.
 	function FX.trailOn(player, char, colr)
 		local root = char:FindFirstChild("HumanoidRootPart")
 		if not root then return FX.dropTrail(player) end
@@ -716,31 +813,40 @@ do
 			local ok, made = pcall(function()
 				local a0 = Instance.new("Attachment")
 				a0.Name = "MH_T0"
-				a0.Position = Vector3.new(0, 1.6, 0)
 				a0.Parent = root
 				local a1 = Instance.new("Attachment")
 				a1.Name = "MH_T1"
-				a1.Position = Vector3.new(0, -1.6, 0)
 				a1.Parent = root
 				local tr = Instance.new("Trail")
 				tr.Name = "MH_Trail"
 				tr.Attachment0 = a0
 				tr.Attachment1 = a1
-				tr.LightEmission = 1
 				tr.LightInfluence = 0
 				tr.FaceCamera = true
+				-- a teleport or a fast turn used to draw one long streak across
+				-- the map; a length cap keeps it a trail
+				tr.MinLength = 0.15
+				tr.MaxLength = 24
+				tr.WidthScale = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, 1),
+					NumberSequenceKeypoint.new(1, 0.1),
+				})
 				tr.Parent = root
 				return { trail = tr, a0 = a0, a1 = a1 }
 			end)
-            if not ok or not made then return end
+			if not ok or not made then return end
 			rec = made
 			FX.trail[player] = rec
 		end
 		pcall(function()
+			local w = V.trailWidth * 0.5
+			rec.a0.Position = Vector3.new(0, w, 0)
+			rec.a1.Position = Vector3.new(0, -w, 0)
 			rec.trail.Lifetime = V.trailLife
+			rec.trail.LightEmission = math.clamp(V.trailGlow, 0, 1)
 			rec.trail.Color = ColorSequence.new(colr)
 			rec.trail.Transparency = NumberSequence.new({
-				NumberSequenceKeypoint.new(0, 0.25),
+				NumberSequenceKeypoint.new(0, math.clamp(V.trailFade, 0, 0.95)),
 				NumberSequenceKeypoint.new(1, 1),
 			})
 		end)
@@ -777,6 +883,7 @@ do
 		FX.dropAura(player)
 		FX.dropRing(player)
 		FX.dropHat(player)
+		FX.dropHalo(player)
 		FX.dropLight(player)
 		FX.dropTrail(player)
 		FX.seen[player] = nil
@@ -791,6 +898,7 @@ do
 			local live = {}
 			for _, rec in pairs(FX.body) do live[rec.model] = true end
 			for _, rec in pairs(FX.hat) do live[rec.model] = true end
+			for _, rec in pairs(FX.halo) do live[rec.model] = true end
 			for _, r in pairs(FX.ring) do live[r] = true end
 			for _, e in pairs(FX.aura) do live[e] = true end
 			for _, l in pairs(FX.light) do live[l] = true end
@@ -804,7 +912,8 @@ do
 			for _, where in ipairs(roots) do
 				for _, d in ipairs(where:GetChildren()) do
 					local n = tostring(d.Name)
-					if (n == "MH_Body" or n == "MH_Hat" or n == "MH_Ring") and not live[d] then
+					if (n == "MH_Body" or n == "MH_Hat" or n == "MH_Ring" or n == "MH_Halo")
+						and not live[d] then
 						d:Destroy()
 					end
 				end
@@ -843,6 +952,7 @@ do
 		for pl in pairs(FX.aura) do FX.dropAura(pl) end
 		for pl in pairs(FX.ring) do FX.dropRing(pl) end
 		for pl in pairs(FX.hat) do FX.dropHat(pl) end
+		for pl in pairs(FX.halo) do FX.dropHalo(pl) end
 		for pl in pairs(FX.light) do FX.dropLight(pl) end
 		for pl in pairs(FX.trail) do FX.dropTrail(pl) end
 		FX.seen = {}
@@ -882,6 +992,7 @@ do
 		if V.aura and not hidden then FX.auraOn(player, char, colr) else FX.dropAura(player) end
 		if V.ring and not hidden then FX.ringOn(player, char, colr) else FX.dropRing(player) end
 		if V.hat and not hidden then FX.hatOn(player, char, colr) else FX.dropHat(player) end
+		if V.halo and not hidden then FX.haloOn(player, char, colr) else FX.dropHalo(player) end
 		if V.light and not hidden then FX.lightOn(player, char, colr) else FX.dropLight(player) end
 		if V.trail and not hidden then FX.trailOn(player, char, colr) else FX.dropTrail(player) end
 		if not V.chams or not overlay then return dropCham(player) end
@@ -1240,7 +1351,7 @@ do
 		return V.chams or V.box or V.cross or V.mark or V.tracer or V.arrows
 			or V.radar or V.gunEsp or V.coinEsp or V.headDot or V.aura or V.ring
 			or V.chamSelf or V.auraSelf or V.ringSelf or V.hat or V.hatSelf
-			or V.light or V.lightSelf or V.trail or V.trailSelf
+			or V.light or V.lightSelf or V.trail or V.trailSelf or V.halo or V.haloSelf
 	end
 
 	local conn
@@ -1311,7 +1422,7 @@ do
 			do
 				local mine = LocalPlayer.Character
 				if mine and (V.chamSelf or V.auraSelf or V.ringSelf or V.hatSelf
-					or V.lightSelf or V.trailSelf) then
+					or V.lightSelf or V.trailSelf or V.haloSelf) then
 					local c = FX.lit(V.roleColors and COL.Sheriff or V.oneColor, V.bright)
 					if V.chamSelf and not FX.isOverlay(V.chamStyle) then
 						FX.bodyOn(LocalPlayer, mine, c, V.chamStyle)
@@ -1321,6 +1432,7 @@ do
 					if V.auraSelf then FX.auraOn(LocalPlayer, mine, c) else FX.dropAura(LocalPlayer) end
 					if V.ringSelf then FX.ringOn(LocalPlayer, mine, c) else FX.dropRing(LocalPlayer) end
 					if V.hatSelf then FX.hatOn(LocalPlayer, mine, c) else FX.dropHat(LocalPlayer) end
+					if V.haloSelf then FX.haloOn(LocalPlayer, mine, c) else FX.dropHalo(LocalPlayer) end
 					if V.lightSelf then FX.lightOn(LocalPlayer, mine, c) else FX.dropLight(LocalPlayer) end
 					if V.trailSelf then FX.trailOn(LocalPlayer, mine, c) else FX.dropTrail(LocalPlayer) end
 				elseif FX.body[LocalPlayer] or FX.aura[LocalPlayer] or FX.ring[LocalPlayer]
@@ -1490,8 +1602,10 @@ do
 		Callback = function(v) V.bright = v FX.clearAll() end })
 	EspTab:Toggle({ Title = "Through walls", Desc = "works on every style now",
 		Default = true, Callback = function(on) V.chamWalls = on FX.clearAll() end })
-	EspTab:Slider({ Title = "How solid through a wall", Desc = "0 is a flat silhouette",
-		Step = 0.05, Value = { Min = 0, Max = 1, Default = 0.6 },
+	EspTab:Slider({ Title = "How solid through a wall",
+		Desc = "1 = outline only, and the style shows. Lower fills it in, and a "
+			.. "filled silhouette looks the same whatever the style is",
+		Step = 0.05, Value = { Min = 0, Max = 1, Default = 1 },
 		Callback = function(v) V.wallFill = v end })
 	EspTab:Toggle({ Title = "Cham outline", Default = true,
 		Callback = function(on) V.chamOutline = on FX.clearAll() end })
@@ -1531,6 +1645,16 @@ do
 			V.auraStyle = tostring(v)
 			for pl in pairs(FX.aura) do FX.dropAura(pl) end
 		end })
+	EspTab:Slider({ Title = "Aura amount", Step = 0.1, Value = { Min = 0.2, Max = 3, Default = 1 },
+		Callback = function(v) V.auraAmount = v end })
+	EspTab:Slider({ Title = "Aura glow", Desc = "1 washes the colour out", Step = 0.05,
+		Value = { Min = 0, Max = 1, Default = 0.55 },
+		Callback = function(v)
+			V.auraGlow = v
+			for pl in pairs(FX.aura) do FX.dropAura(pl) end
+		end })
+	EspTab:Toggle({ Title = "Halo", Desc = "a ring of lights turning over their head",
+		Default = false, Callback = function(on) V.halo = on if not on then FX.clearAll() end sync() end })
 	EspTab:Toggle({ Title = "Floor ring", Desc = "a glowing disc under each player",
 		Default = false, Callback = function(on) V.ring = on if not on then FX.clearAll() end sync() end })
 	EspTab:Toggle({ Title = "Jump circle", Desc = "the ring swells while they are off the ground",
@@ -1553,6 +1677,14 @@ do
 		Default = false, Callback = function(on) V.trail = on if not on then FX.clearAll() end sync() end })
 	EspTab:Slider({ Title = "Trail length", Step = 0.1, Value = { Min = 0.2, Max = 4, Default = 0.7 },
 		Callback = function(v) V.trailLife = v end })
+	EspTab:Slider({ Title = "Trail width", Step = 0.1, Value = { Min = 0.3, Max = 5, Default = 1.6 },
+		Callback = function(v) V.trailWidth = v end })
+	EspTab:Slider({ Title = "Trail glow", Desc = "1 is the blinding one", Step = 0.05,
+		Value = { Min = 0, Max = 1, Default = 0.25 },
+		Callback = function(v) V.trailGlow = v end })
+	EspTab:Slider({ Title = "Trail fade", Desc = "higher is fainter", Step = 0.05,
+		Value = { Min = 0, Max = 0.95, Default = 0.55 },
+		Callback = function(v) V.trailFade = v end })
 
 	EspTab:Section({ Title = "On yourself" })
 	EspTab:Toggle({ Title = "Wear the cham style",
@@ -1564,6 +1696,8 @@ do
 		Callback = function(on) V.ringSelf = on if not on then FX.clear(LocalPlayer) end sync() end })
 	EspTab:Toggle({ Title = "Wear a china hat", Default = false,
 		Callback = function(on) V.hatSelf = on if not on then FX.clear(LocalPlayer) end sync() end })
+	EspTab:Toggle({ Title = "Wear a halo", Default = false,
+		Callback = function(on) V.haloSelf = on if not on then FX.clear(LocalPlayer) end sync() end })
 	EspTab:Toggle({ Title = "Carry a light", Default = false,
 		Callback = function(on) V.lightSelf = on if not on then FX.clear(LocalPlayer) end sync() end })
 	EspTab:Toggle({ Title = "Leave a trail", Default = false,
