@@ -184,10 +184,30 @@ local function anchoredScan(want)
 				end
 			end)
 			if okw and at ~= nil then
-				local sc, entries, withId, named, sample = score(o)
+				-- score() gives up on anything that is not already shaped like a
+				-- weapon map, and then reports nothing. Count it ourselves, so a
+				-- table that holds a real mesh id is never dropped for being an
+				-- odd shape — that shape is exactly what we are trying to see.
+				local entries, withId, named = 0, 0, 0
+				pcall(function()
+					for k, v in pairs(o) do
+						entries = entries + 1
+						if entries > 4000 then break end
+						if type(k) == "string" then named = named + 1 end
+						if digits(v) then
+							withId = withId + 1
+						elseif type(v) == "table" then
+							for _, vv in pairs(v) do
+								if digits(vv) then withId = withId + 1 break end
+							end
+						end
+					end
+				end)
+				local sc = score(o)
 				found[#found + 1] = {
-					table = o, score = math.max(sc, 1), entries = entries,
-					withId = withId, named = named, sample = sample,
+					table = o, score = math.max(tonumber(sc) or 0, 1), entries = entries,
+					withId = withId, named = named,
+					sample = { key = at, value = o[at] },
 					note = "holds " .. id .. " at [" .. tostring(at) .. "]"
 						.. (field and ("." .. tostring(field)) or ""),
 				}
@@ -272,6 +292,62 @@ local function toMeshMap(t)
 		end
 	end)
 	return out, n
+end
+
+--== describing a table we cannot convert =====================================
+-- A candidate that will not turn into skins is still the most useful thing on
+-- screen: its shape says whether it is a mesh list at all. So write out what is
+-- actually in it, in plain text, rather than refusing to save anything.
+local function brief(v, depth)
+	local t = type(v)
+	if t == "string" then
+		if #v > 90 then return string.format("%q...", v:sub(1, 90)) end
+		return string.format("%q", v)
+	end
+	if t == "number" or t == "boolean" or t == "nil" then return tostring(v) end
+	if t == "userdata" or t == "vector" then
+		local ok, tn = pcall(function() return typeof(v) end)
+		return "<" .. (ok and tostring(tn) or t) .. " " .. tostring(v) .. ">"
+	end
+	if t ~= "table" then return "<" .. t .. ">" end
+	if (depth or 0) >= 2 then return "{...}" end
+	local bits, n = {}, 0
+	pcall(function()
+		for k, vv in pairs(v) do
+			n = n + 1
+			if n > 14 then bits[#bits + 1] = "..." break end
+			bits[#bits + 1] = tostring(k) .. " = " .. brief(vv, (depth or 0) + 1)
+		end
+	end)
+	return "{ " .. table.concat(bits, ", ") .. " }"
+end
+
+local function describe(list, limit)
+	local parts = {
+		"MollyHub - what these tables actually contain",
+		"(" .. tostring(#list) .. " candidate(s); send this over and the right one can be read off it)",
+		"",
+	}
+	for i, c in ipairs(list) do
+		if i > (limit or 25) then break end
+		local keyKind = "?"
+		pcall(function()
+			for k in pairs(c.table) do keyKind = type(k) break end
+		end)
+		parts[#parts + 1] = string.format("== candidate %d == %s entries, keys are %s, %s ids%s",
+			i, tostring(c.entries or "?"), keyKind, tostring(c.withId or "?"),
+			c.note and ("  |  " .. c.note) or "")
+		local shown = 0
+		pcall(function()
+			for k, v in pairs(c.table) do
+				shown = shown + 1
+				if shown > 12 then break end
+				parts[#parts + 1] = "   [" .. tostring(k) .. "] = " .. brief(v, 0)
+			end
+		end)
+		parts[#parts + 1] = ""
+	end
+	return table.concat(parts, "\n")
 end
 
 --== writing it out ===========================================================
@@ -443,8 +519,20 @@ T:Button({
 		end
 		local map, n = toMeshMap(c.table)
 		if n == 0 then
-			return UI:Notify({ Title = "Nothing usable",
-				Content = "no asset ids came out of that one", Duration = 7 })
+			-- not a name -> skin map. Save what it IS, which is the thing worth
+			-- looking at, instead of leaving the button dead.
+			local txt = describe({ c }, 1)
+			local where = {}
+			pcall(function()
+				if WRITEFILE then
+					WRITEFILE("MollyHub_table_" .. tostring(picked or 1) .. ".txt", txt)
+					where[#where + 1] = "MollyHub_table_" .. tostring(picked or 1) .. ".txt"
+				end
+			end)
+			pcall(function() if SETCLIP then SETCLIP(txt) end end)
+			return UI:Notify({ Title = "Not a skin list - saved what it is", Duration = 12,
+				Content = (#where > 0 and (where[1] .. " and the clipboard") or "the clipboard")
+					.. "  -  send it over and the shape can be read off it" })
 		end
 		local wrote = save(map, n, tostring(picked or 1))
 		UI:Notify({
@@ -453,6 +541,27 @@ T:Button({
 				.. "  ·  also loaded into this session",
 			Duration = 10,
 		})
+	end,
+})
+
+T:Button({
+	Title = "Save what all of these look like",
+	Desc = "plain text: the shape and a dozen entries from each, always works",
+	Callback = function()
+		if #found == 0 then
+			return UI:Notify({ Title = "Nothing to describe", Content = "scan first" })
+		end
+		local txt = describe(found, 25)
+		local where = {}
+		pcall(function()
+			if WRITEFILE then
+				WRITEFILE("MollyHub_tables.txt", txt)
+				where[#where + 1] = "MollyHub_tables.txt"
+			end
+		end)
+		pcall(function() if SETCLIP then SETCLIP(txt) end end)
+		UI:Notify({ Title = "Described " .. #found .. " table(s)", Duration = 12,
+			Content = (#where > 0 and (where[1] .. " and the clipboard") or "the clipboard only") })
 	end,
 })
 

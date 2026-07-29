@@ -340,6 +340,13 @@ K:Button({ Title = "Why did nothing change?",
 			Content = tostring(_G.MH_LastEquip or "click a weapon in the game's inventory first") })
 	end })
 
+K:Button({ Title = "Remove skins built from icons",
+	Desc = "clears rows whose mesh is really the item's picture",
+	Callback = function()
+		UI:Notify({ Title = "Skins", Duration = 10,
+			Content = "dropped " .. MH_dropIconSkins() .. "  |  " .. MH_skinCounts() })
+	end })
+
 K:Section({ Title = "Undo" })
 K:Actions({ Height = 40, Items = {
 	{ Title = "Remove skin", Callback = dropSkin },
