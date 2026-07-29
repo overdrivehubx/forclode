@@ -280,6 +280,8 @@ do
 			if hum and hum.Health <= 0 then dead = true end
 			local look = {}
 			for _, d in ipairs(char:GetChildren()) do look[#look + 1] = d end
+			-- a Backpack only replicates to its owner, so for anyone else this is
+			-- empty — which is why the equipped tool matters more than the bag
 			local bp = player:FindFirstChildOfClass("Backpack")
 			if bp then for _, d in ipairs(bp:GetChildren()) do look[#look + 1] = d end end
 			for _, d in ipairs(look) do
@@ -289,6 +291,32 @@ do
 						role = "Murderer"
 					elseif n:find("gun") or n:find("revolver") or n:find("pistol") then
 						role = role or "Sheriff"
+					end
+				end
+			end
+			-- The weapon MM2 hangs on the body — a knife on the back, a gun at the
+			-- hip. Those markers are replicated, so they read for every player
+			-- whether the weapon is in their hands or not.
+			if not role then
+				local k = char:FindFirstChild("DisplayRefKnife")
+				local g = char:FindFirstChild("DisplayRefGun")
+				if k and k.Value then role = "Murderer"
+				elseif g and g.Value then role = "Sheriff" end
+			end
+			-- and anything the game left on an attribute
+			if not role then
+				for _, src in ipairs({ player, char }) do
+					local oka, at = pcall(function() return src:GetAttributes() end)
+					if oka and type(at) == "table" then
+						for an, av in pairs(at) do
+							local ln = tostring(an):lower()
+							if (ln:find("role") or ln:find("team")) and type(av) == "string" then
+								local lv = av:lower()
+								if lv:find("murder") then role = "Murderer"
+								elseif lv:find("sheriff") or lv:find("hero") then role = "Sheriff"
+								elseif lv:find("innocent") then role = "Innocent" end
+							end
+						end
 					end
 				end
 			end
@@ -338,40 +366,51 @@ do
 		return out
 	end
 
-	--   fill  how much of the tint covers them: 1 shows only the rim
-	--   out   the rim itself
-	--   top   drawn through walls
-	--   mat   a material written onto their real parts, for the wireframe looks
+	-- Two kinds of cham, and the reference shots are the first kind.
+	--
+	--   paint  the real parts get the MATERIAL and the COLOUR. ForceField lit in
+	--          the role's colour is the look in your screenshots: their avatar's
+	--          seams glow, their clothing still reads, and it is bright in the
+	--          dark because ForceField is not lit by the world. This is what the
+	--          script you took the shots from does. I had been writing the
+	--          material and leaving the colour alone, so the shell stayed grey
+	--          and a Highlight painted over the top of it — that is why it never
+	--          looked right.
+	--   fill   a Highlight tint instead, for the flat-overlay looks. 1 = rim only.
+	--   out    the rim. A painted cham keeps it too, so a wall does not hide them.
 	local STYLE = {
-		Glow     = { fill = 0.45, out = 0,    top = true },
-		Solid    = { fill = 0.12, out = 0,    top = true },
-		Outline  = { fill = 1,    out = 0,    top = true },
-		Soft     = { fill = 0.68, out = 0.55, top = true },
-		Hologram = { fill = 0.55, out = 0,    top = true,  mat = "ForceField" },
-		Wire     = { fill = 1,    out = 0,    top = true,  mat = "ForceField" },
-		Neon     = { fill = 0.3,  out = 0,    top = true,  mat = "Neon" },
-		Ghost    = { fill = 0.78, out = 0.3,  top = true,  mat = "Neon" },
-		Glass    = { fill = 0.7,  out = 0.15, top = false, mat = "Glass" },
-		Ice      = { fill = 0.5,  out = 0,    top = false, mat = "Glacier" },
-		Rainbow  = { fill = 0.4,  out = 0,    top = true,  cycle = true },
-		Pulse    = { fill = 0.4,  out = 0,    top = true,  pulse = true },
+		Hologram = { paint = "ForceField", t = 0,    out = 0,   fill = 1 },
+		Wire     = { paint = "ForceField", t = 0.45, out = 0,   fill = 1 },
+		Ghost    = { paint = "ForceField", t = 0.65, out = 0.4, fill = 1 },
+		Neon     = { paint = "Neon",       t = 0,    out = 0,   fill = 1 },
+		Ice      = { paint = "Glacier",    t = 0.2,  out = 0,   fill = 1 },
+		Glass    = { paint = "Glass",      t = 0.5,  out = 0.2, fill = 1 },
+		Metal    = { paint = "Foil",       t = 0,    out = 0,   fill = 1 },
+		Rainbow  = { paint = "ForceField", t = 0,    out = 0,   fill = 1, cycle = true },
+		Glow     = { fill = 0.45, out = 0 },
+		Solid    = { fill = 0.12, out = 0 },
+		Outline  = { fill = 1,    out = 0 },
+		Soft     = { fill = 0.68, out = 0.55 },
+		Pulse    = { fill = 0.4,  out = 0,   pulse = true },
 	}
-	FX.styleNames = { "Glow", "Solid", "Outline", "Soft", "Hologram", "Wire",
-		"Neon", "Ghost", "Glass", "Ice", "Rainbow", "Pulse" }
+	FX.styleNames = { "Hologram", "Wire", "Ghost", "Neon", "Rainbow", "Ice", "Glass",
+		"Metal", "Glow", "Solid", "Outline", "Soft", "Pulse" }
 
 	function FX.chamOff(player)
 		local rec = FX.cham[player]
 		if not rec then return end
-		-- put every material back before the highlight goes
+		-- their own look back, before the highlight goes
 		pcall(function()
 			for part, was in pairs(rec.mats or {}) do
 				if part.Parent then
 					part.Material = was.m
+					part.Color = was.c
+					part.Transparency = was.t
 					part.Reflectance = was.r
 				end
 			end
 		end)
-		pcall(function() rec.hl:Destroy() end)
+		pcall(function() if rec.hl then rec.hl:Destroy() end end)
 		FX.cham[player] = nil
 	end
 
@@ -379,69 +418,74 @@ do
 		local d = STYLE[style]
 		if not d then return FX.chamOff(player) end
 		local rec = FX.cham[player]
-		if rec and (rec.char ~= char or rec.style ~= style or not rec.hl.Parent) then
+		if rec and (rec.char ~= char or rec.style ~= style) then
 			FX.chamOff(player)
 			rec = nil
 		end
 		if not rec then
-			local ok, made = pcall(function()
-				local h = Instance.new("Highlight")
-				h.Name = "MH_Cham"
-				h.Adornee = char
-				h.Parent = char
-				return { hl = h, char = char, style = style, mats = {} }
-			end)
-			if not ok or not made then return end
-			rec = made
+			rec = { char = char, style = style, mats = {} }
 			FX.cham[player] = rec
 		end
-		if d.cycle then
-			colr = Color3.fromHSV((os.clock() * 0.18) % 1, 0.85, 1)
+		if d.cycle then colr = Color3.fromHSV((os.clock() * 0.18) % 1, 0.9, 1) end
+		colr = FX.lit(colr, 1)
+
+		-- the rim, and the only way to see them through a wall
+		local wantRim = V.chamOutline or (d.fill and d.fill < 1)
+		if wantRim then
+			if not rec.hl or not rec.hl.Parent then
+				pcall(function()
+					local h = Instance.new("Highlight")
+					h.Name = "MH_Cham"
+					h.Adornee = char
+					h.Parent = char
+					rec.hl = h
+				end)
+			end
+			local fill = d.fill or 1
+			if d.pulse then
+				fill = math.clamp(fill + math.sin(os.clock() * 2.2) * 0.28, 0.05, 0.95)
+			end
+			pcall(function()
+				rec.hl.FillColor = colr
+				rec.hl.OutlineColor = FX.lit(colr, 1.7)
+				rec.hl.FillTransparency = math.clamp(fill + V.chamAlpha, 0, 1)
+				rec.hl.OutlineTransparency = V.chamOutline and (d.out or 0) or 1
+				rec.hl.DepthMode = V.chamWalls and Enum.HighlightDepthMode.AlwaysOnTop
+					or Enum.HighlightDepthMode.Occluded
+			end)
+		elseif rec.hl then
+			pcall(function() rec.hl:Destroy() end)
+			rec.hl = nil
 		end
-		local fill = d.fill
-		if d.pulse then
-			fill = math.clamp(d.fill + math.sin(os.clock() * 2.2) * 0.28, 0.05, 0.95)
-		end
-		fill = math.clamp(fill + V.chamAlpha, 0, 1)
+
+		if not d.paint then return end
+		-- The painted look. Written to their real parts, and only where it differs
+		-- from what is already there — four times a second, not sixty. The game
+		-- writing to the same parts is what made an every-frame version flicker.
+		if (os.clock() - (rec.at or 0)) < 0.25 and rec.colr == colr then return end
+		rec.at = os.clock()
+		rec.colr = colr
 		pcall(function()
-			rec.hl.FillColor = colr
-			rec.hl.OutlineColor = FX.lit(colr, 1.7)
-			rec.hl.FillTransparency = fill
-			rec.hl.OutlineTransparency = V.chamOutline and d.out or 1
-			rec.hl.DepthMode = (d.top and V.chamWalls)
-				and Enum.HighlightDepthMode.AlwaysOnTop
-				or Enum.HighlightDepthMode.Occluded
-		end)
-		-- the wireframe looks: a material on their real parts, written once
-		if not d.mat then return end
-		if (os.clock() - (rec.matAt or 0)) < 0.4 then return end
-		rec.matAt = os.clock()
-		pcall(function()
-			local want = Enum.Material[d.mat]
+			local want = Enum.Material[d.paint]
 			if not want then return end
+			local alpha = math.clamp(d.t + V.chamAlpha, 0, 0.95)
 			for _, p in ipairs(char:GetDescendants()) do
 				local isTool = p:FindFirstAncestorWhichIsA("Tool") ~= nil
 				if p:IsA("BasePart") and p.Name ~= "HumanoidRootPart"
-					and (V.chamWeapon or not isTool) then
+					and p.Transparency < 1 and (V.chamWeapon or not isTool) then
 					if not rec.mats[p] then
-						rec.mats[p] = { m = p.Material, r = p.Reflectance }
+						rec.mats[p] = { m = p.Material, c = p.Color,
+							t = p.Transparency, r = p.Reflectance }
 					end
 					if p.Material ~= want then p.Material = want end
+					if p.Color ~= colr then p.Color = colr end
+					if p.Transparency ~= alpha then p.Transparency = alpha end
 					if p.Reflectance ~= 0 then p.Reflectance = 0 end
 				end
 			end
 		end)
 	end
 
-	-- The particle textures below are rbxasset:// paths, which are files inside
-	-- the Roblox client itself rather than uploaded assets — nothing to look up
-	-- and nothing to get wrong.
-	-- Retuned. The first set was one shape with the numbers nudged: everything
-	-- came out of the middle of the chest in a column, far too big and far too
-	-- fast. These differ in where they come from, how they move and how long
-	-- they last, which is what makes them read as different effects.
-	--   drag pulls particles up short so they hang rather than shoot
-	--   spin gives each one its own rotation, which stops the flat sprite look
 	-- Retuned against the reference shots, where the aura is a soft mist hugging
 	-- the body — small, slow, close, mostly transparent — not the torch this used
 	-- to throw. Fire is still fire, but it sits on them instead of towering.
@@ -1761,9 +1805,10 @@ do
 			sync()
 		end })
 	EspTab:Dropdown({ Title = "Cham style",
-		Desc = "Glow is the one in the screenshots; Hologram and Wire are the "
-			.. "wireframe looks; Outline is the rim on its own",
-		Values = FX.styleNames, Value = "Glow",
+		Desc = "Hologram is ForceField in the role's colour — the one in the "
+			.. "screenshots. Glow, Solid, Outline and Soft tint them instead of "
+			.. "repainting them.",
+		Values = FX.styleNames, Value = "Hologram",
 		Callback = function(v)
 			V.chamStyle = tostring(v)
 			FX.clearAll()
