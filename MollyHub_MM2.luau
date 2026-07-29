@@ -188,6 +188,11 @@ do
 
 	local V = {
 		chams = false, chamFill = 0.55, chamWalls = true, chamOutline = true, chamDead = true,
+		chamStyle = "Highlight", chamWeapon = true, chamSelf = false,
+		aura = false, auraStyle = "Fire", auraSelf = false, auraOwn = false,
+		auraColor = Color3.fromRGB(180, 120, 255),
+		ring = false, ringSelf = false,
+		distStuds = true, distRole = true,
 		box = false, boxCorners = true, boxName = true, boxDist = true, headDot = false,
 		tracer = false, tracerFrom = "Bottom",
 		arrows = false,
@@ -239,6 +244,176 @@ do
 		return COL[role] or COL.Innocent, role, false
 	end
 
+	--== the wireframe look, and what goes with it ==============================
+	-- ForceField is the material that draws a part as a glowing wire shell, so a
+	-- character wearing it everywhere is the hologram in the reference shots. All
+	-- of this is written straight onto the parts, which for another player's
+	-- character is a LOCAL write: the server owns them and never sees ours. Every
+	-- part we touch is remembered so it goes back exactly as it was.
+	local FX = { skin = {}, aura = {}, ring = {} }
+
+	function FX.unskin(player)
+		local rec = FX.skin[player]
+		if not rec then return end
+		for part, was in pairs(rec) do
+			pcall(function()
+				if part.Parent then
+					part.Material = was.m
+					part.Color = was.c
+					part.Transparency = was.t
+					part.Reflectance = was.r
+				end
+			end)
+		end
+		FX.skin[player] = nil
+	end
+
+	function FX.skinChar(player, char, colr, style)
+		local rec = FX.skin[player]
+		if not rec then rec = {} FX.skin[player] = rec end
+		local mat = Enum.Material.ForceField
+		if style == "Neon" then mat = Enum.Material.Neon
+		elseif style == "Glass" then mat = Enum.Material.Glass end
+		pcall(function()
+			for _, d in ipairs(char:GetDescendants()) do
+				local isTool = d:FindFirstAncestorWhichIsA("Tool") ~= nil
+				if d:IsA("BasePart") and d.Name ~= "HumanoidRootPart"
+					and (V.chamWeapon or not isTool) then
+					if not rec[d] then
+						rec[d] = { m = d.Material, c = d.Color, t = d.Transparency, r = d.Reflectance }
+					end
+					if d.Material ~= mat then d.Material = mat end
+					if d.Color ~= colr then d.Color = colr end
+					local want = (style == "Ghost") and 0.5 or rec[d].t
+					if d.Transparency ~= want then d.Transparency = want end
+					local wantR = (style == "Glass") and 0.3 or rec[d].r
+					if d.Reflectance ~= wantR then d.Reflectance = wantR end
+				end
+			end
+		end)
+	end
+
+	-- The particle textures below are rbxasset:// paths, which are files inside
+	-- the Roblox client itself rather than uploaded assets — nothing to look up
+	-- and nothing to get wrong.
+	local AURA = {
+		Fire     = { tex = "rbxasset://textures/particles/fire_main.dds", rate = 26, life = 0.8,
+			size = 2.6, speed = 3, spread = 12 },
+		Sparkles = { tex = "rbxasset://textures/particles/sparkles_main.dds", rate = 34, life = 1.1,
+			size = 1.1, speed = 2, spread = 40 },
+		Smoke    = { tex = "rbxasset://textures/particles/smoke_main.dds", rate = 14, life = 1.6,
+			size = 4, speed = 1.5, spread = 25 },
+		Wings    = { tex = "rbxasset://textures/particles/sparkles_main.dds", rate = 60, life = 0.7,
+			size = 1.6, speed = 6, spread = 80 },
+	}
+
+	function FX.dropAura(player)
+		local e = FX.aura[player]
+		if e then pcall(function() e:Destroy() end) end
+		FX.aura[player] = nil
+	end
+
+	function FX.auraOn(player, char, colr)
+		local root = char:FindFirstChild("HumanoidRootPart")
+		if not root then return FX.dropAura(player) end
+		local e = FX.aura[player]
+		if not e or e.Parent ~= root then
+			FX.dropAura(player)
+			local ok, made = pcall(function()
+				local n = Instance.new("ParticleEmitter")
+				n.Name = "MH_Aura"
+				n.Parent = root
+				return n
+			end)
+			if not ok then return end
+			e = made
+			FX.aura[player] = e
+		end
+		local d = AURA[V.auraStyle] or AURA.Fire
+		local c = V.auraOwn and V.auraColor or colr
+		pcall(function()
+			e.Texture = d.tex
+			e.Color = ColorSequence.new(c)
+			e.Rate = d.rate
+			e.Lifetime = NumberRange.new(d.life * 0.7, d.life)
+			e.Size = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, d.size * 0.4),
+				NumberSequenceKeypoint.new(0.4, d.size),
+				NumberSequenceKeypoint.new(1, 0),
+			})
+			e.Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 0.35),
+				NumberSequenceKeypoint.new(1, 1),
+			})
+			e.Speed = NumberRange.new(d.speed * 0.5, d.speed)
+			e.SpreadAngle = Vector2.new(d.spread, d.spread)
+			e.LightEmission = 1
+			e.LightInfluence = 0
+			e.ZOffset = -0.5
+			-- Wings throw wide and level, the rest drift upward
+			if V.auraStyle == "Wings" then
+				e.EmissionDirection = Enum.NormalId.Back
+				e.Acceleration = Vector3.new(0, 6, 0)
+			else
+				e.EmissionDirection = Enum.NormalId.Top
+				e.Acceleration = Vector3.new(0, 4, 0)
+			end
+			e.Enabled = true
+		end)
+	end
+
+	function FX.dropRing(player)
+		local r = FX.ring[player]
+		if r then pcall(function() r:Destroy() end) end
+		FX.ring[player] = nil
+	end
+
+	-- A glowing disc on the floor under a player, the way the reference shot
+	-- marks whoever it is looking at.
+	function FX.ringOn(player, char, colr)
+		local root = char:FindFirstChild("HumanoidRootPart")
+		if not root then return FX.dropRing(player) end
+		local r = FX.ring[player]
+		if not r or not r.Parent then
+			FX.dropRing(player)
+			local ok, made = pcall(function()
+				local n = Instance.new("Part")
+				n.Name = "MH_Ring"
+				n.Shape = Enum.PartType.Cylinder
+				n.Size = Vector3.new(0.12, 6, 6)
+				n.Anchored = true
+				n.CanCollide = false
+				n.CanQuery = false
+				n.CanTouch = false
+				n.Massless = true
+				n.Material = Enum.Material.Neon
+				n.Transparency = 0.35
+				n.Parent = workspace
+				return n
+			end)
+			if not ok then return end
+			r = made
+			FX.ring[player] = r
+		end
+		pcall(function()
+			r.Color = colr
+			r.CFrame = CFrame.new(root.Position - Vector3.new(0, 3.1, 0))
+				* CFrame.Angles(0, 0, math.rad(90))
+		end)
+	end
+
+	function FX.clear(player)
+		FX.unskin(player)
+		FX.dropAura(player)
+		FX.dropRing(player)
+	end
+
+	function FX.clearAll()
+		for pl in pairs(FX.skin) do FX.unskin(pl) end
+		for pl in pairs(FX.aura) do FX.dropAura(pl) end
+		for pl in pairs(FX.ring) do FX.dropRing(pl) end
+	end
+
 	--== chams ==================================================================
 	local chams = {}
 	local function dropCham(player)
@@ -247,7 +422,18 @@ do
 		chams[player] = nil
 	end
 	local function updateCham(player, char)
-		if not V.chams then return dropCham(player) end
+		local colr, _, dead = colorFor(player)
+		local hidden = dead and V.chamDead
+		-- the material look, the aura and the floor ring all key off the same
+		-- role colour, and all three come off together when the player dies
+		if V.chams and V.chamStyle ~= "Highlight" and not hidden then
+			FX.skinChar(player, char, colr, V.chamStyle)
+		else
+			FX.unskin(player)
+		end
+		if V.aura and not hidden then FX.auraOn(player, char, colr) else FX.dropAura(player) end
+		if V.ring and not hidden then FX.ringOn(player, char, colr) else FX.dropRing(player) end
+		if not V.chams or V.chamStyle ~= "Highlight" then return dropCham(player) end
 		local h = chams[player]
 		if not h or h.Parent ~= char then
 			dropCham(player)
@@ -262,7 +448,6 @@ do
 			h = made
 			chams[player] = h
 		end
-		local colr, _, dead = colorFor(player)
 		pcall(function()
 			h.FillColor = colr
 			h.OutlineColor = colr
@@ -602,7 +787,8 @@ do
 	--== the loop ===============================================================
 	local function anythingOn()
 		return V.chams or V.box or V.cross or V.mark or V.tracer or V.arrows
-			or V.radar or V.gunEsp or V.coinEsp or V.headDot
+			or V.radar or V.gunEsp or V.coinEsp or V.headDot or V.aura or V.ring
+			or V.chamSelf or V.auraSelf or V.ringSelf
 	end
 
 	local conn
@@ -610,6 +796,7 @@ do
 		if conn then pcall(function() conn:Disconnect() end) conn = nil end
 		for pl in pairs(pool) do hidePool(pl) end
 		for pl in pairs(chams) do dropCham(pl) end
+		FX.clearAll()
 		for _, d in pairs(coinPool) do show(d, false) end
 		for i = 1, 4 do show(cross[i], false) show(crossEdge[i], false) end
 		show(crossDot, false); show(crossRing, false); show(mark, false)
@@ -667,6 +854,23 @@ do
 				end)
 			end
 
+			-- yourself: the same three effects, none of the on-screen drawing
+			do
+				local mine = LocalPlayer.Character
+				if mine and (V.chamSelf or V.auraSelf or V.ringSelf) then
+					local c = V.auraOwn and V.auraColor or COL.Sheriff
+					if V.chamSelf and V.chamStyle ~= "Highlight" then
+						FX.skinChar(LocalPlayer, mine, c, V.chamStyle)
+					else
+						FX.unskin(LocalPlayer)
+					end
+					if V.auraSelf then FX.auraOn(LocalPlayer, mine, c) else FX.dropAura(LocalPlayer) end
+					if V.ringSelf then FX.ringOn(LocalPlayer, mine, c) else FX.dropRing(LocalPlayer) end
+				elseif FX.skin[LocalPlayer] or FX.aura[LocalPlayer] or FX.ring[LocalPlayer] then
+					FX.clear(LocalPlayer)
+				end
+			end
+
 			for _, player in ipairs(Players:GetPlayers()) do
 				if player ~= LocalPlayer then
 					local char = player.Character
@@ -674,6 +878,7 @@ do
 					if not (char and root) then
 						hidePool(player)
 						dropCham(player)
+						FX.clear(player)
 					else
 						updateCham(player, char)
 						local p = poolFor(player)
@@ -755,7 +960,10 @@ do
 											and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
 										local d = me and math.floor((me.Position - root.Position).Magnitude) or 0
 										local _, role = colorFor(player)
-										p.dist.Text = string.format("%s  %dm", string.lower(role), d)
+										local unit = V.distStuds and " studs" or "m"
+										p.dist.Text = V.distRole
+											and string.format("%s  %d%s", string.lower(role), d, unit)
+											or string.format("%d%s", d, unit)
 										p.dist.Position = Vector2.new(top.X, y + h + 2)
 										p.dist.Visible = true
 									else
@@ -778,6 +986,7 @@ do
 		Players.PlayerRemoving:Connect(function(player)
 			dropPool(player)
 			dropCham(player)
+			FX.clear(player)
 		end)
 	end)
 
@@ -785,6 +994,15 @@ do
 	EspTab:Section({ Title = "Chams" })
 	EspTab:Toggle({ Title = "Chams", Desc = "players lit in their role's colour",
 		Default = false, Callback = function(on) V.chams = on sync() end })
+	EspTab:Dropdown({ Title = "Cham style",
+		Desc = "ForceField is the glowing wireframe look",
+		Values = { "Highlight", "ForceField", "Neon", "Glass", "Ghost" }, Value = "Highlight",
+		Callback = function(v)
+			FX.clearAll()
+			V.chamStyle = tostring(v)
+		end })
+	EspTab:Toggle({ Title = "The weapon too", Desc = "their knife or gun gets the same look",
+		Default = true, Callback = function(on) V.chamWeapon = on FX.clearAll() end })
 	EspTab:Toggle({ Title = "Through walls", Desc = "off = only where you could really see them",
 		Default = true, Callback = function(on) V.chamWalls = on end })
 	EspTab:Toggle({ Title = "Cham outline", Default = true,
@@ -799,6 +1017,30 @@ do
 		Callback = function(c) COL.Sheriff = c end })
 	EspTab:Colorpicker({ Title = "Innocent colour", Default = COL.Innocent,
 		Callback = function(c) COL.Innocent = c end })
+
+	EspTab:Section({ Title = "Aura and ring" })
+	EspTab:Toggle({ Title = "Aura", Desc = "particles rising off every player, in their colour",
+		Default = false, Callback = function(on) V.aura = on if not on then FX.clearAll() end sync() end })
+	EspTab:Dropdown({ Title = "Aura style", Values = { "Fire", "Sparkles", "Smoke", "Wings" },
+		Value = "Fire", Callback = function(v)
+			V.auraStyle = tostring(v)
+			for pl in pairs(FX.aura) do FX.dropAura(pl) end
+		end })
+	EspTab:Toggle({ Title = "One colour for every aura", Default = false,
+		Callback = function(on) V.auraOwn = on end })
+	EspTab:Colorpicker({ Title = "Aura colour", Default = V.auraColor,
+		Callback = function(c) V.auraColor = c end })
+	EspTab:Toggle({ Title = "Floor ring", Desc = "a glowing disc under each player",
+		Default = false, Callback = function(on) V.ring = on if not on then FX.clearAll() end sync() end })
+
+	EspTab:Section({ Title = "On yourself" })
+	EspTab:Toggle({ Title = "Wear the cham style",
+		Desc = "the material looks only: ForceField, Neon, Glass, Ghost", Default = false,
+		Callback = function(on) V.chamSelf = on if not on then FX.clear(LocalPlayer) end sync() end })
+	EspTab:Toggle({ Title = "Wear the aura", Default = false,
+		Callback = function(on) V.auraSelf = on if not on then FX.clear(LocalPlayer) end sync() end })
+	EspTab:Toggle({ Title = "Stand on a ring", Default = false,
+		Callback = function(on) V.ringSelf = on if not on then FX.clear(LocalPlayer) end sync() end })
 
 	--== overlay ================================================================
 	if not HAVE_DRAWING then
@@ -820,6 +1062,10 @@ do
 		Callback = function(on) V.boxName = on end })
 	VisTab:Toggle({ Title = "Role and distance", Default = true,
 		Callback = function(on) V.boxDist = on end })
+	VisTab:Toggle({ Title = "In studs", Desc = "off = metres", Default = true,
+		Callback = function(on) V.distStuds = on end })
+	VisTab:Toggle({ Title = "Say the role too", Desc = "off = just the distance", Default = true,
+		Callback = function(on) V.distRole = on end })
 	VisTab:Toggle({ Title = "Head circle", Desc = "a ring where the head is",
 		Default = false, Callback = function(on) V.headDot = on sync() end })
 	VisTab:Toggle({ Title = "Tracers", Desc = "a line to every player, in their colour",
