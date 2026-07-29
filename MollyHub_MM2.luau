@@ -324,11 +324,15 @@ do
 		local now = os.clock()
 		if (now - (rec.animAt or 0)) < 0.033 then return end
 		rec.animAt = now
-		local base = math.clamp(d.t + V.chamAlpha, 0, 0.95)
 		pcall(function()
 			for i, c in ipairs(rec.parts) do
 				local y = rec.ys[i] or 0
-				local soft = rec.soft[i] and 0.3 or 0
+				-- each part animates from the transparency it was BUILT at. The
+				-- soft outer shell starts near invisible, and animating it from
+				-- the solid part's figure instead turned it into a fat opaque
+				-- blob around the character.
+				local base = rec.base[i] or math.clamp(d.t + V.chamAlpha, 0, 0.95)
+				local soft = 0
 				if d.flow then
 					local speed = d.slow and 0.08 or 0.22
 					c.Color = Color3.fromHSV((now * speed + y * 0.55 + i * 0.004) % 1, 0.85, 1)
@@ -374,7 +378,7 @@ do
 			local ok, made = pcall(function()
 				local m = Instance.new("Model")
 				m.Name = "MH_Body"
-				local parts, hid, count, ys, soft = {}, {}, 0, {}, {}
+				local parts, hid, count, ys, soft, base = {}, {}, 0, {}, {}, {}
 				local floor = char:FindFirstChild("HumanoidRootPart")
 				local footY = floor and (floor.Position.Y - 3) or 0
 				for _, src in ipairs(char:GetDescendants()) do
@@ -429,6 +433,7 @@ do
 						-- flickering at random
 						ys[#ys + 1] = math.clamp((src.Position.Y - footY) / 6, 0, 1)
 						soft[#soft + 1] = false
+						base[#base + 1] = c.Transparency
 						if d.fuzz then
 							local halo = c:Clone()
 							halo.Size = src.Size * d.fuzz
@@ -442,6 +447,7 @@ do
 							parts[#parts + 1] = halo
 							ys[#ys + 1] = ys[#ys]
 							soft[#soft + 1] = true
+							base[#base + 1] = halo.Transparency
 						end
 						if V.chamHide then
 							src.LocalTransparencyModifier = 1
@@ -450,7 +456,7 @@ do
 					end
 				end
 				m.Parent = char
-				return { model = m, parts = parts, ys = ys, soft = soft, hid = hid,
+				return { model = m, parts = parts, ys = ys, soft = soft, base = base, hid = hid,
 					char = char, style = style, hide = V.chamHide, alpha = V.chamAlpha,
 					count = count, countAt = os.clock() }
 			end)
@@ -613,6 +619,18 @@ do
 				e.EmissionDirection = d.back and Enum.NormalId.Back or Enum.NormalId.Top
 				e.Enabled = true
 			end)
+			-- Off the WHOLE body, not out of one point in the chest. A shell the
+			-- size of a player, emitting outward from its surface, is the
+			-- difference between an aura and a chimney. Newer engines only; the
+			-- older behaviour is what it falls back to.
+			pcall(function()
+				e.Shape = Enum.ParticleEmitterShape.Sphere
+				e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Surface
+				e.ShapeInOut = Enum.ParticleEmitterShapeInOut.Outward
+				e.ShapePartial = d.back and 0.5 or 1
+				e.Size = e.Size
+			end)
+			pcall(function() e.SizeVariance = 0.35 end)
 		end
 		if e:GetAttribute("MHColor") ~= colr then
 			pcall(function()
@@ -725,7 +743,10 @@ do
 		local beat = air and math.min((now - (rec.jumpAt or now)) * 1.6, 1) or 0
 		local rad = V.ringSize * 0.5 * (1 + beat * 1.6)
 		local drop = 3.1 + beat * 0.6
-		local fade = air and (0.1 + beat * 0.85) or 0.2
+		-- asked for the jump circle only? then on the ground there is nothing
+		local resting = (player == LocalPlayer) and not V.ringSelf or
+			(player ~= LocalPlayer) and not V.ring
+		local fade = air and (0.1 + beat * 0.85) or (resting and 1 or 0.2)
 		local turn = now * (air and 5 or 0.8)
 		pcall(function()
 			local mid = root.Position - Vector3.new(0, drop, 0)
@@ -929,7 +950,10 @@ do
 				-- rather than flapping in one piece
 				local flap = math.sin(now * V.wingSpeed - t * 0.9) * math.rad(15)
 				local spread = math.rad(d.lift + t * d.span) + flap
-				local sweep = math.rad(-6 - t * 26)
+				-- Positive rotates about the part's X axis towards +Z, and +Z on a
+				-- character is BEHIND them. It was negative, so every feather leant
+				-- forward over the shoulders — the wings pointed the wrong way.
+				local sweep = math.rad(6 + t * 26)
 				local len = V.wingSize * (1 - t * d.taper)
 				f.Size = Vector3.new(d.thick * V.wingSize * 0.25,
 					len, d.wide * V.wingSize * 0.22 * (1 - t * 0.35))
@@ -1234,7 +1258,14 @@ do
 			FX.bodyOff(player)
 		end
 		if V.aura and not hidden then FX.auraOn(player, char, colr) else FX.dropAura(player) end
-		if V.ring and not hidden then FX.ringOn(player, char, colr) else FX.dropRing(player) end
+		-- The jump circle IS the ring, so asking for one asks for the other. On
+		-- its own it stays invisible until they leave the ground, which is what a
+		-- jump circle is meant to be.
+		if (V.ring or V.jumpRing) and not hidden then
+			FX.ringOn(player, char, colr)
+		else
+			FX.dropRing(player)
+		end
 		if V.hat and not hidden then FX.hatOn(player, char, colr) else FX.dropHat(player) end
 		if V.halo and not hidden then FX.haloOn(player, char, colr) else FX.dropHalo(player) end
 		if V.wings and not hidden then FX.wingsOn(player, char, colr) else FX.dropWings(player) end
@@ -1597,7 +1628,7 @@ do
 			or V.radar or V.gunEsp or V.coinEsp or V.headDot or V.aura or V.ring
 			or V.chamSelf or V.auraSelf or V.ringSelf or V.hat or V.hatSelf
 			or V.light or V.lightSelf or V.trail or V.trailSelf or V.halo or V.haloSelf
-			or V.wings or V.wingsSelf
+			or V.wings or V.wingsSelf or V.jumpRing or V.jumpSelf
 	end
 
 	local conn
@@ -1668,7 +1699,8 @@ do
 			do
 				local mine = LocalPlayer.Character
 				if mine and (V.chamSelf or V.auraSelf or V.ringSelf or V.hatSelf
-					or V.lightSelf or V.trailSelf or V.haloSelf or V.wingsSelf) then
+					or V.lightSelf or V.trailSelf or V.haloSelf or V.wingsSelf
+					or V.jumpSelf) then
 					local c = FX.lit(V.roleColors and COL.Sheriff or V.oneColor, V.bright)
 					if V.chamSelf and not FX.isOverlay(V.chamStyle) then
 						FX.bodyOn(LocalPlayer, mine, c, V.chamStyle)
@@ -1676,7 +1708,11 @@ do
 						FX.bodyOff(LocalPlayer)
 					end
 					if V.auraSelf then FX.auraOn(LocalPlayer, mine, c) else FX.dropAura(LocalPlayer) end
-					if V.ringSelf then FX.ringOn(LocalPlayer, mine, c) else FX.dropRing(LocalPlayer) end
+					if V.ringSelf or V.jumpSelf then
+						FX.ringOn(LocalPlayer, mine, c)
+					else
+						FX.dropRing(LocalPlayer)
+					end
 					if V.hatSelf then FX.hatOn(LocalPlayer, mine, c) else FX.dropHat(LocalPlayer) end
 					if V.haloSelf then FX.haloOn(LocalPlayer, mine, c) else FX.dropHalo(LocalPlayer) end
 					if V.wingsSelf then FX.wingsOn(LocalPlayer, mine, c) else FX.dropWings(LocalPlayer) end
@@ -1909,8 +1945,9 @@ do
 		Default = false, Callback = function(on) V.ring = on if not on then FX.clearAll() end sync() end })
 	EspTab:Dropdown({ Title = "Ring shape", Values = FX.ringShapes, Value = "Ring",
 		Callback = function(v) V.ringShape = tostring(v) FX.clearAll() end })
-	EspTab:Toggle({ Title = "Jump circle", Desc = "the ring swells while they are off the ground",
-		Default = false, Callback = function(on) V.jumpRing = on end })
+	EspTab:Toggle({ Title = "Jump circle",
+		Desc = "a ring that appears only while they are off the ground",
+		Default = false, Callback = function(on) V.jumpRing = on if not on then FX.clearAll() end sync() end })
 	EspTab:Slider({ Title = "Ring size", Step = 0.5, Value = { Min = 3, Max = 14, Default = 6 },
 		Callback = function(v) V.ringSize = v end })
 	EspTab:Toggle({ Title = "Wings", Desc = "a fan of feathers off the back, flapping",
@@ -1960,8 +1997,8 @@ do
 		Callback = function(on) V.auraSelf = on if not on then FX.clear(LocalPlayer) end sync() end })
 	EspTab:Toggle({ Title = "Stand on a ring", Default = false,
 		Callback = function(on) V.ringSelf = on if not on then FX.clear(LocalPlayer) end sync() end })
-	EspTab:Toggle({ Title = "Jump circle on me", Desc = "your own ring swells when you jump",
-		Default = false, Callback = function(on) V.jumpSelf = on end })
+	EspTab:Toggle({ Title = "Jump circle on me", Desc = "appears under you when you jump",
+		Default = false, Callback = function(on) V.jumpSelf = on if not on then FX.clear(LocalPlayer) end sync() end })
 	EspTab:Toggle({ Title = "Wear wings", Default = false,
 		Callback = function(on) V.wingsSelf = on if not on then FX.clear(LocalPlayer) end sync() end })
 	EspTab:Toggle({ Title = "Wear a china hat", Default = false,
