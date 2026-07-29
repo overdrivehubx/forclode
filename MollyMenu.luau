@@ -403,8 +403,8 @@ function UI:CreateWindow(o)
 		if not cam then return end
 		local vp = cam.ViewportSize
 		local vw, vh = num(vp and vp.X, 1280), num(vp and vp.Y, 720)
-		local k = math.min(vw / (cw + 90), vh / (ch + 90), 1)
-		scale.Scale = math.clamp(k, 0.55, 1)
+		local k = math.min(vw / (cw + 90), vh / (ch + 90), 1) * num(W._userScale, 1)
+		scale.Scale = math.clamp(k, 0.45, 1.6)
 		shade.Size = UDim2.fromOffset(cw + 26, ch + 26)
 		-- a narrow screen gets the icon rail instead of the full sidebar
 		W._narrow = (vw * (1 / math.max(scale.Scale, 0.01))) < (cw + 240)
@@ -668,6 +668,9 @@ function UI:CreateWindow(o)
 		Parent = content,
 	})
 	W._pageTitle = cfgText
+	-- the config drop-down is built once the ConfigManager exists, further down;
+	-- the settings button needs to be able to close it before then
+	local cfgList
 
 	-- the icon rail: on a narrow screen the sidebar keeps the icons and drops
 	-- the words, and the page takes the room back
@@ -1723,6 +1726,482 @@ function UI:CreateWindow(o)
 		return self
 	end
 
+	--== the settings the menu itself has ======================================
+	-- Live recolouring without a registry of every object: a colour is swapped by
+	-- walking the window and replacing exactly the old value with the new one.
+	-- Nothing has to remember it uses the accent, so widgets built later pick the
+	-- change up too.
+	local function repaint(from, to)
+		if from == to then return end
+		pcall(function()
+			for _, d in ipairs(gui:GetDescendants()) do
+				if d:IsA("UIStroke") then
+					if d.Color == from then d.Color = to end
+				elseif d:IsA("UIGradient") then
+					-- leave gradients alone; the logo's is rebuilt below
+				else
+					local okc = pcall(function()
+						if d.BackgroundColor3 == from then d.BackgroundColor3 = to end
+					end)
+					pcall(function() if d.TextColor3 == from then d.TextColor3 = to end end)
+					pcall(function() if d.ImageColor3 == from then d.ImageColor3 = to end end)
+					pcall(function()
+						if d.ScrollBarImageColor3 == from then d.ScrollBarImageColor3 = to end
+					end)
+					if not okc then end
+				end
+			end
+		end)
+	end
+
+	local function setAccent(c)
+		if type(c) ~= "table" and typeof and typeof(c) ~= "Color3" then return end
+		local was = T.Accent
+		T.Accent = c
+		repaint(was, c)
+		pcall(function()
+			for _, g in ipairs(logo:GetChildren()) do
+				if g:IsA("UIGradient") then
+					g.Color = ColorSequence.new({
+						ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+						ColorSequenceKeypoint.new(1, c),
+					})
+				end
+			end
+		end)
+	end
+
+	-- Tones move the whole panel set together, so the menu can be black, charcoal,
+	-- navy or plum without every shade being picked by hand.
+	local TONES = {
+		Black    = { Bg = { 11, 12, 16 },  Rail = { 16, 17, 22 }, Panel = { 21, 23, 29 },
+			Panel2 = { 27, 29, 36 }, Hover = { 33, 36, 44 }, Edge = { 38, 41, 50 } },
+		Charcoal = { Bg = { 20, 21, 24 },  Rail = { 26, 27, 31 }, Panel = { 32, 34, 39 },
+			Panel2 = { 40, 42, 48 }, Hover = { 48, 51, 58 }, Edge = { 56, 59, 67 } },
+		Navy     = { Bg = { 10, 13, 24 },  Rail = { 14, 18, 33 }, Panel = { 19, 24, 43 },
+			Panel2 = { 25, 31, 54 }, Hover = { 31, 39, 66 }, Edge = { 38, 47, 78 } },
+		Plum     = { Bg = { 16, 11, 21 },  Rail = { 22, 15, 29 }, Panel = { 29, 20, 38 },
+			Panel2 = { 37, 26, 48 }, Hover = { 45, 32, 58 }, Edge = { 54, 39, 69 } },
+	}
+	local toneNow = "Black"
+	local function setTone(nm)
+		local t = TONES[nm]
+		if not t then return end
+		toneNow = nm
+		local pairsToDo = {}
+		for k, rgb in pairs(t) do
+			pairsToDo[#pairsToDo + 1] = { T[k], Color3.fromRGB(rgb[1], rgb[2], rgb[3]), k }
+		end
+		-- the window's own background is not a descendant, so it is done by hand
+		for _, e in ipairs(pairsToDo) do
+			repaint(e[1], e[2])
+			T[e[3]] = e[2]
+		end
+		pcall(function() card.BackgroundColor3 = T.Bg end)
+	end
+
+	--== weather ================================================================
+	-- Drawn behind the page, out of frames, on one loop that only runs while an
+	-- effect is on. The group panels are solid, so it shows in the space around
+	-- them the way weather behind a window should.
+	local fxLayer = make("Frame", {
+		Name = "Weather",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		ZIndex = 0,
+		ClipsDescendants = true,
+		Parent = card,
+	})
+	local FX_KINDS = { "None", "Rain", "Snow", "Embers", "Stars", "Bubbles", "Aurora" }
+	local weather = { kind = "None", amount = 1, bits = {}, conn = nil }
+
+	local function clearWeather()
+		if weather.conn then pcall(function() weather.conn:Disconnect() end) weather.conn = nil end
+		for _, b in ipairs(weather.bits) do pcall(function() b.f:Destroy() end) end
+		weather.bits = {}
+	end
+
+	local function newBit(kind)
+		local b = { x = math.random(), y = math.random(), seed = math.random() * 6.28 }
+		local f
+		if kind == "Rain" then
+			b.v = 0.9 + math.random() * 0.8
+			f = make("Frame", {
+				Size = UDim2.fromOffset(1, 11 + math.random(0, 9)),
+				BackgroundColor3 = T.Accent,
+				BackgroundTransparency = 0.55,
+				BorderSizePixel = 0,
+				Rotation = 8,
+				Parent = fxLayer,
+			})
+		elseif kind == "Snow" then
+			b.v = 0.1 + math.random() * 0.12
+			local d = 2 + math.random(0, 2)
+			f = make("Frame", {
+				Size = UDim2.fromOffset(d, d),
+				BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+				BackgroundTransparency = 0.35,
+				BorderSizePixel = 0,
+				Parent = fxLayer,
+			}, { corner(99) })
+		elseif kind == "Embers" then
+			b.v = -(0.12 + math.random() * 0.16)
+			local d = 2 + math.random(0, 2)
+			f = make("Frame", {
+				Size = UDim2.fromOffset(d, d),
+				BackgroundColor3 = T.Accent,
+				BackgroundTransparency = 0.3,
+				BorderSizePixel = 0,
+				Parent = fxLayer,
+			}, { corner(99) })
+		elseif kind == "Bubbles" then
+			b.v = -(0.05 + math.random() * 0.08)
+			local d = 5 + math.random(0, 12)
+			f = make("Frame", {
+				Size = UDim2.fromOffset(d, d),
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				Parent = fxLayer,
+			}, { corner(99), stroke(T.Accent, 0.55, 1) })
+		elseif kind == "Aurora" then
+			b.v = 0.02 + math.random() * 0.03
+			f = make("Frame", {
+				Size = UDim2.new(0.7, 0, 0, 90 + math.random(0, 80)),
+				BackgroundColor3 = T.Accent,
+				BackgroundTransparency = 0.9,
+				BorderSizePixel = 0,
+				Rotation = -12 + math.random(0, 24),
+				Parent = fxLayer,
+			}, { corner(99) })
+		else -- Stars
+			b.v = 0
+			local d = 1 + math.random(0, 2)
+			f = make("Frame", {
+				Size = UDim2.fromOffset(d, d),
+				BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+				BackgroundTransparency = 0.5,
+				BorderSizePixel = 0,
+				Parent = fxLayer,
+			}, { corner(99) })
+		end
+		b.f = f
+		return b
+	end
+
+	local function startWeather()
+		clearWeather()
+		local kind = weather.kind
+		if kind == "None" then return end
+		local counts = { Rain = 70, Snow = 55, Embers = 40, Stars = 90, Bubbles = 26, Aurora = 3 }
+		local n = math.floor((counts[kind] or 40) * math.clamp(weather.amount, 0.2, 2))
+		for _ = 1, n do weather.bits[#weather.bits + 1] = newBit(kind) end
+		local RunService = game:GetService("RunService")
+		weather.conn = RunService.RenderStepped:Connect(function(dt)
+			dt = math.min(num(dt, 1 / 60), 0.1)
+			local t = os.clock()
+			for _, b in ipairs(weather.bits) do
+				if kind == "Stars" then
+					pcall(function()
+						b.f.Position = UDim2.fromScale(b.x, b.y)
+						b.f.BackgroundTransparency = 0.35 + 0.5 * (0.5 + 0.5 * math.sin(t * 2 + b.seed))
+					end)
+				elseif kind == "Aurora" then
+					b.x = (b.x + b.v * dt) % 1.4
+					pcall(function()
+						b.f.Position = UDim2.fromScale(b.x - 0.35, b.y * 0.8)
+						b.f.BackgroundTransparency = 0.86 + 0.08 * math.sin(t * 0.6 + b.seed)
+					end)
+				else
+					b.y = b.y + b.v * dt
+					if b.y > 1.05 then b.y = -0.05 b.x = math.random() end
+					if b.y < -0.05 then b.y = 1.05 b.x = math.random() end
+					local sway = (kind == "Snow" or kind == "Bubbles")
+						and math.sin(t * 1.2 + b.seed) * 0.02 or 0
+					pcall(function()
+						b.f.Position = UDim2.fromScale(math.clamp(b.x + sway, -0.05, 1.05), b.y)
+					end)
+				end
+			end
+		end)
+	end
+
+	--== the settings panel =====================================================
+	local setBtn = make("TextButton", {
+		Name = "Settings",
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, 190, 0.5, 0),
+		Size = UDim2.fromOffset(30, 28),
+		BackgroundColor3 = T.Panel,
+		BorderSizePixel = 0,
+		Text = "",
+		AutoButtonColor = false,
+		Parent = bar,
+	}, { corner(8), stroke(T.Edge, 0.45) })
+	icon(setBtn, "gear", 13, T.Muted)
+
+	local panel = make("Frame", {
+		Name = "SettingsPanel",
+		Position = UDim2.fromOffset(190, barH - 4),
+		Size = UDim2.fromOffset(250, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundColor3 = T.Panel,
+		BorderSizePixel = 0,
+		Visible = false,
+		ZIndex = 9,
+		Parent = content,
+	}, { corner(10), stroke(T.Edge, 0.35), pad(10, 10, 10, 12), list(8) })
+
+	local function panelHead(text, order)
+		make("TextLabel", {
+			Size = UDim2.new(1, 0, 0, 16),
+			BackgroundTransparency = 1,
+			Text = tostring(text),
+			TextColor3 = T.Muted,
+			TextSize = 11,
+			Font = Enum.Font.GothamBold,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			LayoutOrder = order,
+			Parent = panel,
+		})
+	end
+
+	-- accent swatches
+	panelHead("MENU COLOUR", 1)
+	local swatchRow = make("Frame", {
+		Size = UDim2.new(1, 0, 0, 24),
+		BackgroundTransparency = 1,
+		LayoutOrder = 2,
+		Parent = panel,
+	}, {
+		make("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			Padding = UDim.new(0, 6),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}),
+	})
+	local ACCENTS = {
+		{ 58, 130, 247 }, { 112, 96, 245 }, { 196, 92, 240 }, { 244, 88, 140 },
+		{ 240, 104, 76 }, { 240, 176, 60 }, { 74, 205, 132 }, { 60, 200, 214 },
+		{ 232, 234, 240 },
+	}
+	for i, rgb in ipairs(ACCENTS) do
+		local c = Color3.fromRGB(rgb[1], rgb[2], rgb[3])
+		local sw = make("TextButton", {
+			Size = UDim2.fromOffset(20, 20),
+			BackgroundColor3 = c,
+			BorderSizePixel = 0,
+			Text = "",
+			AutoButtonColor = false,
+			LayoutOrder = i,
+			Parent = swatchRow,
+		}, { corner(6) })
+		pcall(function()
+			sw.MouseButton1Click:Connect(function() setAccent(c) end)
+		end)
+	end
+
+	-- tone
+	panelHead("BACKGROUND", 3)
+	local toneRow = make("Frame", {
+		Size = UDim2.new(1, 0, 0, 24),
+		BackgroundTransparency = 1,
+		LayoutOrder = 4,
+		Parent = panel,
+	}, {
+		make("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			Padding = UDim.new(0, 6),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}),
+	})
+	local toneNames = { "Black", "Charcoal", "Navy", "Plum" }
+	for i, nm in ipairs(toneNames) do
+		local b2 = make("TextButton", {
+			Size = UDim2.fromOffset(54, 22),
+			BackgroundColor3 = T.Panel2,
+			BorderSizePixel = 0,
+			Text = nm,
+			TextColor3 = T.Muted,
+			TextSize = 10,
+			Font = Enum.Font.GothamMedium,
+			AutoButtonColor = false,
+			LayoutOrder = i,
+			Parent = toneRow,
+		}, { corner(6) })
+		pcall(function() b2.MouseButton1Click:Connect(function() setTone(nm) end) end)
+	end
+
+	-- a small slider for the panel's own use
+	local function panelSlider(label, lo, hi, def, order, onChange)
+		local holder = make("Frame", {
+			Size = UDim2.new(1, 0, 0, 34),
+			BackgroundTransparency = 1,
+			LayoutOrder = order,
+			Parent = panel,
+		})
+		local cap = make("TextLabel", {
+			Size = UDim2.new(1, 0, 0, 14),
+			BackgroundTransparency = 1,
+			Text = label .. "  " .. string.format("%.2f", def),
+			TextColor3 = T.Text,
+			TextSize = 11,
+			Font = Enum.Font.GothamMedium,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Parent = holder,
+		})
+		local track = make("Frame", {
+			Position = UDim2.new(0, 0, 1, -8),
+			Size = UDim2.new(1, 0, 0, 5),
+			BackgroundColor3 = T.Off,
+			BorderSizePixel = 0,
+			Parent = holder,
+		}, { corner(99) })
+		local fill = make("Frame", {
+			Size = UDim2.fromScale((def - lo) / (hi - lo), 1),
+			BackgroundColor3 = T.Accent,
+			BorderSizePixel = 0,
+			Parent = track,
+		}, { corner(99) })
+		local hit = make("TextButton", {
+			Position = UDim2.fromOffset(0, -8),
+			Size = UDim2.new(1, 0, 1, 16),
+			BackgroundTransparency = 1,
+			Text = "",
+			Parent = track,
+		})
+		local drag = false
+		local function at(x)
+			local ax = num(track.AbsolutePosition and track.AbsolutePosition.X, nil)
+			local aw = num(track.AbsoluteSize and track.AbsoluteSize.X, nil)
+			if not ax or not aw or aw <= 0 then return end
+			local k = math.clamp((num(x, ax) - ax) / aw, 0, 1)
+			local v = lo + (hi - lo) * k
+			cap.Text = label .. "  " .. string.format("%.2f", v)
+			fill.Size = UDim2.fromScale(k, 1)
+			onChange(v)
+		end
+		pcall(function()
+			hit.InputBegan:Connect(function(input)
+				local ty = input.UserInputType
+				if ty == Enum.UserInputType.MouseButton1 or ty == Enum.UserInputType.Touch then
+					drag = true
+					at(input.Position and input.Position.X)
+				end
+			end)
+			UserInputService.InputChanged:Connect(function(input)
+				if drag then at(input.Position and input.Position.X) end
+			end)
+			UserInputService.InputEnded:Connect(function() drag = false end)
+		end)
+		return function(v)
+			cap.Text = label .. "  " .. string.format("%.2f", v)
+			fill.Size = UDim2.fromScale((v - lo) / (hi - lo), 1)
+		end
+	end
+
+	panelHead("SIZE", 5)
+	local setSizeCap = panelSlider("menu size", 0.6, 1.4, 1, 6, function(v)
+		W._userScale = v
+		refit()
+	end)
+
+	-- weather
+	panelHead("EFFECT", 7)
+	local effRow = make("Frame", {
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		LayoutOrder = 8,
+		Parent = panel,
+	}, {
+		make("UIGridLayout", {
+			CellSize = UDim2.fromOffset(70, 22),
+			CellPadding = UDim2.fromOffset(6, 6),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}),
+	})
+	local effChips = {}
+	local function paintChips()
+		for nm, chip in pairs(effChips) do
+			local on = (weather.kind == nm)
+			pcall(function()
+				chip.BackgroundColor3 = on and T.Accent or T.Panel2
+				chip.TextColor3 = on and Color3.fromRGB(255, 255, 255) or T.Muted
+			end)
+		end
+	end
+	for i, nm in ipairs(FX_KINDS) do
+		local chip = make("TextButton", {
+			BackgroundColor3 = T.Panel2,
+			BorderSizePixel = 0,
+			Text = nm,
+			TextColor3 = T.Muted,
+			TextSize = 10,
+			Font = Enum.Font.GothamMedium,
+			AutoButtonColor = false,
+			LayoutOrder = i,
+			Parent = effRow,
+		}, { corner(6) })
+		effChips[nm] = chip
+		pcall(function()
+			chip.MouseButton1Click:Connect(function()
+				weather.kind = nm
+				paintChips()
+				startWeather()
+			end)
+		end)
+	end
+	paintChips()
+	local setAmountCap = panelSlider("how much", 0.2, 2, 1, 9, function(v)
+		weather.amount = v
+		if weather.kind ~= "None" then startWeather() end
+	end)
+
+	pcall(function()
+		setBtn.MouseButton1Click:Connect(function()
+			panel.Visible = not panel.Visible
+			if cfgList then cfgList.Visible = false end
+		end)
+		setBtn.MouseEnter:Connect(function() tween(setBtn, 0.12, { BackgroundColor3 = T.Hover }) end)
+		setBtn.MouseLeave:Connect(function() tween(setBtn, 0.12, { BackgroundColor3 = T.Panel }) end)
+	end)
+
+	-- the look travels with a config, so a saved config brings its menu back too
+	W._reg[#W._reg + 1] = { key = "menu/accent",
+		get = function()
+			local c = T.Accent
+			return { r = c.R, g = c.G, b = c.B }
+		end,
+		set = function(v)
+			if type(v) == "table" then
+				setAccent(Color3.new(num(v.r, 0.2), num(v.g, 0.5), num(v.b, 1)))
+			end
+		end }
+	W._reg[#W._reg + 1] = { key = "menu/tone",
+		get = function() return toneNow end,
+		set = function(v) setTone(tostring(v)) end }
+	W._reg[#W._reg + 1] = { key = "menu/size",
+		get = function() return num(W._userScale, 1) end,
+		set = function(v)
+			W._userScale = num(v, 1)
+			setSizeCap(W._userScale)
+			refit()
+		end }
+	W._reg[#W._reg + 1] = { key = "menu/effect",
+		get = function() return weather.kind end,
+		set = function(v)
+			weather.kind = tostring(v)
+			paintChips()
+			startWeather()
+		end }
+	W._reg[#W._reg + 1] = { key = "menu/effectAmount",
+		get = function() return weather.amount end,
+		set = function(v)
+			weather.amount = num(v, 1)
+			setAmountCap(weather.amount)
+			if weather.kind ~= "None" then startWeather() end
+		end }
+
 	--== show, hide, drag =======================================================
 	local open = true
 	local function setOpen(v)
@@ -1950,7 +2429,7 @@ function UI:CreateWindow(o)
 
 	--== the config strip does what it looks like it does =======================
 	local picked = "default"
-	local cfgList = make("ScrollingFrame", {
+	cfgList = make("ScrollingFrame", {
 		Name = "ConfigList",
 		Position = UDim2.fromOffset(52, barH - 4),
 		Size = UDim2.fromOffset(132, 0),
@@ -2006,6 +2485,7 @@ function UI:CreateWindow(o)
 		cfgPill.MouseButton1Click:Connect(function()
 			cfgList.Visible = not cfgList.Visible
 			if cfgList.Visible then drawList() end
+			panel.Visible = false
 		end)
 		saveBtn.MouseButton1Click:Connect(function()
 			W.CurrentConfig = configObject(picked)
