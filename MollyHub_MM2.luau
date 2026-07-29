@@ -188,14 +188,16 @@ do
 
 	local V = {
 		chams = false, chamFill = 0.55, chamWalls = true, chamOutline = true, chamDead = true,
-		chamStyle = "Highlight", chamWeapon = true, chamSelf = false,
-		aura = false, auraStyle = "Fire", auraSelf = false, auraOwn = false,
-		auraColor = Color3.fromRGB(180, 120, 255),
-		ring = false, ringSelf = false,
+		chamStyle = "ForceField", chamWeapon = true, chamSelf = false,
+		aura = false, auraStyle = "Fire", auraSelf = false,
+		ring = false, ringSelf = false, ringSize = 6, jumpRing = false,
+		hat = false, hatSelf = false, hatSize = 5, hatSpin = true,
+		roleColors = true, oneColor = Color3.fromRGB(150, 120, 255), bright = 1,
+		visCheck = false, visHide = false, visDim = 0.45,
 		distStuds = true, distRole = true,
 		box = false, boxCorners = true, boxName = true, boxDist = true, headDot = false,
 		tracer = false, tracerFrom = "Bottom",
-		arrows = false,
+		arrows = false, arrowSize = 12, arrowRing = 0.3, arrowsAlways = false,
 		radar = false, radarSize = 90, radarRange = 250,
 		gunEsp = false, coinEsp = false, coinRange = 300,
 		cross = false, crossStyle = "Cross", crossSize = 9, crossGap = 4, crossThick = 1,
@@ -245,51 +247,117 @@ do
 	end
 
 	--== the wireframe look, and what goes with it ==============================
-	-- ForceField is the material that draws a part as a glowing wire shell, so a
-	-- character wearing it everywhere is the hologram in the reference shots. All
-	-- of this is written straight onto the parts, which for another player's
-	-- character is a LOCAL write: the server owns them and never sees ours. Every
-	-- part we touch is remembered so it goes back exactly as it was.
-	local FX = { skin = {}, aura = {}, ring = {} }
+	-- Painting another player's own parts is what made the first version flicker:
+	-- the game writes to those parts too, and whoever wrote last that frame won.
+	-- So we do not touch them any more. Every part is CLONED once, the copy is
+	-- welded to the original and given the look, and after that nothing has to be
+	-- written per frame at all — the copy simply follows. Nothing fights, so
+	-- nothing flickers, and it costs one build per character instead of a walk of
+	-- the whole model every frame.
+	local FX = { body = {}, aura = {}, ring = {}, hat = {}, seen = {} }
 
-	function FX.unskin(player)
-		local rec = FX.skin[player]
-		if not rec then return end
-		for part, was in pairs(rec) do
-			pcall(function()
-				if part.Parent then
-					part.Material = was.m
-					part.Color = was.c
-					part.Transparency = was.t
-					part.Reflectance = was.r
-				end
-			end)
-		end
-		FX.skin[player] = nil
+	-- Brighter or darker than the colour asked for, without leaving it.
+	function FX.lit(c, k)
+		k = tonumber(k) or 1
+		if k == 1 then return c end
+		local out = c
+		pcall(function()
+			if k > 1 then
+				out = c:Lerp(Color3.fromRGB(255, 255, 255), math.min(k - 1, 1) * 0.75)
+			else
+				out = c:Lerp(Color3.fromRGB(0, 0, 0), 1 - k)
+			end
+		end)
+		return out
 	end
 
-	function FX.skinChar(player, char, colr, style)
-		local rec = FX.skin[player]
-		if not rec then rec = {} FX.skin[player] = rec end
-		local mat = Enum.Material.ForceField
-		if style == "Neon" then mat = Enum.Material.Neon
-		elseif style == "Glass" then mat = Enum.Material.Glass end
-		pcall(function()
-			for _, d in ipairs(char:GetDescendants()) do
-				local isTool = d:FindFirstAncestorWhichIsA("Tool") ~= nil
-				if d:IsA("BasePart") and d.Name ~= "HumanoidRootPart"
-					and (V.chamWeapon or not isTool) then
-					if not rec[d] then
-						rec[d] = { m = d.Material, c = d.Color, t = d.Transparency, r = d.Reflectance }
+	-- What each style does to a copied part. Transparency matters as much as the
+	-- material: Glass at zero looks solid, and Ghost is only a ghost when you can
+	-- see through it — that is why two of the first five looked like nothing was
+	-- happening.
+	local STYLE = {
+		ForceField = { mat = "ForceField", t = 0,    r = 0,   glow = true },
+		Neon       = { mat = "Neon",       t = 0,    r = 0,   glow = true },
+		Glass      = { mat = "Glass",      t = 0.55, r = 0.35 },
+		Ghost      = { mat = "Neon",       t = 0.72, r = 0,   glow = true },
+		Ice        = { mat = "Glacier",    t = 0.35, r = 0.5 },
+		Crystal    = { mat = "Glass",      t = 0.25, r = 0.9, glow = true },
+		Plasma     = { mat = "Neon",       t = 0.15, r = 0,   glow = true, cycle = true },
+		Flat       = { mat = "SmoothPlastic", t = 0, r = 0 },
+		Metal      = { mat = "Foil",       t = 0,    r = 0.6 },
+		Wire       = { mat = "ForceField", t = 0.35, r = 0,   glow = true },
+	}
+	FX.styleNames = { "ForceField", "Neon", "Ghost", "Wire", "Plasma", "Crystal",
+		"Glass", "Ice", "Metal", "Flat", "Highlight" }
+
+	function FX.bodyOff(player)
+		local rec = FX.body[player]
+		if rec then pcall(function() rec.model:Destroy() end) end
+		FX.body[player] = nil
+	end
+
+	-- Build the copy once, then only ever change its colour.
+	function FX.bodyOn(player, char, colr, style)
+		local d = STYLE[style]
+		if not d then return FX.bodyOff(player) end
+		local rec = FX.body[player]
+		if rec and (rec.char ~= char or rec.style ~= style or not rec.model.Parent) then
+			FX.bodyOff(player)
+			rec = nil
+		end
+		if not rec then
+			local ok, made = pcall(function()
+				local m = Instance.new("Model")
+				m.Name = "MH_Body"
+				local parts = {}
+				for _, src in ipairs(char:GetDescendants()) do
+					local isTool = src:FindFirstAncestorWhichIsA("Tool") ~= nil
+					if src:IsA("BasePart") and src.Name ~= "HumanoidRootPart"
+						and src.Transparency < 1 and (V.chamWeapon or not isTool) then
+						local c = src:Clone()
+						-- a copy that can still run code or make noise is a second
+						-- weapon, not a decoration
+						for _, kid in ipairs(c:GetDescendants()) do
+							if not (kid:IsA("SpecialMesh") or kid:IsA("BlockMesh")
+								or kid:IsA("CylinderMesh")) then
+								pcall(function() kid:Destroy() end)
+							end
+						end
+						c.Name = "MH_Copy"
+						c.Anchored = false
+						c.CanCollide = false
+						c.CanQuery = false
+						c.CanTouch = false
+						c.Massless = true
+						c.CastShadow = false
+						c.Material = Enum.Material[d.mat] or Enum.Material.ForceField
+						c.Transparency = d.t
+						c.Reflectance = d.r
+						c.Size = src.Size * 1.01     -- just proud of the real one
+						c.CFrame = src.CFrame
+						c.Parent = m
+						local w = Instance.new("WeldConstraint")
+						w.Part0 = src
+						w.Part1 = c
+						w.Parent = c
+						parts[#parts + 1] = c
 					end
-					if d.Material ~= mat then d.Material = mat end
-					if d.Color ~= colr then d.Color = colr end
-					local want = (style == "Ghost") and 0.5 or rec[d].t
-					if d.Transparency ~= want then d.Transparency = want end
-					local wantR = (style == "Glass") and 0.3 or rec[d].r
-					if d.Reflectance ~= wantR then d.Reflectance = wantR end
 				end
+				m.Parent = char
+				return { model = m, parts = parts, char = char, style = style }
+			end)
+			if not ok or not made or #made.parts == 0 then
+				if made and made.model then pcall(function() made.model:Destroy() end) end
+				return
 			end
+			rec = made
+			FX.body[player] = rec
+		end
+		if d.cycle then colr = Color3.fromHSV((os.clock() * 0.25) % 1, 0.85, 1) end
+		if rec.colr == colr then return end
+		rec.colr = colr
+		pcall(function()
+			for _, c in ipairs(rec.parts) do c.Color = colr end
 		end)
 	end
 
@@ -298,14 +366,19 @@ do
 	-- and nothing to get wrong.
 	local AURA = {
 		Fire     = { tex = "rbxasset://textures/particles/fire_main.dds", rate = 26, life = 0.8,
-			size = 2.6, speed = 3, spread = 12 },
+			size = 2.6, speed = 3, spread = 12, up = 4 },
 		Sparkles = { tex = "rbxasset://textures/particles/sparkles_main.dds", rate = 34, life = 1.1,
-			size = 1.1, speed = 2, spread = 40 },
+			size = 1.1, speed = 2, spread = 40, up = 2 },
 		Smoke    = { tex = "rbxasset://textures/particles/smoke_main.dds", rate = 14, life = 1.6,
-			size = 4, speed = 1.5, spread = 25 },
+			size = 4, speed = 1.5, spread = 25, up = 3 },
 		Wings    = { tex = "rbxasset://textures/particles/sparkles_main.dds", rate = 60, life = 0.7,
-			size = 1.6, speed = 6, spread = 80 },
+			size = 1.6, speed = 6, spread = 80, up = 6, back = true },
+		Halo     = { tex = "rbxasset://textures/particles/sparkles_main.dds", rate = 45, life = 0.5,
+			size = 0.8, speed = 0.5, spread = 4, up = 0 },
+		Ember    = { tex = "rbxasset://textures/particles/fire_main.dds", rate = 12, life = 2.2,
+			size = 0.9, speed = 1, spread = 60, up = -2 },
 	}
+	FX.auraNames = { "Fire", "Sparkles", "Smoke", "Wings", "Halo", "Ember" }
 
 	function FX.dropAura(player)
 		local e = FX.aura[player]
@@ -317,59 +390,67 @@ do
 		local root = char:FindFirstChild("HumanoidRootPart")
 		if not root then return FX.dropAura(player) end
 		local e = FX.aura[player]
-		if not e or e.Parent ~= root then
+		if e and (e.Parent ~= root or e:GetAttribute("MHStyle") ~= V.auraStyle) then
 			FX.dropAura(player)
+			e = nil
+		end
+		local fresh = false
+		if not e then
 			local ok, made = pcall(function()
 				local n = Instance.new("ParticleEmitter")
 				n.Name = "MH_Aura"
+				n:SetAttribute("MHStyle", V.auraStyle)
 				n.Parent = root
 				return n
 			end)
 			if not ok then return end
-			e = made
+			e, fresh = made, true
 			FX.aura[player] = e
 		end
 		local d = AURA[V.auraStyle] or AURA.Fire
-		local c = V.auraOwn and V.auraColor or colr
-		pcall(function()
-			e.Texture = d.tex
-			e.Color = ColorSequence.new(c)
-			e.Rate = d.rate
-			e.Lifetime = NumberRange.new(d.life * 0.7, d.life)
-			e.Size = NumberSequence.new({
-				NumberSequenceKeypoint.new(0, d.size * 0.4),
-				NumberSequenceKeypoint.new(0.4, d.size),
-				NumberSequenceKeypoint.new(1, 0),
-			})
-			e.Transparency = NumberSequence.new({
-				NumberSequenceKeypoint.new(0, 0.35),
-				NumberSequenceKeypoint.new(1, 1),
-			})
-			e.Speed = NumberRange.new(d.speed * 0.5, d.speed)
-			e.SpreadAngle = Vector2.new(d.spread, d.spread)
-			e.LightEmission = 1
-			e.LightInfluence = 0
-			e.ZOffset = -0.5
-			-- Wings throw wide and level, the rest drift upward
-			if V.auraStyle == "Wings" then
-				e.EmissionDirection = Enum.NormalId.Back
-				e.Acceleration = Vector3.new(0, 6, 0)
-			else
-				e.EmissionDirection = Enum.NormalId.Top
-				e.Acceleration = Vector3.new(0, 4, 0)
-			end
-			e.Enabled = true
-		end)
+		-- Only the colour can change without rebuilding. Writing the sequences
+		-- every frame is what made the particles stutter.
+		if fresh then
+			pcall(function()
+				e.Texture = d.tex
+				e.Rate = d.rate
+				e.Lifetime = NumberRange.new(d.life * 0.7, d.life)
+				e.Size = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, d.size * 0.4),
+					NumberSequenceKeypoint.new(0.4, d.size),
+					NumberSequenceKeypoint.new(1, 0),
+				})
+				e.Transparency = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, 0.35),
+					NumberSequenceKeypoint.new(1, 1),
+				})
+				e.Speed = NumberRange.new(d.speed * 0.5, d.speed)
+				e.SpreadAngle = Vector2.new(d.spread, d.spread)
+				e.LightEmission = 1
+				e.LightInfluence = 0
+				e.ZOffset = -0.5
+				e.Acceleration = Vector3.new(0, d.up, 0)
+				e.EmissionDirection = d.back and Enum.NormalId.Back or Enum.NormalId.Top
+				e.Enabled = true
+			end)
+		end
+		if e:GetAttribute("MHColor") ~= colr then
+			pcall(function()
+				e:SetAttribute("MHColor", colr)
+				e.Color = ColorSequence.new(colr)
+			end)
+		end
 	end
 
+	--== the things that sit on a player ========================================
 	function FX.dropRing(player)
 		local r = FX.ring[player]
 		if r then pcall(function() r:Destroy() end) end
 		FX.ring[player] = nil
 	end
 
-	-- A glowing disc on the floor under a player, the way the reference shot
-	-- marks whoever it is looking at.
+	-- A glowing disc on the floor. With "jump circle" on it swells and fades as
+	-- they leave the ground, so a jump reads at a glance.
 	function FX.ringOn(player, char, colr)
 		local root = char:FindFirstChild("HumanoidRootPart")
 		if not root then return FX.dropRing(player) end
@@ -380,14 +461,13 @@ do
 				local n = Instance.new("Part")
 				n.Name = "MH_Ring"
 				n.Shape = Enum.PartType.Cylinder
-				n.Size = Vector3.new(0.12, 6, 6)
 				n.Anchored = true
 				n.CanCollide = false
 				n.CanQuery = false
 				n.CanTouch = false
+				n.CastShadow = false
 				n.Massless = true
 				n.Material = Enum.Material.Neon
-				n.Transparency = 0.35
 				n.Parent = workspace
 				return n
 			end)
@@ -395,23 +475,133 @@ do
 			r = made
 			FX.ring[player] = r
 		end
+		local air, size, clear = 0, V.ringSize, 3.1
+		if V.jumpRing then
+			pcall(function()
+				local hum = char:FindFirstChildOfClass("Humanoid")
+				local st = hum and hum:GetState()
+				if st == Enum.HumanoidStateType.Jumping or st == Enum.HumanoidStateType.Freefall then
+					air = 1
+				end
+			end)
+			if air == 1 then
+				local t = (os.clock() * 2) % 1
+				size = V.ringSize * (1 + t * 0.9)
+				clear = 3.1 + t * 1.2
+			end
+		end
 		pcall(function()
+			r.Size = Vector3.new(0.12, size, size)
 			r.Color = colr
-			r.CFrame = CFrame.new(root.Position - Vector3.new(0, 3.1, 0))
+			r.Transparency = (air == 1) and (0.3 + ((os.clock() * 2) % 1) * 0.6) or 0.35
+			r.CFrame = CFrame.new(root.Position - Vector3.new(0, clear, 0))
 				* CFrame.Angles(0, 0, math.rad(90))
 		end)
 	end
 
+	function FX.dropHat(player)
+		local rec = FX.hat[player]
+		if rec then pcall(function() rec.model:Destroy() end) end
+		FX.hat[player] = nil
+	end
+
+	-- A china hat: a cone over the head. Built from a stack of thin discs rather
+	-- than a cone mesh, because a mesh means an asset id and an asset id is a
+	-- thing to get wrong — this needs nothing but parts.
+	function FX.hatOn(player, char, colr)
+		local head = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
+		if not head then return FX.dropHat(player) end
+		local rec = FX.hat[player]
+		if rec and (rec.head ~= head or not rec.model.Parent or rec.size ~= V.hatSize) then
+			FX.dropHat(player)
+			rec = nil
+		end
+		if not rec then
+			local ok, made = pcall(function()
+				local m = Instance.new("Model")
+				m.Name = "MH_Hat"
+				local rungs = 9
+				for i = 1, rungs do
+					local w = (1 - (i - 1) / rungs) * V.hatSize
+					local disc = Instance.new("Part")
+					disc.Name = "Rung"
+					disc.Shape = Enum.PartType.Cylinder
+					disc.Size = Vector3.new(0.08, w, w)
+					disc.Anchored = true
+					disc.CanCollide = false
+					disc.CanQuery = false
+					disc.CanTouch = false
+					disc.CastShadow = false
+					disc.Material = Enum.Material.Neon
+					disc.Transparency = 0.25
+					disc:SetAttribute("MHLift", (i - 1) * 0.16)
+					disc.Parent = m
+				end
+				m.Parent = workspace
+				return { model = m, head = head, size = V.hatSize }
+			end)
+			if not ok or not made then return end
+			rec = made
+			FX.hat[player] = rec
+		end
+		local spin = V.hatSpin and (os.clock() * 1.6) or 0
+		pcall(function()
+			local base = head.Position + Vector3.new(0, 1.4, 0)
+			for _, disc in ipairs(rec.model:GetChildren()) do
+				disc.Color = colr
+				disc.CFrame = CFrame.new(base + Vector3.new(0, disc:GetAttribute("MHLift") or 0, 0))
+					* CFrame.Angles(0, spin, 0)
+					* CFrame.Angles(0, 0, math.rad(90))
+			end
+		end)
+	end
+
+	--== can you actually see them ==============================================
+	-- One ray to the head, ignoring your own character and theirs. Cached for a
+	-- fifth of a second: a ray per player per frame is the one thing here that
+	-- would cost real frames.
+	function FX.visible(player, char)
+		local rec = FX.seen[player]
+		if rec and (os.clock() - rec.at) < 0.2 then return rec.ok end
+		local head = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
+		local mine = LocalPlayer.Character
+		local ok = true
+		pcall(function()
+			if not head then return end
+			local from = Camera.CFrame.Position
+			local dir = head.Position - from
+			local params = RaycastParams.new()
+			params.FilterType = Enum.RaycastFilterType.Exclude
+			params.FilterDescendantsInstances = { char, mine, Camera }
+			params.IgnoreWater = true
+			local hit = workspace:Raycast(from, dir, params)
+			ok = (hit == nil)
+		end)
+		FX.seen[player] = { ok = ok, at = os.clock() }
+		return ok
+	end
+
 	function FX.clear(player)
-		FX.unskin(player)
+		FX.bodyOff(player)
 		FX.dropAura(player)
 		FX.dropRing(player)
+		FX.dropHat(player)
+		FX.seen[player] = nil
 	end
 
 	function FX.clearAll()
-		for pl in pairs(FX.skin) do FX.unskin(pl) end
+		for pl in pairs(FX.body) do FX.bodyOff(pl) end
 		for pl in pairs(FX.aura) do FX.dropAura(pl) end
 		for pl in pairs(FX.ring) do FX.dropRing(pl) end
+		for pl in pairs(FX.hat) do FX.dropHat(pl) end
+		FX.seen = {}
+	end
+
+	-- Role colours, or one colour of your own, and how bright either should be.
+	local function shade(player)
+		local colr, role, dead = colorFor(player)
+		if not V.roleColors then colr = V.oneColor end
+		return FX.lit(colr, V.bright), role, dead
 	end
 
 	--== chams ==================================================================
@@ -422,17 +612,23 @@ do
 		chams[player] = nil
 	end
 	local function updateCham(player, char)
-		local colr, _, dead = colorFor(player)
+		local colr, _, dead = shade(player)
 		local hidden = dead and V.chamDead
-		-- the material look, the aura and the floor ring all key off the same
-		-- role colour, and all three come off together when the player dies
+		-- Behind a wall, if you asked to be told: either drop the lot or dim it,
+		-- so what you can really see reads differently from what you cannot.
+		if V.visCheck and not FX.visible(player, char) then
+			if V.visHide then hidden = true else colr = FX.lit(colr, V.visDim) end
+		end
+		-- the body, the aura, the ring and the hat all key off that one colour,
+		-- and all of them come off together when the player dies
 		if V.chams and V.chamStyle ~= "Highlight" and not hidden then
-			FX.skinChar(player, char, colr, V.chamStyle)
+			FX.bodyOn(player, char, colr, V.chamStyle)
 		else
-			FX.unskin(player)
+			FX.bodyOff(player)
 		end
 		if V.aura and not hidden then FX.auraOn(player, char, colr) else FX.dropAura(player) end
 		if V.ring and not hidden then FX.ringOn(player, char, colr) else FX.dropRing(player) end
+		if V.hat and not hidden then FX.hatOn(player, char, colr) else FX.dropHat(player) end
 		if not V.chams or V.chamStyle ~= "Highlight" then return dropCham(player) end
 		local h = chams[player]
 		if not h or h.Parent ~= char then
@@ -536,9 +732,9 @@ do
 		local dx, dy = mid.X - cx, mid.Y - cy
 		if mid.Z < 0 then dx, dy = -dx, -dy end
 		local ang = math.atan2(dy, dx)
-		local r = math.min(vp.X, vp.Y) * 0.3
+		local r = math.min(vp.X, vp.Y) * (V.arrowRing or 0.3)
 		local ax, ay = cx + math.cos(ang) * r, cy + math.sin(ang) * r
-		local size = 11
+		local size = V.arrowSize or 11
 		pcall(function()
 			tri.PointA = Vector2.new(ax + math.cos(ang) * size, ay + math.sin(ang) * size)
 			tri.PointB = Vector2.new(ax + math.cos(ang + 2.5) * size, ay + math.sin(ang + 2.5) * size)
@@ -788,7 +984,7 @@ do
 	local function anythingOn()
 		return V.chams or V.box or V.cross or V.mark or V.tracer or V.arrows
 			or V.radar or V.gunEsp or V.coinEsp or V.headDot or V.aura or V.ring
-			or V.chamSelf or V.auraSelf or V.ringSelf
+			or V.chamSelf or V.auraSelf or V.ringSelf or V.hat or V.hatSelf
 	end
 
 	local conn
@@ -857,16 +1053,18 @@ do
 			-- yourself: the same three effects, none of the on-screen drawing
 			do
 				local mine = LocalPlayer.Character
-				if mine and (V.chamSelf or V.auraSelf or V.ringSelf) then
-					local c = V.auraOwn and V.auraColor or COL.Sheriff
+				if mine and (V.chamSelf or V.auraSelf or V.ringSelf or V.hatSelf) then
+					local c = FX.lit(V.roleColors and COL.Sheriff or V.oneColor, V.bright)
 					if V.chamSelf and V.chamStyle ~= "Highlight" then
-						FX.skinChar(LocalPlayer, mine, c, V.chamStyle)
+						FX.bodyOn(LocalPlayer, mine, c, V.chamStyle)
 					else
-						FX.unskin(LocalPlayer)
+						FX.bodyOff(LocalPlayer)
 					end
 					if V.auraSelf then FX.auraOn(LocalPlayer, mine, c) else FX.dropAura(LocalPlayer) end
 					if V.ringSelf then FX.ringOn(LocalPlayer, mine, c) else FX.dropRing(LocalPlayer) end
-				elseif FX.skin[LocalPlayer] or FX.aura[LocalPlayer] or FX.ring[LocalPlayer] then
+					if V.hatSelf then FX.hatOn(LocalPlayer, mine, c) else FX.dropHat(LocalPlayer) end
+				elseif FX.body[LocalPlayer] or FX.aura[LocalPlayer] or FX.ring[LocalPlayer]
+					or FX.hat[LocalPlayer] then
 					FX.clear(LocalPlayer)
 				end
 			end
@@ -883,7 +1081,15 @@ do
 						updateCham(player, char)
 						local p = poolFor(player)
 						if p then
-							local colr = colorFor(player)
+							local colr = shade(player)
+							if V.visCheck and not FX.visible(player, char) then
+								if V.visHide then
+									hidePool(player, true)
+									radarBlip(p, root.Position, colr, vp)
+									return
+								end
+								colr = FX.lit(colr, V.visDim)
+							end
 							radarBlip(p, root.Position, colr, vp)
 							if not (V.box or V.tracer or V.arrows or V.headDot) then
 								hidePool(player, true)
@@ -895,7 +1101,13 @@ do
 										if V.arrows then arrowAt(p.arrow, mid, cx, cy, vp, colr) end
 										return
 									end
-									show(p.arrow, false)
+									-- on screen: an arrow only if you asked for one on
+									-- everybody, which is what makes a ring of them
+									if V.arrows and V.arrowsAlways then
+										arrowAt(p.arrow, mid, cx, cy, vp, colr)
+									else
+										show(p.arrow, false)
+									end
 
 									local top = Camera:WorldToViewportPoint(root.Position + Vector3.new(0, 3.1, 0))
 									local bot = Camera:WorldToViewportPoint(root.Position - Vector3.new(0, 3.3, 0))
@@ -959,7 +1171,7 @@ do
 										local me = LocalPlayer.Character
 											and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
 										local d = me and math.floor((me.Position - root.Position).Magnitude) or 0
-										local _, role = colorFor(player)
+										local _, role = shade(player)
 										local unit = V.distStuds and " studs" or "m"
 										p.dist.Text = V.distRole
 											and string.format("%s  %d%s", string.lower(role), d, unit)
@@ -995,52 +1207,80 @@ do
 	EspTab:Toggle({ Title = "Chams", Desc = "players lit in their role's colour",
 		Default = false, Callback = function(on) V.chams = on sync() end })
 	EspTab:Dropdown({ Title = "Cham style",
-		Desc = "ForceField is the glowing wireframe look",
-		Values = { "Highlight", "ForceField", "Neon", "Glass", "Ghost" }, Value = "Highlight",
+		Desc = "ForceField is the glowing wireframe; Highlight is a flat overlay",
+		Values = FX.styleNames, Value = "ForceField",
 		Callback = function(v)
-			FX.clearAll()
 			V.chamStyle = tostring(v)
+			FX.clearAll()
 		end })
 	EspTab:Toggle({ Title = "The weapon too", Desc = "their knife or gun gets the same look",
 		Default = true, Callback = function(on) V.chamWeapon = on FX.clearAll() end })
-	EspTab:Toggle({ Title = "Through walls", Desc = "off = only where you could really see them",
+	EspTab:Slider({ Title = "Brightness", Desc = "1 is the colour as it is", Step = 0.05,
+		Value = { Min = 0.2, Max = 2, Default = 1 },
+		Callback = function(v) V.bright = v FX.clearAll() end })
+	EspTab:Toggle({ Title = "Through walls", Desc = "Highlight style only",
 		Default = true, Callback = function(on) V.chamWalls = on end })
 	EspTab:Toggle({ Title = "Cham outline", Default = true,
 		Callback = function(on) V.chamOutline = on end })
-	EspTab:Slider({ Title = "Cham fill", Step = 0.05, Value = { Min = 0, Max = 1, Default = 0.55 },
+	EspTab:Slider({ Title = "Cham fill", Desc = "Highlight style only", Step = 0.05,
+		Value = { Min = 0, Max = 1, Default = 0.55 },
 		Callback = function(v) V.chamFill = v end })
 	EspTab:Toggle({ Title = "Hide the dead", Default = true,
 		Callback = function(on) V.chamDead = on end })
-	EspTab:Colorpicker({ Title = "Murderer colour", Default = COL.Murderer,
-		Callback = function(c) COL.Murderer = c end })
-	EspTab:Colorpicker({ Title = "Sheriff colour", Default = COL.Sheriff,
-		Callback = function(c) COL.Sheriff = c end })
-	EspTab:Colorpicker({ Title = "Innocent colour", Default = COL.Innocent,
-		Callback = function(c) COL.Innocent = c end })
 
-	EspTab:Section({ Title = "Aura and ring" })
-	EspTab:Toggle({ Title = "Aura", Desc = "particles rising off every player, in their colour",
+	EspTab:Section({ Title = "Colours" })
+	EspTab:Toggle({ Title = "Colour by role",
+		Desc = "off = one colour for everyone, the one below", Default = true,
+		Callback = function(on) V.roleColors = on FX.clearAll() end })
+	EspTab:Colorpicker({ Title = "One colour", Default = V.oneColor,
+		Callback = function(c) V.oneColor = c FX.clearAll() end })
+	EspTab:Colorpicker({ Title = "Murderer colour", Default = COL.Murderer,
+		Callback = function(c) COL.Murderer = c FX.clearAll() end })
+	EspTab:Colorpicker({ Title = "Sheriff colour", Default = COL.Sheriff,
+		Callback = function(c) COL.Sheriff = c FX.clearAll() end })
+	EspTab:Colorpicker({ Title = "Innocent colour", Default = COL.Innocent,
+		Callback = function(c) COL.Innocent = c FX.clearAll() end })
+
+	EspTab:Section({ Title = "Can you see them" })
+	EspTab:Toggle({ Title = "Visible check", Desc = "one ray to their head, five times a second",
+		Default = false, Callback = function(on) V.visCheck = on FX.clearAll() end })
+	EspTab:Toggle({ Title = "Hide them behind walls", Desc = "off = show them dimmed instead",
+		Default = false, Callback = function(on) V.visHide = on FX.clearAll() end })
+	EspTab:Slider({ Title = "How dim behind a wall", Step = 0.05,
+		Value = { Min = 0.1, Max = 1, Default = 0.45 },
+		Callback = function(v) V.visDim = v FX.clearAll() end })
+
+	EspTab:Section({ Title = "Aura, ring and hat" })
+	EspTab:Toggle({ Title = "Aura", Desc = "particles rising off every player",
 		Default = false, Callback = function(on) V.aura = on if not on then FX.clearAll() end sync() end })
-	EspTab:Dropdown({ Title = "Aura style", Values = { "Fire", "Sparkles", "Smoke", "Wings" },
-		Value = "Fire", Callback = function(v)
+	EspTab:Dropdown({ Title = "Aura style", Values = FX.auraNames, Value = "Fire",
+		Callback = function(v)
 			V.auraStyle = tostring(v)
 			for pl in pairs(FX.aura) do FX.dropAura(pl) end
 		end })
-	EspTab:Toggle({ Title = "One colour for every aura", Default = false,
-		Callback = function(on) V.auraOwn = on end })
-	EspTab:Colorpicker({ Title = "Aura colour", Default = V.auraColor,
-		Callback = function(c) V.auraColor = c end })
 	EspTab:Toggle({ Title = "Floor ring", Desc = "a glowing disc under each player",
 		Default = false, Callback = function(on) V.ring = on if not on then FX.clearAll() end sync() end })
+	EspTab:Toggle({ Title = "Jump circle", Desc = "the ring swells while they are off the ground",
+		Default = false, Callback = function(on) V.jumpRing = on end })
+	EspTab:Slider({ Title = "Ring size", Step = 0.5, Value = { Min = 3, Max = 14, Default = 6 },
+		Callback = function(v) V.ringSize = v end })
+	EspTab:Toggle({ Title = "China hat", Desc = "a cone over the head",
+		Default = false, Callback = function(on) V.hat = on if not on then FX.clearAll() end sync() end })
+	EspTab:Toggle({ Title = "Spin the hat", Default = true,
+		Callback = function(on) V.hatSpin = on end })
+	EspTab:Slider({ Title = "Hat size", Step = 0.5, Value = { Min = 2, Max = 12, Default = 5 },
+		Callback = function(v) V.hatSize = v FX.clearAll() end })
 
 	EspTab:Section({ Title = "On yourself" })
 	EspTab:Toggle({ Title = "Wear the cham style",
-		Desc = "the material looks only: ForceField, Neon, Glass, Ghost", Default = false,
+		Desc = "the material looks, not Highlight", Default = false,
 		Callback = function(on) V.chamSelf = on if not on then FX.clear(LocalPlayer) end sync() end })
 	EspTab:Toggle({ Title = "Wear the aura", Default = false,
 		Callback = function(on) V.auraSelf = on if not on then FX.clear(LocalPlayer) end sync() end })
 	EspTab:Toggle({ Title = "Stand on a ring", Default = false,
 		Callback = function(on) V.ringSelf = on if not on then FX.clear(LocalPlayer) end sync() end })
+	EspTab:Toggle({ Title = "Wear a china hat", Default = false,
+		Callback = function(on) V.hatSelf = on if not on then FX.clear(LocalPlayer) end sync() end })
 
 	--== overlay ================================================================
 	if not HAVE_DRAWING then
@@ -1072,8 +1312,15 @@ do
 		Default = false, Callback = function(on) V.tracer = on sync() end })
 	VisTab:Dropdown({ Title = "Tracers start at", Values = { "Bottom", "Centre", "Top" },
 		Value = "Bottom", Callback = function(v) V.tracerFrom = tostring(v) end })
-	VisTab:Toggle({ Title = "Off-screen arrows", Desc = "points at whoever is behind you",
+	VisTab:Toggle({ Title = "Arrows", Desc = "points at whoever is behind you",
 		Default = false, Callback = function(on) V.arrows = on sync() end })
+	VisTab:Toggle({ Title = "Arrows for everyone", Desc = "on = one for players you can see too",
+		Default = false, Callback = function(on) V.arrowsAlways = on end })
+	VisTab:Slider({ Title = "Arrow size", Step = 1, Value = { Min = 6, Max = 30, Default = 12 },
+		Callback = function(v) V.arrowSize = v end })
+	VisTab:Slider({ Title = "Arrow distance from the centre", Step = 0.02,
+		Value = { Min = 0.1, Max = 0.48, Default = 0.3 },
+		Callback = function(v) V.arrowRing = v end })
 
 	--== radar ==================================================================
 	VisTab:Section({ Title = "Radar" })
