@@ -11,7 +11,8 @@
   rewritten around it: CreateWindow, Tab, Section, Toggle, Slider, Dropdown,
   Colorpicker, Input, Keybind, Button, Paragraph, Divider, Space, Notify.
 
-  Nothing here is fetched from anywhere. Icons are glyphs, the shadow is drawn
+  Nothing here is fetched from anywhere. Icons are drawn out of frames, the
+  shadow is drawn
   with frames, and the fonts are the ones in the client — so there is no asset
   to download and nothing to get wrong.
 ================================================================================
@@ -117,22 +118,142 @@ local function num(v, fallback)
 	return v or fallback
 end
 
--- A name for an icon, drawn as a glyph. The hub asks for these by the names the
--- old library used, so the same call keeps working.
-local GLYPH = {
-	crown = "\u{2654}", house = "\u{2302}", box = "\u{25A3}", eye = "\u{25C9}",
-	target = "\u{2316}", ["crosshair"] = "\u{2316}", user = "\u{263A}",
-	users = "\u{263A}", star = "\u{2605}", zap = "\u{26A1}", flame = "\u{2668}",
-	map = "\u{25A6}", ghost = "\u{25CC}", gear = "\u{2699}", settings = "\u{2699}",
-	wrench = "\u{2692}", hand = "\u{270B}", info = "\u{24D8}", x = "\u{00D7}",
-	component = "\u{25C8}", sparkles = "\u{2727}", swords = "\u{2694}",
-	knife = "\u{2694}", gun = "\u{2316}", coins = "\u{25CE}", palette = "\u{25D0}",
-	key = "\u{26B7}", save = "\u{25A4}", trash = "\u{2612}", bell = "\u{1F514}",
+-- ICONS ARE DRAWN, not typed. Gotham does not carry the shapes a menu wants —
+-- a crosshair, a gear, an eye — so asking for them by character got a row of
+-- empty boxes. These are built from plain frames instead: a few bars, a circle
+-- made with a UIStroke, a dot. Nothing to install and nothing missing.
+local function bit(parent, x, y, w, h, colr, round, rot)
+	local f = make("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(x, y),
+		Size = UDim2.fromScale(w, h),
+		BackgroundColor3 = colr,
+		BorderSizePixel = 0,
+		Rotation = rot or 0,
+		Parent = parent,
+	})
+	if round then corner(99).Parent = f end
+	return f
+end
+
+local function ring(parent, x, y, d, colr, thick)
+	local f = make("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(x, y),
+		Size = UDim2.fromScale(d, d),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Parent = parent,
+	}, { corner(99), stroke(colr, 0, thick or 1.4) })
+	return f
+end
+
+local DRAW = {}
+function DRAW.box(h, c)
+	bit(h, 0.5, 0.16, 0.72, 0.12, c)
+	bit(h, 0.5, 0.84, 0.72, 0.12, c)
+	bit(h, 0.16, 0.5, 0.12, 0.72, c)
+	bit(h, 0.84, 0.5, 0.12, 0.72, c)
+end
+function DRAW.eye(h, c)
+	ring(h, 0.5, 0.5, 0.9, c, 1.3)
+	bit(h, 0.5, 0.5, 0.26, 0.26, c, true)
+end
+function DRAW.user(h, c)
+	ring(h, 0.5, 0.3, 0.44, c, 1.3)
+	local body = ring(h, 0.5, 0.86, 0.8, c, 1.3)
+	pcall(function() body.Size = UDim2.fromScale(0.8, 0.5) end)
+end
+function DRAW.target(h, c)
+	ring(h, 0.5, 0.5, 0.66, c, 1.3)
+	bit(h, 0.5, 0.5, 0.18, 0.18, c, true)
+	bit(h, 0.5, 0.04, 0.1, 0.2, c)
+	bit(h, 0.5, 0.96, 0.1, 0.2, c)
+	bit(h, 0.04, 0.5, 0.2, 0.1, c)
+	bit(h, 0.96, 0.5, 0.2, 0.1, c)
+end
+function DRAW.gear(h, c)
+	ring(h, 0.5, 0.5, 0.56, c, 1.4)
+	for i = 0, 3 do
+		local a = i * math.pi / 2
+		bit(h, 0.5 + math.cos(a) * 0.38, 0.5 + math.sin(a) * 0.38, 0.2, 0.2, c)
+	end
+end
+function DRAW.dots(h, c)
+	bit(h, 0.18, 0.5, 0.2, 0.2, c, true)
+	bit(h, 0.5, 0.5, 0.2, 0.2, c, true)
+	bit(h, 0.82, 0.5, 0.2, 0.2, c, true)
+end
+function DRAW.info(h, c)
+	ring(h, 0.5, 0.5, 0.9, c, 1.3)
+	bit(h, 0.5, 0.28, 0.16, 0.16, c, true)
+	bit(h, 0.5, 0.62, 0.14, 0.34, c)
+end
+function DRAW.spark(h, c)
+	bit(h, 0.5, 0.5, 0.16, 0.86, c)
+	bit(h, 0.5, 0.5, 0.86, 0.16, c)
+	bit(h, 0.16, 0.16, 0.16, 0.16, c, true)
+	bit(h, 0.84, 0.84, 0.16, 0.16, c, true)
+end
+function DRAW.map(h, c)
+	bit(h, 0.5, 0.16, 0.86, 0.12, c)
+	bit(h, 0.5, 0.5, 0.86, 0.12, c)
+	bit(h, 0.5, 0.84, 0.86, 0.12, c)
+end
+function DRAW.dot(h, c)
+	bit(h, 0.5, 0.5, 0.34, 0.34, c, true)
+end
+function DRAW.close(h, c)
+	bit(h, 0.5, 0.5, 0.86, 0.13, c, false, 45)
+	bit(h, 0.5, 0.5, 0.86, 0.13, c, false, -45)
+end
+function DRAW.search(h, c)
+	ring(h, 0.42, 0.42, 0.62, c, 1.4)
+	bit(h, 0.78, 0.78, 0.34, 0.13, c, false, 45)
+end
+function DRAW.save(h, c)
+	bit(h, 0.5, 0.14, 0.76, 0.14, c)
+	bit(h, 0.14, 0.5, 0.14, 0.76, c)
+	bit(h, 0.86, 0.5, 0.14, 0.76, c)
+	bit(h, 0.5, 0.86, 0.76, 0.14, c)
+	bit(h, 0.5, 0.62, 0.42, 0.3, c)
+end
+function DRAW.chev(h, c)
+	bit(h, 0.42, 0.28, 0.62, 0.14, c, false, 45)
+	bit(h, 0.42, 0.72, 0.62, 0.14, c, false, -45)
+end
+function DRAW.caret(h, c)
+	bit(h, 0.3, 0.42, 0.5, 0.13, c, false, 45)
+	bit(h, 0.7, 0.42, 0.5, 0.13, c, false, -45)
+end
+
+-- the names the hub asks for, pointed at a shape that exists
+local ICON = {
+	crown = "spark", house = "map", box = "box", eye = "eye", target = "target",
+	crosshair = "target", user = "user", users = "user", star = "spark",
+	zap = "spark", flame = "spark", map = "map", ghost = "eye", gear = "gear",
+	settings = "gear", wrench = "gear", hand = "dot", info = "info", x = "close",
+	component = "box", sparkles = "spark", swords = "target", sword = "target",
+	knife = "target", gun = "target", coins = "dot", palette = "eye", key = "dot",
+	save = "save", trash = "close", bell = "dot", folder = "box",
+	["gamepad-2"] = "box", move = "map", bitcoin = "dot", ["map-pin"] = "map",
+	["person-standing"] = "user", laugh = "dot", ["package-plus"] = "box",
+	["file-cog"] = "save", check = "dot", ["refresh-cw"] = "gear",
 }
-local function glyph(name)
-	if type(name) ~= "string" or name == "" then return "\u{2022}" end
-	if #name <= 2 then return name end          -- already a glyph
-	return GLYPH[name:lower()] or "\u{2022}"
+
+-- Put a drawn icon inside a holder. `kind` is a name from ICON or from DRAW.
+local function icon(parent, kind, px, colr, x, y)
+	local shape = DRAW[kind] or DRAW[ICON[tostring(kind or ""):lower()] or ""] or DRAW.dot
+	local h = make("Frame", {
+		Name = "Icon",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = x and UDim2.fromOffset(x, y) or UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(px, px),
+		BackgroundTransparency = 1,
+		Parent = parent,
+	})
+	shape(h, colr or T.Muted)
+	return h
 end
 
 local function fits(o, ...)
@@ -430,17 +551,7 @@ function UI:CreateWindow(o)
 		TextTruncate = Enum.TextTruncate.AtEnd,
 		Parent = foot,
 	})
-	make("TextLabel", {
-		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -6, 0.5, 0),
-		Size = UDim2.fromOffset(14, 14),
-		BackgroundTransparency = 1,
-		Text = "\u{203A}",
-		TextColor3 = T.Faint,
-		TextSize = 15,
-		Font = Enum.Font.GothamBold,
-		Parent = foot,
-	})
+	icon(foot, "chev", 9, T.Faint).Position = UDim2.new(1, -8, 0.5, 0)
 	W._who = whoName
 	pcall(function()
 		foot.MouseEnter:Connect(function() tween(foot, 0.12, { BackgroundColor3 = T.Panel }) end)
@@ -478,13 +589,11 @@ function UI:CreateWindow(o)
 		Size = UDim2.fromOffset(30, 28),
 		BackgroundColor3 = T.Panel,
 		BorderSizePixel = 0,
-		Text = "\u{25A4}",
-		TextColor3 = T.Muted,
-		TextSize = 15,
-		Font = Enum.Font.GothamBold,
+		Text = "",
 		AutoButtonColor = false,
 		Parent = bar,
 	}, { corner(8), stroke(T.Edge, 0.45) })
+	local saveMark = icon(saveBtn, "save", 13, T.Muted)
 	local cfgPill = make("TextButton", {
 		Name = "Config",
 		AnchorPoint = Vector2.new(0, 0.5),
@@ -508,43 +617,29 @@ function UI:CreateWindow(o)
 		TextTruncate = Enum.TextTruncate.AtEnd,
 		Parent = cfgPill,
 	})
-	make("TextLabel", {
-		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -9, 0.5, 0),
-		Size = UDim2.fromOffset(12, 12),
-		BackgroundTransparency = 1,
-		Text = "\u{25BE}",
-		TextColor3 = T.Faint,
-		TextSize = 11,
-		Font = Enum.Font.GothamBold,
-		Parent = cfgPill,
-	})
+	icon(cfgPill, "caret", 9, T.Faint).Position = UDim2.new(1, -11, 0.5, 0)
 	local closeBtn = make("TextButton", {
 		Name = "Close",
 		AnchorPoint = Vector2.new(1, 0.5),
 		Position = UDim2.new(1, -14, 0.5, 0),
 		Size = UDim2.fromOffset(28, 28),
 		BackgroundTransparency = 1,
-		Text = "\u{00D7}",
-		TextColor3 = T.Muted,
-		TextSize = 20,
-		Font = Enum.Font.GothamMedium,
+		Text = "",
 		AutoButtonColor = false,
 		Parent = bar,
 	}, { corner(8) })
+	local closeMark = icon(closeBtn, "close", 11, T.Muted)
 	local searchBtn = make("TextButton", {
 		Name = "Search",
 		AnchorPoint = Vector2.new(1, 0.5),
 		Position = UDim2.new(1, -48, 0.5, 0),
 		Size = UDim2.fromOffset(28, 28),
 		BackgroundTransparency = 1,
-		Text = "\u{2315}",
-		TextColor3 = T.Muted,
-		TextSize = 16,
-		Font = Enum.Font.GothamBold,
+		Text = "",
 		AutoButtonColor = false,
 		Parent = bar,
 	}, { corner(8) })
+	local searchMark = icon(searchBtn, "search", 13, T.Muted)
 	W._hint = cfgText
 
 	local searchBox = make("TextBox", {
@@ -718,7 +813,7 @@ function UI:CreateWindow(o)
 	--== widgets ================================================================
 	-- Every widget lands in a card. A Section starts a new one; anything added
 	-- before the first Section gets a card of its own so nothing floats loose.
-	local function mkTab(name, icon, subtitle)
+	local function mkTab(name, iconName, subtitle)
 		local P = newPage(name, subtitle)
 		local Tab = { Instance = P.page, _body = P.page, _cols = P.cols, _page = P }
 
@@ -898,7 +993,7 @@ function UI:CreateWindow(o)
 				Position = UDim2.fromOffset(12, hasDesc and 8 or 0),
 				Size = hasDesc and UDim2.new(1, -46, 0, 17) or UDim2.new(1, -46, 1, 0),
 				BackgroundTransparency = 1,
-				Text = (bo.Icon and (glyph(bo.Icon) .. "  ") or "") .. tostring(bo.Title or ""),
+				Text = tostring(bo.Title or ""),
 				TextColor3 = isPrimary and Color3.fromRGB(255, 255, 255) or T.Text,
 				TextSize = 13,
 				Font = Enum.Font.GothamMedium,
@@ -920,17 +1015,8 @@ function UI:CreateWindow(o)
 					Parent = btn,
 				})
 			end
-			make("TextLabel", {
-				AnchorPoint = Vector2.new(1, 0.5),
-				Position = UDim2.new(1, -14, 0.5, 0),
-				Size = UDim2.fromOffset(16, 16),
-				BackgroundTransparency = 1,
-				Text = "\u{2039}",
-				TextColor3 = isPrimary and Color3.fromRGB(255, 255, 255) or T.Faint,
-				TextSize = 15,
-				Font = Enum.Font.GothamBold,
-				Parent = btn,
-			})
+			icon(btn, "chev", 9, isPrimary and Color3.fromRGB(255, 255, 255) or T.Faint,
+				nil, nil).Position = UDim2.new(1, -14, 0.5, 0)
 			if not isPrimary then hover(btn, T.Panel, T.Hover) end
 			pcall(function()
 				btn.MouseButton1Click:Connect(function()
@@ -1190,7 +1276,7 @@ function UI:CreateWindow(o)
 			local api = { Instance = r }
 			local listening = false
 			local function paint()
-				chip.Text = listening and "press a key\u{2026}" or (key ~= "" and key or "none")
+				chip.Text = listening and "press a key..." or (key ~= "" and key or "none")
 				chip.TextColor3 = (key ~= "" and not listening) and T.Text or T.Muted
 				chip.BackgroundColor3 = listening and T.Hover or T.Bg
 			end
@@ -1371,14 +1457,15 @@ function UI:CreateWindow(o)
 				Size = UDim2.fromOffset(138, 28),
 				BackgroundColor3 = T.Bg,
 				BorderSizePixel = 0,
-				Text = label() .. "   \u{25BE}",
+				Text = label(),
 				TextColor3 = T.Text,
 				TextSize = 12,
 				Font = Enum.Font.GothamMedium,
 				TextTruncate = Enum.TextTruncate.AtEnd,
 				AutoButtonColor = false,
 				Parent = r,
-			}, { corner(7), stroke(T.Edge, 0.3) })
+			}, { corner(7), stroke(T.Edge, 0.3), pad(9, 20, 0, 0) })
+			icon(shown, "caret", 8, T.Faint).Position = UDim2.new(1, -10, 0.5, 0)
 			local drawer = make("ScrollingFrame", {
 				Size = UDim2.new(1, 0, 0, 0),
 				AutomaticCanvasSize = Enum.AutomaticSize.Y,
@@ -1435,7 +1522,7 @@ function UI:CreateWindow(o)
 								chosen = { [nameV] = true }
 								drawer.Visible = false
 							end
-							shown.Text = label() .. "   \u{25BE}"
+							shown.Text = label()
 							build()
 							fire()
 						end)
@@ -1456,7 +1543,7 @@ function UI:CreateWindow(o)
 					for _, v in ipairs(values) do if tostring(v) == k then keep = true end end
 					if not keep then chosen[k] = nil end
 				end
-				shown.Text = label() .. "   \u{25BE}"
+				shown.Text = label()
 				build()
 			end
 			function api:Select(vals)
@@ -1466,7 +1553,7 @@ function UI:CreateWindow(o)
 				elseif vals ~= nil then
 					chosen[tostring(vals)] = true
 				end
-				shown.Text = label() .. "   \u{25BE}"
+				shown.Text = label()
 				build()
 			end
 			function api:Get()
@@ -1540,17 +1627,14 @@ function UI:CreateWindow(o)
 			BorderSizePixel = 0,
 			Parent = btn,
 		}, { corner(99) })
-		local ico = make("TextLabel", {
-			Name = "Icon",
+		local ico = make("Frame", {
+			Name = "IconHolder",
 			Position = UDim2.fromOffset(10, 0),
 			Size = UDim2.fromOffset(22, 38),
 			BackgroundTransparency = 1,
-			Text = glyph(to.Icon),
-			TextColor3 = T.Faint,
-			TextSize = 14,
-			Font = Enum.Font.GothamBold,
 			Parent = btn,
 		})
+		local icoBits = icon(ico, to.Icon, 15, T.Faint)
 		local lab = make("TextLabel", {
 			Name = "Label",
 			Position = UDim2.fromOffset(38, 0),
@@ -1565,6 +1649,7 @@ function UI:CreateWindow(o)
 			Parent = btn,
 		})
 		Tab._btn, Tab._label, Tab._icon, Tab._mark = btn, lab, ico, mark
+		Tab._icoBits = icoBits
 		Tab.Name = name
 		W._tabs[#W._tabs + 1] = Tab
 		W._pages[name] = P
@@ -1577,7 +1662,13 @@ function UI:CreateWindow(o)
 			for _, t in ipairs(W._tabs) do
 				local on = t.Name == name
 				tween(t._btn, 0.15, { BackgroundTransparency = on and 0 or 1 })
-				tween(t._icon, 0.15, { TextColor3 = on and T.Accent or T.Faint })
+				for _, piece in ipairs(t._icoBits and t._icoBits:GetDescendants() or {}) do
+					if piece:IsA("Frame") then
+						tween(piece, 0.15, { BackgroundColor3 = on and T.Accent or T.Faint })
+					elseif piece:IsA("UIStroke") then
+						pcall(function() piece.Color = on and T.Accent or T.Faint end)
+					end
+				end
 				tween(t._label, 0.15, { TextColor3 = on and T.Text or T.Muted })
 				tween(t._mark, 0.15, { BackgroundTransparency = on and 0 or 1 })
 				t._page.page.Visible = on
