@@ -409,6 +409,7 @@ function UI:CreateWindow(o)
 		-- a narrow screen gets the icon rail instead of the full sidebar
 		W._narrow = (vw * (1 / math.max(scale.Scale, 0.01))) < (cw + 240)
 		if W._applyRail then W._applyRail() end
+		if W._sizeSettings then W._sizeSettings() end
 	end
 
 	--== the sidebar: who you are, the pages, and you again at the foot ==========
@@ -1986,36 +1987,44 @@ function UI:CreateWindow(o)
 	}, { corner(8), stroke(T.Edge, 0.45) })
 	icon(setBtn, "gear", 13, T.Muted)
 
-	local panel = make("Frame", {
+	-- The panel is a BUTTON, not a frame. A frame does not stop a tap whatever is
+	-- drawn on it, and Active alone still leaves the gaps between its rows open;
+	-- a button consumes anything inside its rectangle. The rows live in a
+	-- scroller, so a small menu shows all of them rather than the ones that fit.
+	local panel = make("TextButton", {
 		Name = "SettingsPanel",
 		Position = UDim2.fromOffset(190, barH - 4),
-		Size = UDim2.fromOffset(266, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
+		Size = UDim2.fromOffset(266, 380),
 		BackgroundColor3 = T.Panel,
 		BorderSizePixel = 0,
+		Text = "",
+		AutoButtonColor = false,
+		Active = true,
 		Visible = false,
-		Active = true,          -- a Frame does not stop a click; this does
+		ClipsDescendants = true,
 		ZIndex = 9,
 		Parent = content,
-	}, { corner(10), stroke(T.Edge, 0.35), pad(10, 10, 10, 12), list(8) })
+	}, { corner(10), stroke(T.Edge, 0.35) })
 	settingsPanel = panel
-	-- if it ever grows past the page, it scrolls rather than running off the bottom
-	pcall(function()
-		panel:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-			local room = num(content.AbsoluteSize and content.AbsoluteSize.Y, 0) - barH - 16
-			local tall = num(panel.AbsoluteSize and panel.AbsoluteSize.Y, 0)
-			if room > 80 and tall > room then
-				panel.AutomaticSize = Enum.AutomaticSize.None
-				panel.Size = UDim2.fromOffset(266, room)
-				panel.ClipsDescendants = true
-			end
-		end)
-	end)
-	-- The tap-catcher goes BEHIND the panel, not inside it. Inside, its size was
-	-- given relative to the panel while the panel sized itself from its children:
-	-- a circle Roblox breaks by making the panel nothing at all, which is the
-	-- empty plate. As a sibling it costs the layout nothing, still swallows a tap
-	-- meant for the panel, and closes it when you tap away.
+
+	local panelBody = make("ScrollingFrame", {
+		Name = "Body",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Active = true,
+		CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		ScrollBarThickness = 3,
+		ScrollBarImageColor3 = T.Edge,
+		Parent = panel,
+	}, { pad(10, 8, 10, 12), list(8) })
+
+	-- the natural height, added up as the rows are built: no AutomaticSize, so
+	-- nothing can collapse and nothing has to be guessed
+	local natural = 22
+	local function grew(h) natural = natural + h + 8 end
+
 	local scrim = make("TextButton", {
 		Name = "Scrim",
 		Position = UDim2.fromOffset(0, barH),
@@ -2028,7 +2037,19 @@ function UI:CreateWindow(o)
 		Parent = content,
 	})
 
+	-- however small the menu gets, the panel fits the room it has and scrolls
+	local function sizePanel()
+		local cw2 = num(content.AbsoluteSize and content.AbsoluteSize.X, 600)
+		local chh = num(content.AbsoluteSize and content.AbsoluteSize.Y, 400)
+		local k = math.max(num(scale.Scale, 1), 0.01)
+		local roomY = math.max(chh / k - barH - 14, 120)
+		local roomX = math.max(cw2 / k - 24, 180)
+		panel.Size = UDim2.fromOffset(math.min(266, roomX), math.min(natural, roomY))
+	end
+	W._sizeSettings = sizePanel
+
 	local function panelHead(text, order)
+		grew(16)
 		make("TextLabel", {
 			Size = UDim2.new(1, 0, 0, 16),
 			BackgroundTransparency = 1,
@@ -2038,17 +2059,18 @@ function UI:CreateWindow(o)
 			Font = Enum.Font.GothamBold,
 			TextXAlignment = Enum.TextXAlignment.Left,
 			LayoutOrder = order,
-			Parent = panel,
+			Parent = panelBody,
 		})
 	end
 
 	-- accent swatches
 	panelHead("MENU COLOUR", 1)
+	grew(24)
 	local swatchRow = make("Frame", {
 		Size = UDim2.new(1, 0, 0, 24),
 		BackgroundTransparency = 1,
 		LayoutOrder = 2,
-		Parent = panel,
+		Parent = panelBody,
 	}, {
 		make("UIListLayout", {
 			FillDirection = Enum.FillDirection.Horizontal,
@@ -2098,11 +2120,12 @@ function UI:CreateWindow(o)
 		local rows = math.max(math.ceil(count / perRow), 1)
 		return rows * cellH + (rows - 1) * gap
 	end
+	grew(gridRows(#TONE_NAMES, 4, 26, 6))
 	local toneRow = make("Frame", {
 		Size = UDim2.new(1, 0, 0, gridRows(#TONE_NAMES, 4, 26, 6)),
 		BackgroundTransparency = 1,
 		LayoutOrder = 4,
-		Parent = panel,
+		Parent = panelBody,
 	}, {
 		make("UIGridLayout", {
 			CellSize = UDim2.fromOffset(54, 26),
@@ -2141,11 +2164,12 @@ function UI:CreateWindow(o)
 
 	-- a small slider for the panel's own use
 	local function panelSlider(label, lo, hi, def, order, onChange)
+		grew(34)
 		local holder = make("Frame", {
 			Size = UDim2.new(1, 0, 0, 34),
 			BackgroundTransparency = 1,
 			LayoutOrder = order,
-			Parent = panel,
+			Parent = panelBody,
 		})
 		local cap = make("TextLabel", {
 			Size = UDim2.new(1, 0, 0, 14),
@@ -2211,15 +2235,17 @@ function UI:CreateWindow(o)
 	local setSizeCap = panelSlider("menu size", 0.6, 1.4, 1, 6, function(v)
 		W._userScale = v
 		refit()
+		sizePanel()
 	end)
 
 	-- weather
 	panelHead("EFFECT", 7)
+	grew(gridRows(#FX_KINDS, 3, 22, 6))
 	local effRow = make("Frame", {
 		Size = UDim2.new(1, 0, 0, gridRows(#FX_KINDS, 3, 22, 6)),
 		BackgroundTransparency = 1,
 		LayoutOrder = 8,
-		Parent = panel,
+		Parent = panelBody,
 	}, {
 		make("UIGridLayout", {
 			CellSize = UDim2.fromOffset(70, 22),
@@ -2276,6 +2302,7 @@ function UI:CreateWindow(o)
 			for _, k in ipairs(panel:GetChildren()) do
 				if k:IsA("UIStroke") then k.Color = T.Edge end
 			end
+			panelBody.ScrollBarImageColor3 = T.Edge
 			for _, e in ipairs(toneBtns) do e.btn.BackgroundColor3 = TONES[e.name].Panel end
 			for _, l in ipairs(panel:GetDescendants()) do
 				if l:IsA("TextLabel") then l.TextColor3 = T.Muted end
@@ -2289,6 +2316,7 @@ function UI:CreateWindow(o)
 
 	pcall(function()
 		setBtn.MouseButton1Click:Connect(function()
+			sizePanel()
 			panel.Visible = not panel.Visible
 			scrim.Visible = panel.Visible
 			if cfgList then cfgList.Visible = false end
