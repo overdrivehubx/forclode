@@ -1989,7 +1989,7 @@ function UI:CreateWindow(o)
 	local panel = make("Frame", {
 		Name = "SettingsPanel",
 		Position = UDim2.fromOffset(190, barH - 4),
-		Size = UDim2.fromOffset(250, 0),
+		Size = UDim2.fromOffset(266, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundColor3 = T.Panel,
 		BorderSizePixel = 0,
@@ -1999,18 +1999,33 @@ function UI:CreateWindow(o)
 		Parent = content,
 	}, { corner(10), stroke(T.Edge, 0.35), pad(10, 10, 10, 12), list(8) })
 	settingsPanel = panel
-	-- Belt and braces: a transparent button filling the panel swallows anything
-	-- the layout leaves uncovered, so a tap on the panel cannot reach a toggle
-	-- sitting behind it.
-	make("TextButton", {
-		Name = "Catcher",
-		Position = UDim2.fromOffset(-10, -10),
-		Size = UDim2.new(1, 20, 1, 20),
+	-- if it ever grows past the page, it scrolls rather than running off the bottom
+	pcall(function()
+		panel:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+			local room = num(content.AbsoluteSize and content.AbsoluteSize.Y, 0) - barH - 16
+			local tall = num(panel.AbsoluteSize and panel.AbsoluteSize.Y, 0)
+			if room > 80 and tall > room then
+				panel.AutomaticSize = Enum.AutomaticSize.None
+				panel.Size = UDim2.fromOffset(266, room)
+				panel.ClipsDescendants = true
+			end
+		end)
+	end)
+	-- The tap-catcher goes BEHIND the panel, not inside it. Inside, its size was
+	-- given relative to the panel while the panel sized itself from its children:
+	-- a circle Roblox breaks by making the panel nothing at all, which is the
+	-- empty plate. As a sibling it costs the layout nothing, still swallows a tap
+	-- meant for the panel, and closes it when you tap away.
+	local scrim = make("TextButton", {
+		Name = "Scrim",
+		Position = UDim2.fromOffset(0, barH),
+		Size = UDim2.new(1, 0, 1, -barH),
 		BackgroundTransparency = 1,
 		Text = "",
 		AutoButtonColor = false,
-		ZIndex = 0,
-		Parent = panel,
+		Visible = false,
+		ZIndex = 8,
+		Parent = content,
 	})
 
 	local function panelHead(text, order)
@@ -2076,9 +2091,15 @@ function UI:CreateWindow(o)
 
 	-- tone
 	panelHead("BACKGROUND", 3)
+	-- A UIGridLayout does not grow its frame: asking AutomaticSize to work it out
+	-- resolves to nothing, and the panel came up an empty plate. The height is
+	-- worked out here from the number of cells instead.
+	local function gridRows(count, perRow, cellH, gap)
+		local rows = math.max(math.ceil(count / perRow), 1)
+		return rows * cellH + (rows - 1) * gap
+	end
 	local toneRow = make("Frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
+		Size = UDim2.new(1, 0, 0, gridRows(#TONE_NAMES, 4, 26, 6)),
 		BackgroundTransparency = 1,
 		LayoutOrder = 4,
 		Parent = panel,
@@ -2195,8 +2216,7 @@ function UI:CreateWindow(o)
 	-- weather
 	panelHead("EFFECT", 7)
 	local effRow = make("Frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
+		Size = UDim2.new(1, 0, 0, gridRows(#FX_KINDS, 3, 22, 6)),
 		BackgroundTransparency = 1,
 		LayoutOrder = 8,
 		Parent = panel,
@@ -2270,7 +2290,12 @@ function UI:CreateWindow(o)
 	pcall(function()
 		setBtn.MouseButton1Click:Connect(function()
 			panel.Visible = not panel.Visible
+			scrim.Visible = panel.Visible
 			if cfgList then cfgList.Visible = false end
+		end)
+		scrim.MouseButton1Click:Connect(function()
+			panel.Visible = false
+			scrim.Visible = false
 		end)
 		setBtn.MouseEnter:Connect(function() tween(setBtn, 0.12, { BackgroundColor3 = T.Hover }) end)
 		setBtn.MouseLeave:Connect(function() tween(setBtn, 0.12, { BackgroundColor3 = T.Panel }) end)
@@ -2597,6 +2622,7 @@ function UI:CreateWindow(o)
 			cfgList.Visible = not cfgList.Visible
 			if cfgList.Visible then drawList() end
 			panel.Visible = false
+			scrim.Visible = false
 		end)
 		saveBtn.MouseButton1Click:Connect(function()
 			W.CurrentConfig = configObject(picked)
