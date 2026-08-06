@@ -1,25 +1,26 @@
 --!nocheck
 --[[
 ================================================================================
-  MollyHub — EQUIP SPAWNER
+  MollyHub - EQUIP SPAWNER
 ================================================================================
-  Weapons only, with a front end built for the job: search, a filter row, the
-  selected item shown large with its picture, the list underneath, an amount and
-  one action. Everything on one screen — no scrolling to find a button.
+  Weapons only. Type or pick a name, spawn it into your inventory, then equip it
+  from the game's OWN inventory - and it appears on you as the game builds it:
+  the mesh, the texture, the scope, the decals, the particles, the chroma.
 
-  There is no equip button. Equipping is done by clicking the item in the game's
-  own inventory, which is where you would look for it anyway.
+  The engine underneath is MollySkins, which does two things differently from
+  everything we tried before:
 
-  The engine is the harness, loaded headless: it builds its own menu but keeps it
-  off screen and publishes _G.MH_API for this front end to drive. Spawning,
-  equipping and the skin work all stay in one place rather than being written
-  twice.
+    * it POLLS ProfileData.Weapons.Equipped rather than listening for a signal,
+      because MM2's inventory writes that table directly and never raises one;
+    * it HIDES the real weapon and welds a rebuilt copy in its place, rather
+      than repainting one mesh, because a weapon is a whole model.
+
+  All of it is on your screen only.
 ================================================================================
 ]]
 
 local BRANCH = "https://raw.githubusercontent.com/overdrivehubx/forclode/"
 	.. "claude/trading-ui-offline-harness-vxuc86/"
-local RUBIS = "https://api.rubis.app/v2/scrap/D9CpDTMz8Hh4v1wA/raw"
 
 -- GitHub keeps a raw file in a cache for minutes at a time, so a script updated
 -- just now can arrive as an older build with nothing on screen to say so. A
@@ -28,58 +29,51 @@ local function raw(file)
 	return BRANCH .. file .. "?nc=" .. tostring(os.time()) .. "-" .. tostring(math.random(1, 1000000000))
 end
 
-
-_G.MH_Headless = true          -- the engine's own window stays hidden
-_G.MH_SpawnerOnly = true
-
 local function fail(msg)
 	warn("[MollyHub] " .. msg)
 	pcall(function()
 		local gui = Instance.new("ScreenGui")
-		gui.Name = "MollyHubError"; gui.ResetOnSpawn = false; gui.IgnoreGuiInset = true
+		gui.Name = "MollyHubError"
+		gui.ResetOnSpawn = false
+		gui.IgnoreGuiInset = true
 		gui.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
 		local f = Instance.new("TextLabel")
-		f.Size = UDim2.fromOffset(460, 110); f.Position = UDim2.new(0.5, -230, 0, 60)
-		f.BackgroundColor3 = Color3.fromRGB(24, 16, 20); f.BorderSizePixel = 0
-		f.TextColor3 = Color3.fromRGB(255, 170, 170); f.Font = Enum.Font.Code
-		f.TextSize = 14; f.TextWrapped = true; f.Text = "  [MollyHub] " .. msg
+		f.Size = UDim2.fromOffset(460, 110)
+		f.Position = UDim2.new(0.5, -230, 0, 60)
+		f.BackgroundColor3 = Color3.fromRGB(24, 16, 20)
+		f.BorderSizePixel = 0
+		f.TextColor3 = Color3.fromRGB(255, 170, 170)
+		f.Font = Enum.Font.Code
+		f.TextSize = 14
+		f.TextWrapped = true
+		f.Text = "  [MollyHub] " .. msg
 		f.Parent = gui
 		Instance.new("UICorner", f).CornerRadius = UDim.new(0, 10)
 	end)
 end
 
 --== engine ====================================================================
-local okSrc, src = pcall(function() return game:HttpGet(raw("TradeDebugHarness.luau")) end)
-if not okSrc or type(src) ~= "string" or #src < 1024 then
-	return fail("could not download the engine — check your connection")
+-- The weapon data is a megabyte on its own, so it is a separate download and is
+-- kept for the session: opening the spawner twice does not fetch it twice.
+_G.MH_MeshesURL = raw("MollyMeshes.luau")
+local okSkins, Skins = pcall(function()
+	return loadstring(game:HttpGet(raw("MollySkins.luau")))()
+end)
+if not okSkins or type(Skins) ~= "table" then
+	return fail("the skin engine could not be downloaded - check your connection")
 end
-local literal = RUBIS:gsub("(%W)", "%%%1")
-local swapped = src:gsub(literal, raw("MollyUI.luau"):gsub("%%", "%%%%"), 1)
--- the grey photo over everything is the engine's theme code painting BG_IMAGE
-swapped = swapped:gsub('local BG_IMAGE = "rbxassetid://%d+"', 'local BG_IMAGE = ""', 1)
-local engine, err = loadstring(swapped)
-if not engine then return fail("the engine would not compile: " .. tostring(err)) end
-local okRun, runErr = pcall(engine)
-if not okRun then return fail("the engine errored: " .. tostring(runErr)) end
-
--- The engine builds its menu inside a task.spawn that downloads the interface
--- first, so the API lands a moment AFTER the chunk returns. Reading it straight
--- away found nothing and reported the engine as broken when it was merely still
--- starting. Wait for it, and only give up after a real timeout.
-local API
-for _ = 1, 300 do
-	API = _G.MH_API
-	if type(API) == "table" and type(API.spawn) == "function" then break end
-	API = nil
-	task.wait(0.1)
+if not Skins.ProfileData then
+	return fail("could not reach the game's own inventory - are you in MM2?")
 end
-if not API then
-	return fail("the engine never finished starting — its menu library may not have downloaded")
-end
+Skins.start()
 
 --== interface =================================================================
 local okUI, UI = pcall(function() return loadstring(game:HttpGet(raw("MollyUI.luau")))() end)
 if not okUI or type(UI) ~= "table" then return fail("the interface could not be downloaded") end
+
+Skins.Status = function(text)
+	UI:Notify({ Title = "Skins", Content = tostring(text), Duration = 4 })
+end
 
 local Win = UI:CreateWindow({
 	Title = "Item Spawner", SubTitle = "Murder Mystery 2", Badge = "MM2", Front = true,
@@ -88,34 +82,34 @@ local Win = UI:CreateWindow({
 --== spawner ===================================================================
 local S = Win:Tab({ Title = "Spawner" })
 
+local all = Skins.list()
 local query, filter, picked, amount = "", "All", nil, 1
 local hero, listView
 
--- Chroma is a flavour rather than a slot, so it gets a chip of its own.
 local function passes(it)
 	if filter == "All" then return true end
-	local d = API.item(it.key)
-	local kind = d and d.ItemType or nil
-	if filter == "Guns" then return kind == "Gun" end
-	if filter == "Knives" then return kind == "Knife" end
-	if filter == "Chroma" then
-		return tostring(it.name):lower():find("chroma", 1, true) ~= nil or (d and d.Chroma ~= nil)
-	end
+	if filter == "Guns" then return it.type == "Gun" end
+	if filter == "Knives" then return it.type == "Knife" end
+	if filter == "Chroma" then return tostring(it.name):lower():find("chroma", 1, true) ~= nil end
+	if filter == "Wearable" then return it.skin end
 	return true
 end
 
 local function rows()
+	local q = tostring(query):lower()
 	local out, total = {}, 0
-	for _, it in ipairs(API.rank(query, 0) or {}) do
-		if passes(it) then
+	for _, it in ipairs(all) do
+		local hit = (q == "")
+			or tostring(it.name):lower():find(q, 1, true) ~= nil
+			or tostring(it.key):lower():find(q, 1, true) ~= nil
+		if hit and passes(it) then
 			total = total + 1
 			if #out < 120 then
-				local d = API.item(it.key) or {}
-				local badges = {}
-				if d.ItemType then badges[#badges + 1] = d.ItemType end
+				local badges = { it.type }
+				if not it.skin then badges[#badges + 1] = "no skin" end
 				out[#out + 1] = {
-					key = it.key, name = it.name, image = d.Image,
-					sub = (d.Rarity and (tostring(d.Rarity) .. "  |  ") or "") .. tostring(it.key),
+					key = it.key, name = it.name, image = it.image,
+					sub = tostring(it.rarity) .. "  |  " .. tostring(it.key),
 					badges = badges,
 				}
 			end
@@ -132,12 +126,12 @@ end
 
 local function choose(it)
 	picked = it
-	local d = API.item(it.key) or {}
+	local info = Skins.WeaponDB and Skins.WeaponDB[it.key] or {}
 	hero:Set({
-		image = d.Image, name = it.name, tag = d.ItemType or "item",
+		image = it.image, name = it.name, tag = info.ItemType or "item",
 		meta = "Original: " .. tostring(it.key),
-		sub = table.concat({ tostring(d.Rarity or "?"), tostring(d.ItemType or "?"),
-			tostring(d.Year or d.Event or "MM2") }, "  |  "),
+		sub = table.concat({ tostring(info.Rarity or "?"), tostring(info.ItemType or "?"),
+			Skins.has(it.key) and "wearable" or "no skin data" }, "  |  "),
 	})
 	listView:Select(it.key)
 	refresh()
@@ -145,117 +139,83 @@ end
 
 S:Search({ Prefix = "find", Placeholder = "Search by name or original id...",
 	Callback = function(v) query = v refresh() end })
-S:Chips({ Values = { "All", "Guns", "Knives", "Chroma" }, Value = "All",
+S:Chips({ Values = { "All", "Guns", "Knives", "Chroma", "Wearable" }, Value = "All",
 	Callback = function(v) filter = v refresh() end })
 hero = S:Hero({})
 listView = S:List({ Height = 300, Fill = true, Min = 150, Max = 460 })
 listView:OnPick(function(it) choose(it) end)
 S:Slider({ Title = "Amount", Min = 1, Max = 100, Default = 1,
 	Callback = function(v) amount = v end })
+
 local function spawnPicked()
 	if not picked then return UI:Notify({ Title = "Spawner", Content = "pick an item first" }) end
-	API.spawn(picked.name, amount, false)
-	UI:Notify({ Title = "Spawned", Content = picked.name .. "  x" .. tostring(amount) })
+	Skins.spawn(picked.key, amount)
+	UI:Notify({ Title = "Spawned", Content = picked.name .. "  x" .. tostring(amount)
+		.. "  -  equip it from the game's inventory" })
 end
+local function wearPicked()
+	if not picked then return UI:Notify({ Title = "Spawner", Content = "pick an item first" }) end
+	Skins.spawn(picked.key, 1)
+	Skins.equip(picked.key)
+end
+
 S:Button({ Title = "Spawn selected", Style = "primary", Callback = spawnPicked })
+S:Button({ Title = "Spawn and wear it now",
+	Desc = "equips it for you instead of waiting for the inventory",
+	Callback = wearPicked })
+
 --== skins =====================================================================
 local K = Win:Tab({ Title = "Skins" })
-local function learnNearby()
-	task.spawn(function()
-		local learned, total = MH_learnMeshes()
-		UI:Notify({ Title = "Skins", Content = "+" .. learned .. " learned, " .. total .. " known" })
-	end)
-end
-local function dropSkin()
-	UI:Notify({ Title = "Skins", Content = "restored " .. MH_restoreSkins() .. " mesh(es)" })
-end
+local known, full = Skins.counts()
 
-K:Section({ Title = "Where skins come from" })
-K:Button({ Title = "Learn from players nearby", Style = "primary", Callback = learnNearby })
-K:Button({ Title = "Learn my whole inventory", Desc = "equips each item you own, takes minutes",
+K:Paragraph({
+	Title = "How this works",
+	Desc = "Every weapon here is built the way the game builds it - mesh, texture, "
+		.. "scope, decals, particles, chroma - and welded over the real one, which "
+		.. "is hidden for you only. Equipping from the game's own inventory is "
+		.. "noticed by watching what it writes down, not by waiting for it to "
+		.. "announce anything, which is why it does not miss.",
+})
+K:Section({ Title = "What is known" })
+K:Button({ Title = "Count the weapons I can wear",
 	Callback = function()
-		task.spawn(function()
-			UI:Notify({ Title = "Skins", Content = "walking your inventory..." })
-			local ok, a, b, c, d, why = pcall(MH_learnOwned, function(l, t, tot)
-				UI:Notify({ Title = "Skins", Content = l .. " learned / " .. t .. " of " .. tot })
-			end)
-			UI:Notify({ Title = "Skins", Duration = 9,
-				Content = ok and ("+" .. tostring(a) .. " of " .. tostring(b)
-					.. " (refused " .. tostring(c) .. ", no display " .. tostring(d) .. ")"
-					.. ((tostring(why) ~= "ok") and ("  -  " .. tostring(why)) or ""))
-					or ("failed: " .. tostring(a)) })
-		end)
-	end })
-K:Toggle({ Title = "Keep the game's placement",
-	Desc = "turn on if a weapon hangs wrong on your body",
-	Callback = function(on)
-		local n = MH_setPlacement(not on)
-		UI:Notify({ Title = "Skins", Content = (on and "the game's own placement" or "the skin's placement")
-			.. "  -  " .. tostring(n) .. " repainted" })
-	end })
-
-K:Section({ Title = "What do I know?" })
-K:Button({ Title = "Count the skins I have",
-	Desc = "on disk = what you learned; names known = the list that ships with it",
-	Callback = function()
-		UI:Notify({ Title = "Skins", Duration = 10, Content = MH_skinCounts() })
+		local n, f = Skins.counts()
+		UI:Notify({ Title = "Skins", Duration = 8,
+			Content = n .. " weapons, " .. f .. " of them whole models" })
 	end })
 K:Button({ Title = "Check the selected item",
-	Desc = "says whether this weapon has a mesh to wear",
 	Callback = function()
 		if not picked then return UI:Notify({ Title = "Skins", Content = "pick an item first" }) end
-		UI:Notify({ Title = "Skins", Duration = 10, Content = MH_skinLookup(picked.key) })
-	end })
-
-K:Button({ Title = "Why did nothing change?",
-	Desc = "the report from the last weapon you clicked in the inventory",
-	Callback = function()
-		UI:Notify({ Title = "Skins", Duration = 14,
-			Content = tostring(_G.MH_LastEquip or "click a weapon in the game's inventory first") })
-	end })
-
-K:Button({ Title = "Remove skins built from icons",
-	Desc = "clears rows whose mesh is really the item's picture",
-	Callback = function()
-		UI:Notify({ Title = "Skins", Duration = 10,
-			Content = "dropped " .. MH_dropIconSkins() .. "  |  " .. MH_skinCounts() })
+		UI:Notify({ Title = "Skins", Duration = 8,
+			Content = picked.name .. ": " .. (Skins.has(picked.key)
+				and "wearable" or "no skin data for this one") })
 	end })
 
 K:Section({ Title = "Undo" })
+K:Toggle({ Title = "Hide the real weapon", Value = true,
+	Desc = "off = the copy sits over the top of it",
+	Callback = function(on) Skins.HideOriginal = on Skins.clearAll() end })
 K:Actions({ Height = 40, Items = {
-	{ Title = "Remove skin", Callback = dropSkin },
-	{ Title = "Forget them all", Style = "danger", Callback = function()
-		MH_restoreSkins()
-		UI:Notify({ Title = "Skins", Content = "forgot " .. MH_forgetSkins() .. " entries" })
+	{ Title = "Take the skin off", Callback = function()
+		Skins.clearAll()
+		UI:Notify({ Title = "Skins", Content = "back to what you really have on" })
+	end },
+	{ Title = "Stop the engine", Style = "danger", Callback = function()
+		Skins.stop()
+		UI:Notify({ Title = "Skins", Content = "stopped - re-run the script to start it again" })
 	end },
 } })
 
 --== binds =====================================================================
--- Tap a chip, press a key, and that key runs the action. Escape or Backspace
--- while it is listening clears the bind, and typing in a box never fires one.
 local B = Win:Tab({ Title = "Binds" })
 B:Section({ Title = "Everything with a key" })
 B:Keybind({ Title = "Show or hide the menu", Default = "RightShift",
 	OnPress = function() Win:Toggle() end })
 B:Keybind({ Title = "Spawn the selected item", Default = "K", OnPress = spawnPicked })
-B:Keybind({ Title = "Learn skins nearby", Default = "L", OnPress = learnNearby })
-B:Keybind({ Title = "Remove skin", OnPress = dropSkin })
-B:Keybind({ Title = "Copy the skin map", OnPress = function()
-	local txt = "{}"
-	pcall(function() txt = game:GetService("HttpService"):JSONEncode(_G.MH_MeshMap or {}) end)
-	pcall(function() setclipboard(txt) end)
-	UI:Notify({ Title = "Skins", Content = "copied to clipboard" })
-end })
+B:Keybind({ Title = "Spawn and wear it", Default = "L", OnPress = wearPicked })
+B:Keybind({ Title = "Take the skin off", OnPress = function() Skins.clearAll() end })
 
 --== go ========================================================================
 refresh()
-
--- the live catalog lands a moment after the engine starts, so fill in when it does
-task.spawn(function()
-	local seen = select(2, rows())
-	for _ = 1, 12 do
-		task.wait(1.5)
-		local now = select(2, rows())
-		if now ~= seen then seen = now refresh() end
-	end
-end)
+UI:Notify({ Title = "Spawner", Duration = 6,
+	Content = known .. " weapons ready, " .. full .. " of them whole models" })
